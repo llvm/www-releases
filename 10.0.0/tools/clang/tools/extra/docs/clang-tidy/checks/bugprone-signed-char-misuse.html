@@ -1,0 +1,128 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>clang-tidy - bugprone-signed-char-misuse &#8212; Extra Clang Tools 10 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/clang-tools-extra-styles.css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="bugprone-sizeof-container" href="bugprone-sizeof-container.html" />
+    <link rel="prev" title="bugprone-posix-return" href="bugprone-posix-return.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 10 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - bugprone-signed-char-misuse</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="bugprone-posix-return.html">bugprone-posix-return</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="bugprone-sizeof-container.html">bugprone-sizeof-container</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content">
+        
+        
+  <div class="section" id="bugprone-signed-char-misuse">
+<h1>bugprone-signed-char-misuse<a class="headerlink" href="#bugprone-signed-char-misuse" title="Permalink to this headline">¶</a></h1>
+<p>Finds <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code> -&gt; integer conversions which might indicate a programming
+error. The basic problem with the <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code>, that it might store the
+non-ASCII characters as negative values. The human programmer probably
+expects that after an integer conversion the converted value matches with the
+character code (a value from [0..255]), however, the actual value is in
+[-128..127] interval. This also applies to the plain <code class="docutils literal notranslate"><span class="pre">char</span></code> type on
+those implementations which represent <code class="docutils literal notranslate"><span class="pre">char</span></code> similar to <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code>.</p>
+<p>To avoid this kind of misinterpretation, the desired way of converting from a
+<code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code> to an integer value is converting to <code class="docutils literal notranslate"><span class="pre">unsigned</span> <span class="pre">char</span></code> first,
+which stores all the characters in the positive [0..255] interval which matches
+with the known character codes.</p>
+<p>It depends on the actual platform whether <code class="docutils literal notranslate"><span class="pre">char</span></code> is handled as <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code>
+by default and so it is caught by this check or not. To change the default behavior
+you can use <code class="docutils literal notranslate"><span class="pre">-funsigned-char</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsigned-char</span></code> compilation options.</p>
+<p>Currently, this check is limited to assignments and variable declarations,
+where a <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code> is assigned to an integer variable. There are other
+use cases where the same misinterpretation might lead to similar bogus
+behavior.</p>
+<p>See also:
+<a class="reference external" href="https://wiki.sei.cmu.edu/confluence/display/c/STR34-C.+Cast+characters+to+unsigned+char+before+converting+to+larger+integer+sizes">STR34-C. Cast characters to unsigned char before converting to larger integer sizes</a></p>
+<p>A good example from the CERT description when a <code class="docutils literal notranslate"><span class="pre">char</span></code> variable is used to
+read from a file that might contain non-ASCII characters. The problem comes
+up when the code uses the <code class="docutils literal notranslate"><span class="pre">-1</span></code> integer value as EOF, while the 255 character
+code is also stored as <code class="docutils literal notranslate"><span class="pre">-1</span></code> in two’s complement form of char type.
+See a simple example of this bellow. This code stops not only when it reaches
+the end of the file, but also when it gets a character with the 255 code.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#define EOF (-1)</span>
+
+<span class="kt">int</span> <span class="nf">read</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kt">char</span> <span class="n">CChar</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">IChar</span> <span class="o">=</span> <span class="n">EOF</span><span class="p">;</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">readChar</span><span class="p">(</span><span class="n">CChar</span><span class="p">))</span> <span class="p">{</span>
+    <span class="n">IChar</span> <span class="o">=</span> <span class="n">CChar</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="n">IChar</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>A proper way to fix the code above is converting the <code class="docutils literal notranslate"><span class="pre">char</span></code> variable to
+an <code class="docutils literal notranslate"><span class="pre">unsigned</span> <span class="pre">char</span></code> value first.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#define EOF (-1)</span>
+
+<span class="kt">int</span> <span class="nf">read</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kt">char</span> <span class="n">CChar</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">IChar</span> <span class="o">=</span> <span class="n">EOF</span><span class="p">;</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">readChar</span><span class="p">(</span><span class="n">CChar</span><span class="p">))</span> <span class="p">{</span>
+    <span class="n">IChar</span> <span class="o">=</span> <span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">unsigned</span> <span class="kt">char</span><span class="o">&gt;</span><span class="p">(</span><span class="n">CChar</span><span class="p">);</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="n">IChar</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<dl class="option">
+<dt id="cmdoption-arg-chartypdefstoignore">
+<code class="descname">CharTypdefsToIgnore</code><code class="descclassname"></code><a class="headerlink" href="#cmdoption-arg-chartypdefstoignore" title="Permalink to this definition">¶</a></dt>
+<dd><p>A semicolon-separated list of typedef names. In this list, we can list
+typedefs for <code class="docutils literal notranslate"><span class="pre">char</span></code> or <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code>, which will be ignored by the
+check. This is useful when a typedef introduces an integer alias like
+<code class="docutils literal notranslate"><span class="pre">sal_Int8</span></code> or <code class="docutils literal notranslate"><span class="pre">int8_t</span></code>. In this case, human misinterpretation is not
+an issue.</p>
+</dd></dl>
+
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="bugprone-posix-return.html">bugprone-posix-return</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="bugprone-sizeof-container.html">bugprone-sizeof-container</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2020, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.8.5.
+    </div>
+  </body>
+</html>
