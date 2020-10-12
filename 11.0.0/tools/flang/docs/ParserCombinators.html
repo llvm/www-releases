@@ -1,0 +1,297 @@
+
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Parser Combinators &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Runtime Descriptors" href="RuntimeDescriptor.html" />
+    <link rel="prev" title="Compiler options comparison" href="OptionComparison.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="RuntimeDescriptor.html" title="Runtime Descriptors"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="OptionComparison.html" title="Compiler options comparison"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/master/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="parser-combinators">
+<span id="parser-combinators"></span><h1>Parser Combinators<a class="headerlink" href="#parser-combinators" title="Permalink to this headline">¶</a></h1>
+<p>This document is a primer on Parser Combinators and their use in Flang.</p>
+<div class="section" id="concept">
+<span id="concept"></span><h2>Concept<a class="headerlink" href="#concept" title="Permalink to this headline">¶</a></h2>
+<p>The Fortran language recognizer here can be classified as an LL recursive
+descent parser.  It is composed from a <em>parser combinator</em> library that
+defines a few fundamental parsers and a few ways to compose them into more
+powerful parsers.</p>
+<p>For our purposes here, a <em>parser</em> is any object that attempts to recognize
+an instance of some syntax from an input stream.  It may succeed or fail.
+On success, it may return some semantic value to its caller.</p>
+<p>In C++ terms, a parser is any instance of a class that</p>
+<ol class="simple">
+<li><p>has a <code class="docutils literal notranslate"><span class="pre">constexpr</span></code> default constructor,</p></li>
+<li><p>defines a type named <code class="docutils literal notranslate"><span class="pre">resultType</span></code>, and</p></li>
+<li><p>provides a function (<code class="docutils literal notranslate"><span class="pre">const</span></code> member or <code class="docutils literal notranslate"><span class="pre">static</span></code>) that accepts a reference to a
+<code class="docutils literal notranslate"><span class="pre">ParseState</span></code> as its argument and returns a <code class="docutils literal notranslate"><span class="pre">std::optional&lt;resultType&gt;</span></code> as a
+result, with the presence or absence of a value in the <code class="docutils literal notranslate"><span class="pre">std::optional&lt;&gt;</span></code>
+signifying success or failure, respectively.</p></li>
+</ol>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="p">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">resultType</span><span class="o">&gt;</span> <span class="n">Parse</span><span class="p">(</span><span class="n">ParseState</span> <span class="o">&amp;</span><span class="p">)</span> <span class="n">const</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">resultType</span></code> of a parser is typically the class type of some particular
+node type in the parse tree.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ParseState</span></code> is a class that encapsulates a position in the source stream,
+collects messages, and holds a few state flags that determine tokenization
+(e.g., are we in a character literal?).  Instances of <code class="docutils literal notranslate"><span class="pre">ParseState</span></code> are
+independent and complete – they are cheap to duplicate whenever necessary to
+implement backtracking.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">constexpr</span></code> default constructor of a parser is important.  The functions
+(below) that operate on instances of parsers are themselves all <code class="docutils literal notranslate"><span class="pre">constexpr</span></code>.
+This use of compile-time expressions allows the entirety of a recursive
+descent parser for a language to be constructed at compilation time through
+the use of templates.</p>
+<div class="section" id="fundamental-predefined-parsers">
+<span id="fundamental-predefined-parsers"></span><h3>Fundamental Predefined Parsers<a class="headerlink" href="#fundamental-predefined-parsers" title="Permalink to this headline">¶</a></h3>
+<p>These objects and functions are (or return) the fundamental parsers:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ok</span></code> is a trivial parser that always succeeds without advancing.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pure(x)</span></code> returns a trivial parser that always succeeds without advancing,
+returning some value <code class="docutils literal notranslate"><span class="pre">x</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pure&lt;T&gt;()</span></code> is <code class="docutils literal notranslate"><span class="pre">pure(T{})</span></code> but does not require that T be copy-constructible.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fail&lt;T&gt;(msg)</span></code> denotes a trivial parser that always fails, emitting the
+given message as a side effect.  The template parameter is the type of
+the value that the parser never returns.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">nextCh</span></code> consumes the next character and returns its location,
+and fails at EOF.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;xyz&quot;_ch</span></code> succeeds if the next character consumed matches any of those
+in the string and returns its location.  Be advised that the source
+will have been normalized to lower case (miniscule) letters outside
+character and Hollerith literals and edit descriptors before parsing.</p></li>
+</ul>
+</div>
+<div class="section" id="combinators">
+<span id="combinators"></span><h3>Combinators<a class="headerlink" href="#combinators" title="Permalink to this headline">¶</a></h3>
+<p>These functions and operators combine existing parsers to generate new parsers.
+They are <code class="docutils literal notranslate"><span class="pre">constexpr</span></code>, so they should be viewed as type-safe macros.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">!p</span></code> succeeds if p fails, and fails if p succeeds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">&gt;&gt;</span> <span class="pre">q</span></code> fails if p does, otherwise running q and returning its value when
+it succeeds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">/</span> <span class="pre">q</span></code> fails if p does, otherwise running q and returning p’s value
+if q succeeds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">||</span> <span class="pre">q</span></code> succeeds if p does, otherwise running q.  The two parsers must
+have the same type, and the value returned by the first succeeding parser
+is the value of the combination.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">first(p1,</span> <span class="pre">p2,</span> <span class="pre">...)</span></code> returns the value of the first parser that succeeds.
+All of the parsers in the list must return the same type.
+It is essentially the same as <code class="docutils literal notranslate"><span class="pre">p1</span> <span class="pre">||</span> <span class="pre">p2</span> <span class="pre">||</span> <span class="pre">...</span></code> but has a slightly
+faster implementation and may be easier to format in your code.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">lookAhead(p)</span></code> succeeds if p does, but doesn’t modify any state.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">attempt(p)</span></code> succeeds if p does, safely preserving state on failure.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">many(p)</span></code> recognizes a greedy sequence of zero or more nonempty successes
+of p, and returns <code class="docutils literal notranslate"><span class="pre">std::list&lt;&gt;</span></code> of their values.  It always succeeds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">some(p)</span></code> recognized a greedy sequence of one or more successes of p.
+It fails if p immediately fails.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">skipMany(p)</span></code> is the same as <code class="docutils literal notranslate"><span class="pre">many(p)</span></code>, but it discards the results.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">maybe(p)</span></code> tries to match p, returning an <code class="docutils literal notranslate"><span class="pre">std::optional&lt;T&gt;</span></code> value.
+It always succeeds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">defaulted(p)</span></code> matches p, and when p fails it returns a
+default-constructed instance of p’s resultType.  It always succeeds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">nonemptySeparated(p,</span> <span class="pre">q)</span></code> repeatedly matches “p q p q p q … p”,
+returning a <code class="docutils literal notranslate"><span class="pre">std::list&lt;&gt;</span></code> of only the values of the p’s.  It fails if
+p immediately fails.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">extension(p)</span></code> parses p if strict standard compliance is disabled,
+or with a warning if nonstandard usage warnings are enabled.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">deprecated(p)</span></code> parses p if strict standard compliance is disabled,
+with a warning if deprecated usage warnings are enabled.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">inContext(msg,</span> <span class="pre">p)</span></code> runs p within an error message context; any
+message that <code class="docutils literal notranslate"><span class="pre">p</span></code> generates will be tagged with <code class="docutils literal notranslate"><span class="pre">msg</span></code> as its
+context.  Contexts may nest.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">withMessage(msg,</span> <span class="pre">p)</span></code> succeeds if <code class="docutils literal notranslate"><span class="pre">p</span></code> does, and if it does not,
+it discards the messages from <code class="docutils literal notranslate"><span class="pre">p</span></code> and fails with the specified message.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">recovery(p,</span> <span class="pre">q)</span></code> is equivalent to <code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">||</span> <span class="pre">q</span></code>, except that error messages
+generated from the first parser are retained, and a flag is set in
+the ParseState to remember that error recovery was necessary.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">localRecovery(msg,</span> <span class="pre">p,</span> <span class="pre">q)</span></code> is equivalent to
+<code class="docutils literal notranslate"><span class="pre">recovery(withMessage(msg,</span> <span class="pre">p),</span> <span class="pre">q</span> <span class="pre">&gt;&gt;</span> <span class="pre">pure&lt;A&gt;())</span></code> where <code class="docutils literal notranslate"><span class="pre">A</span></code> is the
+result type of ‘p’.
+It is useful for targeted error recovery situations within statements.</p></li>
+</ul>
+<p>Note that</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">a</span> <span class="o">&gt;&gt;</span> <span class="n">b</span> <span class="o">&gt;&gt;</span> <span class="n">c</span> <span class="o">/</span> <span class="n">d</span> <span class="o">/</span> <span class="n">e</span>
+</pre></div>
+</div>
+<p>matches a sequence of five parsers, but returns only the result that was
+obtained by matching <code class="docutils literal notranslate"><span class="pre">c</span></code>.</p>
+</div>
+<div class="section" id="applicatives">
+<span id="applicatives"></span><h3>Applicatives<a class="headerlink" href="#applicatives" title="Permalink to this headline">¶</a></h3>
+<p>The following <em>applicative</em> combinators combine parsers and modify or
+collect the values that they return.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">construct&lt;T&gt;(p1,</span> <span class="pre">p2,</span> <span class="pre">...)</span></code> matches zero or more parsers in succession,
+collecting their results and then passing them with move semantics to a
+constructor for the type T if they all succeed.
+If there is a single parser as the argument and it returns no usable
+value but only success or failure (<em>e.g.,</em> <code class="docutils literal notranslate"><span class="pre">&quot;IF&quot;_tok</span></code>), the default
+nullary constructor of the type <code class="docutils literal notranslate"><span class="pre">T</span></code> is called.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sourced(p)</span></code> matches p, and fills in its <code class="docutils literal notranslate"><span class="pre">source</span></code> data member with the
+locations of the cooked character stream that it consumed</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">applyFunction(f,</span> <span class="pre">p1,</span> <span class="pre">p2,</span> <span class="pre">...)</span></code> matches one or more parsers in succession,
+collecting their results and passing them as rvalue reference arguments to
+some function, returning its result.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">applyLambda([](&amp;&amp;x){},</span> <span class="pre">p1,</span> <span class="pre">p2,</span> <span class="pre">...)</span></code> is the same thing, but for lambdas
+and other function objects.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">applyMem(mf,</span> <span class="pre">p1,</span> <span class="pre">p2,</span> <span class="pre">...)</span></code> is the same thing, but invokes a member
+function of the result of the first parser for updates in place.</p></li>
+</ul>
+</div>
+<div class="section" id="token-parsers">
+<span id="token-parsers"></span><h3>Token Parsers<a class="headerlink" href="#token-parsers" title="Permalink to this headline">¶</a></h3>
+<p>Last, we have these basic parsers on which the actual grammar of the Fortran
+is built.  All of the following parsers consume characters acquired from
+<code class="docutils literal notranslate"><span class="pre">nextCh</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">space</span></code> always succeeds after consuming any spaces</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spaceCheck</span></code> always succeeds after consuming any spaces, and can emit
+a warning if there was no space in free form code before a character
+that could continue a name or keyword</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">digit</span></code> matches one cooked decimal digit (0-9)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">letter</span></code> matches one cooked letter (A-Z)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;...&quot;_tok</span></code> match the content of the string, skipping spaces before and
+after.  Internal spaces are optional matches.  The <code class="docutils literal notranslate"><span class="pre">_tok</span></code> suffix is
+optional when the parser appears before the combinator <code class="docutils literal notranslate"><span class="pre">&gt;&gt;</span></code> or after
+the combinator <code class="docutils literal notranslate"><span class="pre">/</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;...&quot;_sptok</span></code> is a string match in which the spaces are required in
+free form source.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;...&quot;_id</span></code> is a string match for a complete identifier (not a prefix of
+a longer identifier or keyword).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">parenthesized(p)</span></code> is shorthand for <code class="docutils literal notranslate"><span class="pre">&quot;(&quot;</span> <span class="pre">&gt;&gt;</span> <span class="pre">p</span> <span class="pre">/</span> <span class="pre">&quot;)&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bracketed(p)</span></code> is shorthand for <code class="docutils literal notranslate"><span class="pre">&quot;[&quot;</span> <span class="pre">&gt;&gt;</span> <span class="pre">p</span> <span class="pre">/</span> <span class="pre">&quot;]&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">nonEmptyList(p)</span></code> matches a comma-separated list of one or more
+instances of p.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">nonEmptyList(errorMessage,</span> <span class="pre">p)</span></code> is equivalent to
+<code class="docutils literal notranslate"><span class="pre">withMessage(errorMessage,</span> <span class="pre">nonemptyList(p))</span></code>, which allows one to supply
+a meaningful error message in the event of an empty list.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">optionalList(p)</span></code> is the same thing, but can be empty, and always succeeds.</p></li>
+</ul>
+</div>
+<div class="section" id="debugging-parser">
+<span id="debugging-parser"></span><h3>Debugging Parser<a class="headerlink" href="#debugging-parser" title="Permalink to this headline">¶</a></h3>
+<p>Last, a string literal <code class="docutils literal notranslate"><span class="pre">&quot;...&quot;_debug</span></code> denotes a parser that emits the string to
+<code class="docutils literal notranslate"><span class="pre">llvm::errs</span></code> and succeeds.  It is useful for tracing while debugging a parser but should
+obviously not be committed for production code.</p>
+</div>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="RuntimeDescriptor.html" title="Runtime Descriptors"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="OptionComparison.html" title="Compiler options comparison"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2020, The Flang Team.
+      Last updated on Oct 12, 2020.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.4.3.
+    </div>
+  </body>
+</html>

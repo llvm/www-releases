@@ -1,0 +1,148 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>JSON Compilation Database Format Specification &#8212; Clang 11 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clang’s refactoring engine" href="RefactoringEngine.html" />
+    <link rel="prev" title="How To Setup Clang Tooling For LLVM" href="HowToSetupToolingForLLVM.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 11 documentation</span></a></h1>
+        <h2 class="heading"><span>JSON Compilation Database Format Specification</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="HowToSetupToolingForLLVM.html">How To Setup Clang Tooling For LLVM</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RefactoringEngine.html">Clang’s refactoring engine</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="json-compilation-database-format-specification">
+<h1>JSON Compilation Database Format Specification<a class="headerlink" href="#json-compilation-database-format-specification" title="Permalink to this headline">¶</a></h1>
+<p>This document describes a format for specifying how to replay single
+compilations independently of the build system.</p>
+<div class="section" id="background">
+<h2>Background<a class="headerlink" href="#background" title="Permalink to this headline">¶</a></h2>
+<p>Tools based on the C++ Abstract Syntax Tree need full information how to
+parse a translation unit. Usually this information is implicitly
+available in the build system, but running tools as part of the build
+system is not necessarily the best solution:</p>
+<ul class="simple">
+<li><p>Build systems are inherently change driven, so running multiple tools
+over the same code base without changing the code does not fit into
+the architecture of many build systems.</p></li>
+<li><p>Figuring out whether things have changed is often an IO bound
+process; this makes it hard to build low latency end user tools based
+on the build system.</p></li>
+<li><p>Build systems are inherently sequential in the build graph, for
+example due to generated source code. While tools that run
+independently of the build still need the generated source code to
+exist, running tools multiple times over unchanging source does not
+require serialization of the runs according to the build dependency
+graph.</p></li>
+</ul>
+</div>
+<div class="section" id="supported-systems">
+<h2>Supported Systems<a class="headerlink" href="#supported-systems" title="Permalink to this headline">¶</a></h2>
+<p>Currently <a class="reference external" href="https://cmake.org">CMake</a> (since 2.8.5) supports generation
+of compilation databases for Unix Makefile builds (Ninja builds in the
+works) with the option <code class="docutils literal notranslate"><span class="pre">CMAKE_EXPORT_COMPILE_COMMANDS</span></code>.</p>
+<p>For projects on Linux, there is an alternative to intercept compiler
+calls with a tool called <a class="reference external" href="https://github.com/rizsotto/Bear">Bear</a>.</p>
+<p>Clang’s tooling interface supports reading compilation databases; see
+the <a class="reference internal" href="LibTooling.html"><span class="doc">LibTooling documentation</span></a>. libclang and its
+python bindings also support this (since clang 3.2); see
+<a class="reference external" href="/doxygen/group__COMPILATIONDB.html">CXCompilationDatabase.h</a>.</p>
+</div>
+<div class="section" id="format">
+<h2>Format<a class="headerlink" href="#format" title="Permalink to this headline">¶</a></h2>
+<p>A compilation database is a JSON file, which consist of an array of
+“command objects”, where each command object specifies one way a
+translation unit is compiled in the project.</p>
+<p>Each command object contains the translation unit’s main file, the
+working directory of the compile run and the actual compile command.</p>
+<p>Example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">[</span>
+  <span class="p">{</span> <span class="s2">&quot;directory&quot;</span><span class="p">:</span> <span class="s2">&quot;/home/user/llvm/build&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;/usr/bin/clang++ -Irelative -DSOMEDEF=</span><span class="se">\&quot;</span><span class="s2">With spaces, quotes and </span><span class="se">\\</span><span class="s2">-es.</span><span class="se">\&quot;</span><span class="s2"> -c -o file.o file.cc&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="s2">&quot;file.cc&quot;</span> <span class="p">},</span>
+  <span class="o">...</span>
+<span class="p">]</span>
+</pre></div>
+</div>
+<p>The contracts for each field in the command object are:</p>
+<ul class="simple">
+<li><p><strong>directory:</strong> The working directory of the compilation. All paths
+specified in the <strong>command</strong> or <strong>file</strong> fields must be either
+absolute or relative to this directory.</p></li>
+<li><p><strong>file:</strong> The main translation unit source processed by this
+compilation step. This is used by tools as the key into the
+compilation database. There can be multiple command objects for the
+same file, for example if the same source file is compiled with
+different configurations.</p></li>
+<li><p><strong>command:</strong> The compile command executed. After JSON unescaping,
+this must be a valid command to rerun the exact compilation step for
+the translation unit in the environment the build system uses.
+Parameters use shell quoting and shell escaping of quotes, with ‘<code class="docutils literal notranslate"><span class="pre">&quot;</span></code>’
+and ‘<code class="docutils literal notranslate"><span class="pre">\</span></code>’ being the only special characters. Shell expansion is not
+supported.</p></li>
+<li><p><strong>arguments:</strong> The compile command executed as list of strings.
+Either <strong>arguments</strong> or <strong>command</strong> is required.</p></li>
+<li><p><strong>output:</strong> The name of the output created by this compilation step.
+This field is optional. It can be used to distinguish different processing
+modes of the same input file.</p></li>
+</ul>
+</div>
+<div class="section" id="build-system-integration">
+<h2>Build System Integration<a class="headerlink" href="#build-system-integration" title="Permalink to this headline">¶</a></h2>
+<p>The convention is to name the file compile_commands.json and put it at
+the top of the build directory. Clang tools are pointed to the top of
+the build directory to detect the file and use the compilation database
+to parse C++ code in the source tree.</p>
+</div>
+<div class="section" id="alternatives">
+<h2>Alternatives<a class="headerlink" href="#alternatives" title="Permalink to this headline">¶</a></h2>
+<p>For simple projects, Clang tools also recognize a compile_flags.txt file.
+This should contain one flag per line. The same flags will be used to compile
+any file.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="HowToSetupToolingForLLVM.html">How To Setup Clang Tooling For LLVM</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RefactoringEngine.html">Clang’s refactoring engine</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2020, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.4.3.
+    </div>
+  </body>
+</html>
