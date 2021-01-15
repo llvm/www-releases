@@ -1,0 +1,310 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Control Flow Graph &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Design: Fortran IR" href="FortranIR.html" />
+    <link rel="prev" title="OpenMP Semantic Analysis" href="OpenMP-semantics.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="FortranIR.html" title="Design: Fortran IR"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="OpenMP-semantics.html" title="OpenMP Semantic Analysis"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/master/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/ControlFlowGraph.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+--><div class="section" id="control-flow-graph">
+<h1>Control Flow Graph<a class="headerlink" href="#control-flow-graph" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#concept" id="id2">Concept</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id1" id="id3">Control Flow Graph</a></p></li>
+<li><p><a class="reference internal" href="#expressions-and-statements-operations-and-actions" id="id4">Expressions and Statements (Operations and Actions)</a></p></li>
+<li><p><a class="reference internal" href="#scope-transitions" id="id5">Scope Transitions</a></p></li>
+<li><p><a class="reference internal" href="#data-flow-representation" id="id6">Data Flow Representation</a></p></li>
+<li><p><a class="reference internal" href="#rewriting-transformations" id="id7">Rewriting Transformations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#i-o" id="id8">I/O</a></p></li>
+<li><p><a class="reference internal" href="#dynamic-allocation" id="id9">Dynamic allocation</a></p></li>
+<li><p><a class="reference internal" href="#array-constructors" id="id10">Array constructors</a></p></li>
+<li><p><a class="reference internal" href="#derived-type-initialization-deallocation-and-finalization" id="id11">Derived type initialization, deallocation, and finalization</a></p></li>
+<li><p><a class="reference internal" href="#actual-argument-temporaries" id="id12">Actual argument temporaries</a></p></li>
+<li><p><a class="reference internal" href="#array-assignments-where-and-forall" id="id13">Array assignments, <code class="docutils literal notranslate"><span class="pre">WHERE</span></code>, and <code class="docutils literal notranslate"><span class="pre">FORALL</span></code></a></p></li>
+<li><p><a class="reference internal" href="#intrinsic-function-and-subroutine-calls" id="id14">Intrinsic function and subroutine calls</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="concept">
+<h2><a class="toc-backref" href="#id2">Concept</a><a class="headerlink" href="#concept" title="Permalink to this headline">¶</a></h2>
+<p>After a Fortran subprogram has been parsed, its names resolved, and all its
+semantic constraints successfully checked, the parse tree of its
+executable part is translated into another abstract representation,
+namely the <em>control flow graph</em> described in this note.</p>
+<p>This second representation of the subprogram’s executable part is
+suitable for analysis and incremental modification as the subprogram
+is readied for code generation.
+Many high-level Fortran features are implemented by rewriting portions
+of a subprogram’s control flow graph in place.</p>
+<div class="section" id="id1">
+<h3><a class="toc-backref" href="#id3">Control Flow Graph</a><a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h3>
+<p>A <em>control flow graph</em> is a collection of simple (<em>i.e.,</em> “non-extended”)
+basic <em>blocks</em> that comprise straight-line sequences of <em>actions</em> with a
+single entry point and a single exit point, and a collection of
+directed flow <em>edges</em> (or <em>arcs</em>) denoting all possible transitions of
+control flow that may take place during execution from the end of
+one basic block to the beginning of another (or itself).</p>
+<p>A block that has multiple distinct successors in the flow of control
+must end with an action that selects its successor.</p>
+<p>The sequence of actions that constitutes a basic block may
+include references to user and library procedures.
+Subprogram calls with implicit control flow afterwards, namely
+alternate returns and <code class="docutils literal notranslate"><span class="pre">END=</span></code>/<code class="docutils literal notranslate"><span class="pre">ERR=</span></code> labels on input/output,
+will be lowered in translation to a representation that materializes
+that control flow into something similar to a computed <code class="docutils literal notranslate"><span class="pre">GO</span> <span class="pre">TO</span></code> or
+C language <code class="docutils literal notranslate"><span class="pre">switch</span></code> statement.</p>
+<p>For convenience in optimization and to simplify the implementation of
+data flow confluence functions, we may choose to maintain the
+property that each flow arc is the sole outbound arc emanating from
+its originating block, the sole inbound arc arriving at its destination,
+or both.
+Empty blocks would inserted to “split” arcs when necessary to maintain this
+invariant property.</p>
+<p>Fortran subprograms (other than internal subprograms) can have multiple
+entry points by using the obsolescent <code class="docutils literal notranslate"><span class="pre">ENTRY</span></code> statement.
+We will implement such subprograms by constructing a union
+of their dummy argument lists and using it as part of the definition
+of a new subroutine or function that can be called by each of
+the entry points, which are then all converted into wrapper routines that
+pass a selector value as an additional argument to drive a <code class="docutils literal notranslate"><span class="pre">switch</span></code> on entry
+to the new subprogram.</p>
+<p>This transformation ensures that every subprogram’s control
+flow graph has a well-defined <code class="docutils literal notranslate"><span class="pre">START</span></code> node.</p>
+<p>Statement labels can be used in Fortran on any statement, but only
+the labels that decorate legal destinations of <code class="docutils literal notranslate"><span class="pre">GO</span> <span class="pre">TO</span></code> statements
+need to be implemented in the control flow graph.
+Specifically, non-executable statements like <code class="docutils literal notranslate"><span class="pre">DATA</span></code>, <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statements will be extracted into data initialization
+records before or during the construction of the control flow
+graph, and will survive only as synonyms for <code class="docutils literal notranslate"><span class="pre">CONTINUE</span></code>.</p>
+<p>Nests of multiple labeled <code class="docutils literal notranslate"><span class="pre">DO</span></code> loops that terminate on the same
+label will be have that label rewritten so that <code class="docutils literal notranslate"><span class="pre">GO</span> <span class="pre">TO</span></code> within
+the loop nest will arrive at the copy that most closely nests
+the context.
+The Fortran standard does not require us to do this, but XLF
+(at least) works this way.</p>
+</div>
+<div class="section" id="expressions-and-statements-operations-and-actions">
+<h3><a class="toc-backref" href="#id4">Expressions and Statements (Operations and Actions)</a><a class="headerlink" href="#expressions-and-statements-operations-and-actions" title="Permalink to this headline">¶</a></h3>
+<p>Expressions are trees, not DAGs, of intrinsic operations,
+resolved function references, constant literals, and
+data designators.</p>
+<p>Expression nodes are represented in the compiler in a type-safe manner.
+There is a distinct class or class template for every category of
+intrinsic type, templatized over its supported kind type parameter values.</p>
+<p>Operands are storage-owning indirections to other instances
+of <code class="docutils literal notranslate"><span class="pre">Expression</span></code>, instances of constant values, and to representations
+of data and function references.
+These indirections are not nullable apart from the situation in which
+the operands of an expression are being removed for use elsewhere before
+the expression is destructed.</p>
+<p>The ranks and the extents of the shapes of the results of expressions
+are explicit for constant arrays and recoverable by analysis otherwise.</p>
+<p>Parenthesized subexpressions are scrupulously preserved in accordance with
+the Fortran standard.</p>
+<p>The expression tree is meant to be a representation that is
+as equally well suited for use in the symbol table (e.g., for
+a bound of an explicit shape array) as it is for an action
+in a basic block of the control flow graph (e.g., the right
+hand side of an assignment statement).</p>
+<p>Each basic block comprises a linear sequence of <em>actions</em>.
+These are represented as a doubly-linked list so that insertion
+and deletion can be done in constant time.</p>
+<p>Only the last action in a basic block can represent a change
+to the flow of control.</p>
+</div>
+<div class="section" id="scope-transitions">
+<h3><a class="toc-backref" href="#id5">Scope Transitions</a><a class="headerlink" href="#scope-transitions" title="Permalink to this headline">¶</a></h3>
+<p>Some of the various scopes of the symbol table are visible in the control flow
+graph as <code class="docutils literal notranslate"><span class="pre">SCOPE</span> <span class="pre">ENTRY</span></code> and <code class="docutils literal notranslate"><span class="pre">SCOPE</span> <span class="pre">EXIT</span></code> actions.
+<code class="docutils literal notranslate"><span class="pre">SCOPE</span> <span class="pre">ENTRY</span></code> actions are unique for their corresponding scopes,
+while <code class="docutils literal notranslate"><span class="pre">SCOPE</span> <span class="pre">EXIT</span></code> actions need not be so.
+It must be the case that
+any flow of control within the subprogram will enter only scopes that are
+not yet active, and exit only the most recently entered scope that has not
+yet been deactivated; i.e., when modeled by a push-down stack that is
+pushed by each traversal of a <code class="docutils literal notranslate"><span class="pre">SCOPE</span> <span class="pre">ENTRY</span></code> action,
+the entries of the stack are always distinct, only the scope at
+the top of the stack is ever popped by <code class="docutils literal notranslate"><span class="pre">SCOPE</span> <span class="pre">EXIT</span></code>, and the stack is empty
+when the subprogram terminates.
+Further, any references to resolved symbols must be to symbols whose scopes
+are active.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> actions and calls to <code class="docutils literal notranslate"><span class="pre">FINAL</span></code> procedures implied by scoped
+lifetimes will be explicit in the sequence of actions in the control flow
+graph.</p>
+<p>Parallel regions might be partially represented by scopes, or by explicit
+operations similar to the scope entry and exit operations.</p>
+</div>
+<div class="section" id="data-flow-representation">
+<h3><a class="toc-backref" href="#id6">Data Flow Representation</a><a class="headerlink" href="#data-flow-representation" title="Permalink to this headline">¶</a></h3>
+<p>The subprogram text will be in static single assignment form by the time the
+subprogram arrives at the bridge to the LLVM IR builder.
+Merge points are actions at the heads of basic blocks whose operands
+are definition points; definition points are actions at the ends of
+basic blocks whose operands are expression trees (which may refer to
+merge points).</p>
+</div>
+<div class="section" id="rewriting-transformations">
+<h3><a class="toc-backref" href="#id7">Rewriting Transformations</a><a class="headerlink" href="#rewriting-transformations" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="i-o">
+<h4><a class="toc-backref" href="#id8">I/O</a><a class="headerlink" href="#i-o" title="Permalink to this headline">¶</a></h4>
+</div>
+<div class="section" id="dynamic-allocation">
+<h4><a class="toc-backref" href="#id9">Dynamic allocation</a><a class="headerlink" href="#dynamic-allocation" title="Permalink to this headline">¶</a></h4>
+</div>
+<div class="section" id="array-constructors">
+<h4><a class="toc-backref" href="#id10">Array constructors</a><a class="headerlink" href="#array-constructors" title="Permalink to this headline">¶</a></h4>
+</div>
+<div class="section" id="derived-type-initialization-deallocation-and-finalization">
+<h4><a class="toc-backref" href="#id11">Derived type initialization, deallocation, and finalization</a><a class="headerlink" href="#derived-type-initialization-deallocation-and-finalization" title="Permalink to this headline">¶</a></h4>
+<p>The machinery behind the complicated semantics of Fortran’s derived types
+and <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> objects will be implemented in large part by the run time
+support library.</p>
+</div>
+<div class="section" id="actual-argument-temporaries">
+<h4><a class="toc-backref" href="#id12">Actual argument temporaries</a><a class="headerlink" href="#actual-argument-temporaries" title="Permalink to this headline">¶</a></h4>
+</div>
+<div class="section" id="array-assignments-where-and-forall">
+<h4><a class="toc-backref" href="#id13">Array assignments, <code class="docutils literal notranslate"><span class="pre">WHERE</span></code>, and <code class="docutils literal notranslate"><span class="pre">FORALL</span></code></a><a class="headerlink" href="#array-assignments-where-and-forall" title="Permalink to this headline">¶</a></h4>
+<p>Array operations have shape.</p>
+<p><code class="docutils literal notranslate"><span class="pre">WHERE</span></code> masks have shape.
+Their effects on array operations are by means of explicit <code class="docutils literal notranslate"><span class="pre">MASK</span></code> operands that
+are part of array assignment operations.</p>
+</div>
+<div class="section" id="intrinsic-function-and-subroutine-calls">
+<h4><a class="toc-backref" href="#id14">Intrinsic function and subroutine calls</a><a class="headerlink" href="#intrinsic-function-and-subroutine-calls" title="Permalink to this headline">¶</a></h4>
+</div>
+</div>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="FortranIR.html" title="Design: Fortran IR"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="OpenMP-semantics.html" title="OpenMP Semantic Analysis"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2021, The Flang Team.
+      Last updated on Jan 15, 2021.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

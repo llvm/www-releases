@@ -1,0 +1,494 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>How to manually use the Individual pieces of Polly &#8212; Polly 11.0-devel documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Tips and Tricks on using and contributing to Polly" href="TipsAndTricks.html" />
+    <link rel="prev" title="Using Polly with Clang" href="UsingPollyWithClang.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Polly 11.0-devel documentation</span></a></h1>
+        <h2 class="heading"><span>How to manually use the Individual pieces of Polly</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UsingPollyWithClang.html">Using Polly with Clang</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="TipsAndTricks.html">Tips and Tricks on using and contributing to Polly</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="how-to-manually-use-the-individual-pieces-of-polly">
+<h1>How to manually use the Individual pieces of Polly<a class="headerlink" href="#how-to-manually-use-the-individual-pieces-of-polly" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="execute-the-individual-polly-passes-manually">
+<h2>Execute the individual Polly passes manually<a class="headerlink" href="#execute-the-individual-polly-passes-manually" title="Permalink to this headline">¶</a></h2>
+<p>This example presents the individual passes that are involved when optimizing
+code with Polly. We show how to execute them individually and explain for
+each which analysis is performed or what transformation is applied. In this
+example the polyhedral transformation is user-provided to show how much
+performance improvement can be expected by an optimal automatic optimizer.</p>
+<div class="section" id="create-llvm-ir-from-the-c-code">
+<h3>1. <strong>Create LLVM-IR from the C code</strong><a class="headerlink" href="#create-llvm-ir-from-the-c-code" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>Polly works on LLVM-IR. Hence it is necessary to translate the source
+files into LLVM-IR. If more than one file should be optimized the
+files can be combined into a single file with llvm-link.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang -S -emit-llvm matmul.c -Xclang -disable-O0-optnone -o matmul.ll</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="prepare-the-llvm-ir-for-polly">
+<h3>2. <strong>Prepare the LLVM-IR for Polly</strong><a class="headerlink" href="#prepare-the-llvm-ir-for-polly" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>Polly is only able to work with code that matches a canonical form.
+To translate the LLVM-IR into this form we use a set of
+canonicalication passes. They are scheduled by using
+‘-polly-canonicalize’.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">opt -S -polly-canonicalize matmul.ll -o matmul.preopt.ll</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="show-the-scops-detected-by-polly-optional">
+<h3>3. <strong>Show the SCoPs detected by Polly (optional)</strong><a class="headerlink" href="#show-the-scops-detected-by-polly-optional" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>To understand if Polly was able to detect SCoPs, we print the structure
+of the detected SCoPs. In our example two SCoPs are detected. One in
+‘init_array’ the other in ‘main’.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-ast -analyze matmul.preopt.ll -polly-process-unprofitable -polly-use-llvm-names
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span>:: isl ast :: init_array :: %for.cond1.preheader---%for.end19
+
+if (1)
+
+    for (int c0 = 0; c0 &lt;= 1535; c0 += 1)
+      for (int c1 = 0; c1 &lt;= 1535; c1 += 1)
+        Stmt_for_body3(c0, c1);
+
+else
+    {  /* original code */ }
+
+:: isl ast :: main :: %for.cond1.preheader---%for.end30
+
+if (1)
+
+    for (int c0 = 0; c0 &lt;= 1535; c0 += 1)
+      for (int c1 = 0; c1 &lt;= 1535; c1 += 1) {
+        Stmt_for_body3(c0, c1);
+        for (int c2 = 0; c2 &lt;= 1535; c2 += 1)
+          Stmt_for_body8(c0, c1, c2);
+      }
+
+else
+    {  /* original code */ }
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="highlight-the-detected-scops-in-the-cfgs-of-the-program-requires-graphviz-dotty">
+<h3>4. <strong>Highlight the detected SCoPs in the CFGs of the program (requires graphviz/dotty)</strong><a class="headerlink" href="#highlight-the-detected-scops-in-the-cfgs-of-the-program-requires-graphviz-dotty" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>Polly can use graphviz to graphically show a CFG in which the detected
+SCoPs are highlighted. It can also create ‘.dot’ files that can be
+translated by the ‘dot’ utility into various graphic formats.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -polly-use-llvm-names -basic-aa -view-scops -disable-output matmul.preopt.ll
+<span class="gp">$</span> opt -polly-use-llvm-names -basic-aa -view-scops-only -disable-output matmul.preopt.ll
+</pre></div>
+</div>
+<p>The output for the different functions:</p>
+<ul class="simple">
+<li><p>view-scops : <a class="reference external" href="http://polly.llvm.org/experiments/matmul/scops.main.dot.png">main</a>, <a class="reference external" href="http://polly.llvm.org/experiments/matmul/scops.init_array.dot.png">init_array</a>, <a class="reference external" href="http://polly.llvm.org/experiments/matmul/scops.print_array.dot.png">print_array</a></p></li>
+<li><p>view-scops-only : <a class="reference external" href="http://polly.llvm.org/experiments/matmul/scopsonly.main.dot.png">main-scopsonly</a>, <a class="reference external" href="http://polly.llvm.org/experiments/matmul/scopsonly.init_array.dot.png">init_array-scopsonly</a>, <a class="reference external" href="http://polly.llvm.org/experiments/matmul/scopsonly.print_array.dot.png">print_array-scopsonly</a></p></li>
+</ul>
+</div></blockquote>
+</div>
+<div class="section" id="view-the-polyhedral-representation-of-the-scops">
+<h3>5. <strong>View the polyhedral representation of the SCoPs</strong><a class="headerlink" href="#view-the-polyhedral-representation-of-the-scops" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -polly-use-llvm-names -basic-aa -polly-scops -analyze matmul.preopt.ll -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span>[...]Printing analysis &#39;Polly - Create polyhedral description of Scops&#39; for region: &#39;for.cond1.preheader =&gt; for.end19&#39; in function &#39;init_array&#39;:
+    Function: init_array
+    Region: %for.cond1.preheader---%for.end19
+    Max Loop Depth:  2
+        Invariant Accesses: {
+        }
+        Context:
+        {  :  }
+        Assumed Context:
+        {  :  }
+        Invalid Context:
+        {  : 1 = 0 }
+        Arrays {
+            float MemRef_A[*][1536]; // Element size 4
+            float MemRef_B[*][1536]; // Element size 4
+        }
+        Arrays (Bounds as pw_affs) {
+            float MemRef_A[*][ { [] -&gt; [(1536)] } ]; // Element size 4
+            float MemRef_B[*][ { [] -&gt; [(1536)] } ]; // Element size 4
+        }
+        Alias Groups (0):
+            n/a
+        Statements {
+            Stmt_for_body3
+                Domain :=
+                    { Stmt_for_body3[i0, i1] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535 };
+                Schedule :=
+                    { Stmt_for_body3[i0, i1] -&gt; [i0, i1] };
+                MustWriteAccess :=      [Reduction Type: NONE] [Scalar: 0]
+                    { Stmt_for_body3[i0, i1] -&gt; MemRef_A[i0, i1] };
+                MustWriteAccess :=      [Reduction Type: NONE] [Scalar: 0]
+                    { Stmt_for_body3[i0, i1] -&gt; MemRef_B[i0, i1] };
+        }
+[...]Printing analysis &#39;Polly - Create polyhedral description of Scops&#39; for region: &#39;for.cond1.preheader =&gt; for.end30&#39; in function &#39;main&#39;:
+    Function: main
+    Region: %for.cond1.preheader---%for.end30
+    Max Loop Depth:  3
+    Invariant Accesses: {
+    }
+    Context:
+    {  :  }
+    Assumed Context:
+    {  :  }
+    Invalid Context:
+    {  : 1 = 0 }
+    Arrays {
+        float MemRef_C[*][1536]; // Element size 4
+        float MemRef_A[*][1536]; // Element size 4
+        float MemRef_B[*][1536]; // Element size 4
+    }
+    Arrays (Bounds as pw_affs) {
+        float MemRef_C[*][ { [] -&gt; [(1536)] } ]; // Element size 4
+        float MemRef_A[*][ { [] -&gt; [(1536)] } ]; // Element size 4
+        float MemRef_B[*][ { [] -&gt; [(1536)] } ]; // Element size 4
+    }
+    Alias Groups (0):
+        n/a
+    Statements {
+        Stmt_for_body3
+            Domain :=
+                { Stmt_for_body3[i0, i1] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535 };
+            Schedule :=
+                { Stmt_for_body3[i0, i1] -&gt; [i0, i1, 0, 0] };
+            MustWriteAccess :=  [Reduction Type: NONE] [Scalar: 0]
+                { Stmt_for_body3[i0, i1] -&gt; MemRef_C[i0, i1] };
+        Stmt_for_body8
+            Domain :=
+                { Stmt_for_body8[i0, i1, i2] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535 and 0 &lt;= i2 &lt;= 1535 };
+            Schedule :=
+                { Stmt_for_body8[i0, i1, i2] -&gt; [i0, i1, 1, i2] };
+            ReadAccess :=       [Reduction Type: NONE] [Scalar: 0]
+                { Stmt_for_body8[i0, i1, i2] -&gt; MemRef_C[i0, i1] };
+            ReadAccess :=       [Reduction Type: NONE] [Scalar: 0]
+                { Stmt_for_body8[i0, i1, i2] -&gt; MemRef_A[i0, i2] };
+            ReadAccess :=       [Reduction Type: NONE] [Scalar: 0]
+                { Stmt_for_body8[i0, i1, i2] -&gt; MemRef_B[i2, i1] };
+            MustWriteAccess :=  [Reduction Type: NONE] [Scalar: 0]
+                { Stmt_for_body8[i0, i1, i2] -&gt; MemRef_C[i0, i1] };
+    }
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="show-the-dependences-for-the-scops">
+<h3>6. <strong>Show the dependences for the SCoPs</strong><a class="headerlink" href="#show-the-dependences-for-the-scops" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-use-llvm-names -polly-dependences -analyze matmul.preopt.ll -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span>[...]Printing analysis &#39;Polly - Calculate dependences&#39; for region: &#39;for.cond1.preheader =&gt; for.end19&#39; in function &#39;init_array&#39;:
+        RAW dependences:
+                {  }
+        WAR dependences:
+                {  }
+        WAW dependences:
+                {  }
+        Reduction dependences:
+                n/a
+        Transitive closure of reduction dependences:
+                {  }
+[...]Printing analysis &#39;Polly - Calculate dependences&#39; for region: &#39;for.cond1.preheader =&gt; for.end30&#39; in function &#39;main&#39;:
+        RAW dependences:
+                { Stmt_for_body3[i0, i1] -&gt; Stmt_for_body8[i0, i1, 0] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535; Stmt_for_body8[i0, i1, i2] -&gt; Stmt_for_body8[i0, i1, 1 + i2] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535 and 0 &lt;= i2 &lt;= 1534 }
+        WAR dependences:
+                {  }
+        WAW dependences:
+                { Stmt_for_body3[i0, i1] -&gt; Stmt_for_body8[i0, i1, 0] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535; Stmt_for_body8[i0, i1, i2] -&gt; Stmt_for_body8[i0, i1, 1 + i2] : 0 &lt;= i0 &lt;= 1535 and 0 &lt;= i1 &lt;= 1535 and 0 &lt;= i2 &lt;= 1534 }
+        Reduction dependences:
+                n/a
+        Transitive closure of reduction dependences:
+                {  }
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="export-jscop-files">
+<h3>7. <strong>Export jscop files</strong><a class="headerlink" href="#export-jscop-files" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-use-llvm-names -polly-export-jscop matmul.preopt.ll -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span><span class="p">[...]</span><span class="n">Writing</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end19&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;init_array&#39;</span> <span class="k">to</span> <span class="s1">&#39;./init_array___%for.cond1.preheader---%for.end19.jscop&#39;</span><span class="p">.</span>
+
+<span class="n">Writing</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end30&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;main&#39;</span> <span class="k">to</span> <span class="s1">&#39;./main___%for.cond1.preheader---%for.end30.jscop&#39;</span><span class="p">.</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="import-the-changed-jscop-files-and-print-the-updated-scop-structure-optional">
+<h3>8. <strong>Import the changed jscop files and print the updated SCoP structure (optional)</strong><a class="headerlink" href="#import-the-changed-jscop-files-and-print-the-updated-scop-structure-optional" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>Polly can reimport jscop files, in which the schedules of the statements
+are changed. These changed schedules are used to descripe
+transformations. It is possible to import different jscop files by
+providing the postfix of the jscop file that is imported.</p>
+<p>We apply three different transformations on the SCoP in the main
+function. The jscop files describing these transformations are
+hand written (and available in docs/experiments/matmul).</p>
+<p><strong>No Polly</strong></p>
+<p>As a baseline we do not call any Polly code generation, but only apply the normal -O3 optimizations.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-use-llvm-names matmul.preopt.ll -polly-import-jscop -polly-ast -analyze -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="p">[...]</span>
+<span class="o">::</span> <span class="n">isl</span> <span class="n">ast</span> <span class="o">::</span> <span class="n">main</span> <span class="o">::</span> <span class="o">%</span><span class="k">for</span><span class="p">.</span><span class="n">cond1</span><span class="p">.</span><span class="n">preheader</span><span class="o">---%</span><span class="k">for</span><span class="p">.</span><span class="n">end30</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c0</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c0</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c0</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">Stmt_for_body3</span><span class="p">(</span><span class="n">c0</span><span class="p">,</span> <span class="n">c1</span><span class="p">);</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c3</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c3</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c3</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+          <span class="n">Stmt_for_body8</span><span class="p">(</span><span class="n">c0</span><span class="p">,</span> <span class="n">c1</span><span class="p">,</span> <span class="n">c3</span><span class="p">);</span>
+      <span class="p">}</span>
+
+<span class="k">else</span>
+    <span class="p">{</span>  <span class="cm">/* original code */</span> <span class="p">}</span>
+<span class="p">[...]</span>
+</pre></div>
+</div>
+<p><strong>Loop Interchange (and Fission to allow the interchange)</strong></p>
+<p>We split the loops and can now apply an interchange of the loop dimensions that enumerate Stmt_for_body8.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-use-llvm-names matmul.preopt.ll -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged -polly-ast -analyze -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="p">[...]</span>
+<span class="o">::</span> <span class="n">isl</span> <span class="n">ast</span> <span class="o">::</span> <span class="n">main</span> <span class="o">::</span> <span class="o">%</span><span class="k">for</span><span class="p">.</span><span class="n">cond1</span><span class="p">.</span><span class="n">preheader</span><span class="o">---%</span><span class="k">for</span><span class="p">.</span><span class="n">end30</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="p">{</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c2</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c2</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c2</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+          <span class="n">Stmt_for_body3</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="n">c2</span><span class="p">);</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c2</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c2</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c2</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+          <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c3</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c3</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c3</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">Stmt_for_body8</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="n">c3</span><span class="p">,</span> <span class="n">c2</span><span class="p">);</span>
+    <span class="p">}</span>
+
+<span class="k">else</span>
+    <span class="p">{</span>  <span class="cm">/* original code */</span> <span class="p">}</span>
+<span class="p">[...]</span>
+</pre></div>
+</div>
+<p><strong>Interchange + Tiling</strong></p>
+<p>In addition to the interchange we now tile the second loop nest.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-use-llvm-names matmul.preopt.ll -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged+tiled -polly-ast -analyze -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="p">[...]</span>
+<span class="o">::</span> <span class="n">isl</span> <span class="n">ast</span> <span class="o">::</span> <span class="n">main</span> <span class="o">::</span> <span class="o">%</span><span class="k">for</span><span class="p">.</span><span class="n">cond1</span><span class="p">.</span><span class="n">preheader</span><span class="o">---%</span><span class="k">for</span><span class="p">.</span><span class="n">end30</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="p">{</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c2</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c2</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c2</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+          <span class="n">Stmt_for_body3</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="n">c2</span><span class="p">);</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">64</span><span class="p">)</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c2</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c2</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c2</span> <span class="o">+=</span> <span class="mi">64</span><span class="p">)</span>
+          <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c3</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c3</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c3</span> <span class="o">+=</span> <span class="mi">64</span><span class="p">)</span>
+            <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c4</span> <span class="o">=</span> <span class="n">c1</span><span class="p">;</span> <span class="n">c4</span> <span class="o">&lt;=</span> <span class="n">c1</span> <span class="o">+</span> <span class="mi">63</span><span class="p">;</span> <span class="n">c4</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+              <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c5</span> <span class="o">=</span> <span class="n">c3</span><span class="p">;</span> <span class="n">c5</span> <span class="o">&lt;=</span> <span class="n">c3</span> <span class="o">+</span> <span class="mi">63</span><span class="p">;</span> <span class="n">c5</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c6</span> <span class="o">=</span> <span class="n">c2</span><span class="p">;</span> <span class="n">c6</span> <span class="o">&lt;=</span> <span class="n">c2</span> <span class="o">+</span> <span class="mi">63</span><span class="p">;</span> <span class="n">c6</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+                  <span class="n">Stmt_for_body8</span><span class="p">(</span><span class="n">c4</span><span class="p">,</span> <span class="n">c6</span><span class="p">,</span> <span class="n">c5</span><span class="p">);</span>
+    <span class="p">}</span>
+
+<span class="k">else</span>
+    <span class="p">{</span>  <span class="cm">/* original code */</span> <span class="p">}</span>
+<span class="p">[...]</span>
+</pre></div>
+</div>
+<p><strong>Interchange + Tiling + Strip-mining to prepare vectorization</strong></p>
+<p>To later allow vectorization we create a so called trivially
+parallelizable loop. It is innermost, parallel and has only four
+iterations. It can be replaced by 4-element SIMD instructions.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -basic-aa -polly-use-llvm-names matmul.preopt.ll -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged+tiled -polly-ast -analyze -polly-process-unprofitable
+</pre></div>
+</div>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="p">[...]</span>
+<span class="o">::</span> <span class="n">isl</span> <span class="n">ast</span> <span class="o">::</span> <span class="n">main</span> <span class="o">::</span> <span class="o">%</span><span class="k">for</span><span class="p">.</span><span class="n">cond1</span><span class="p">.</span><span class="n">preheader</span><span class="o">---%</span><span class="k">for</span><span class="p">.</span><span class="n">end30</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="p">{</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c2</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c2</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c2</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+          <span class="n">Stmt_for_body3</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="n">c2</span><span class="p">);</span>
+      <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c1</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c1</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c1</span> <span class="o">+=</span> <span class="mi">64</span><span class="p">)</span>
+        <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c2</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c2</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c2</span> <span class="o">+=</span> <span class="mi">64</span><span class="p">)</span>
+          <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c3</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">c3</span> <span class="o">&lt;=</span> <span class="mi">1535</span><span class="p">;</span> <span class="n">c3</span> <span class="o">+=</span> <span class="mi">64</span><span class="p">)</span>
+            <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c4</span> <span class="o">=</span> <span class="n">c1</span><span class="p">;</span> <span class="n">c4</span> <span class="o">&lt;=</span> <span class="n">c1</span> <span class="o">+</span> <span class="mi">63</span><span class="p">;</span> <span class="n">c4</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+              <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c5</span> <span class="o">=</span> <span class="n">c3</span><span class="p">;</span> <span class="n">c5</span> <span class="o">&lt;=</span> <span class="n">c3</span> <span class="o">+</span> <span class="mi">63</span><span class="p">;</span> <span class="n">c5</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c6</span> <span class="o">=</span> <span class="n">c2</span><span class="p">;</span> <span class="n">c6</span> <span class="o">&lt;=</span> <span class="n">c2</span> <span class="o">+</span> <span class="mi">63</span><span class="p">;</span> <span class="n">c6</span> <span class="o">+=</span> <span class="mi">4</span><span class="p">)</span>
+                  <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">c7</span> <span class="o">=</span> <span class="n">c6</span><span class="p">;</span> <span class="n">c7</span> <span class="o">&lt;=</span> <span class="n">c6</span> <span class="o">+</span> <span class="mi">3</span><span class="p">;</span> <span class="n">c7</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">)</span>
+                    <span class="n">Stmt_for_body8</span><span class="p">(</span><span class="n">c4</span><span class="p">,</span> <span class="n">c7</span><span class="p">,</span> <span class="n">c5</span><span class="p">);</span>
+    <span class="p">}</span>
+
+<span class="k">else</span>
+    <span class="p">{</span>  <span class="cm">/* original code */</span> <span class="p">}</span>
+<span class="p">[...]</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="codegenerate-the-scops">
+<h3>9. <strong>Codegenerate the SCoPs</strong><a class="headerlink" href="#codegenerate-the-scops" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>This generates new code for the SCoPs detected by polly. If
+-polly-import-jscop is present, transformations specified in the
+imported jscop files will be applied.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -S matmul.preopt.ll <span class="p">|</span> opt -S -O3 -o matmul.normalopt.ll
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -S matmul.preopt.ll -basic-aa -polly-use-llvm-names -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged -polly-codegen -polly-process-unprofitable <span class="p">|</span> opt -S -O3 -o matmul.polly.interchanged.ll
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span><span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end19&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;init_array&#39;</span> <span class="k">from</span> <span class="s1">&#39;./init_array___%for.cond1.preheader---%for.end19.jscop.interchanged&#39;</span><span class="p">.</span>
+<span class="n">File</span> <span class="n">could</span> <span class="k">not</span> <span class="n">be</span> <span class="k">read</span><span class="p">:</span> <span class="k">No</span> <span class="n">such</span> <span class="n">file</span> <span class="k">or</span> <span class="n">directory</span>
+<span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end30&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;main&#39;</span> <span class="k">from</span> <span class="s1">&#39;./main___%for.cond1.preheader---%for.end30.jscop.interchanged&#39;</span><span class="p">.</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -S matmul.preopt.ll -basic-aa -polly-use-llvm-names -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged+tiled -polly-codegen -polly-process-unprofitable <span class="p">|</span> opt -S -O3 -o matmul.polly.interchanged+tiled.ll
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span><span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end19&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;init_array&#39;</span> <span class="k">from</span> <span class="s1">&#39;./init_array___%for.cond1.preheader---%for.end19.jscop.interchanged+tiled&#39;</span><span class="p">.</span>
+<span class="n">File</span> <span class="n">could</span> <span class="k">not</span> <span class="n">be</span> <span class="k">read</span><span class="p">:</span> <span class="k">No</span> <span class="n">such</span> <span class="n">file</span> <span class="k">or</span> <span class="n">directory</span>
+<span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end30&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;main&#39;</span> <span class="k">from</span> <span class="s1">&#39;./main___%for.cond1.preheader---%for.end30.jscop.interchanged+tiled&#39;</span><span class="p">.</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -S matmul.preopt.ll -basic-aa -polly-use-llvm-names -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged+tiled+vector -polly-codegen -polly-vectorizer<span class="o">=</span>polly -polly-process-unprofitable <span class="p">|</span> opt -S -O3 -o matmul.polly.interchanged+tiled+vector.ll
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span><span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end19&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;init_array&#39;</span> <span class="k">from</span> <span class="s1">&#39;./init_array___%for.cond1.preheader---%for.end19.jscop.interchanged+tiled+vector&#39;</span><span class="p">.</span>
+<span class="n">File</span> <span class="n">could</span> <span class="k">not</span> <span class="n">be</span> <span class="k">read</span><span class="p">:</span> <span class="k">No</span> <span class="n">such</span> <span class="n">file</span> <span class="k">or</span> <span class="n">directory</span>
+<span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end30&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;main&#39;</span> <span class="k">from</span> <span class="s1">&#39;./main___%for.cond1.preheader---%for.end30.jscop.interchanged+tiled+vector&#39;</span><span class="p">.</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> opt -S matmul.preopt.ll -basic-aa -polly-use-llvm-names -polly-import-jscop -polly-import-jscop-postfix<span class="o">=</span>interchanged+tiled+vector -polly-codegen -polly-vectorizer<span class="o">=</span>polly -polly-parallel -polly-process-unprofitable <span class="p">|</span> opt -S -O3 -o matmul.polly.interchanged+tiled+openmp.ll
+</pre></div>
+</div>
+<div class="highlight-guess notranslate"><div class="highlight"><pre><span></span><span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end19&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;init_array&#39;</span> <span class="k">from</span> <span class="s1">&#39;./init_array___%for.cond1.preheader---%for.end19.jscop.interchanged+tiled+vector&#39;</span><span class="p">.</span>
+<span class="n">File</span> <span class="n">could</span> <span class="k">not</span> <span class="n">be</span> <span class="k">read</span><span class="p">:</span> <span class="k">No</span> <span class="n">such</span> <span class="n">file</span> <span class="k">or</span> <span class="n">directory</span>
+<span class="n">Reading</span> <span class="n">JScop</span> <span class="s1">&#39;%for.cond1.preheader---%for.end30&#39;</span> <span class="k">in</span> <span class="k">function</span> <span class="s1">&#39;main&#39;</span> <span class="k">from</span> <span class="s1">&#39;./main___%for.cond1.preheader---%for.end30.jscop.interchanged+tiled+vector&#39;</span><span class="p">.</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="create-the-executables">
+<h3>10. <strong>Create the executables</strong><a class="headerlink" href="#create-the-executables" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> llc matmul.normalopt.ll -o matmul.normalopt.s -relocation-model<span class="o">=</span>pic
+<span class="gp">$</span> gcc matmul.normalopt.s -o matmul.normalopt.exe
+<span class="gp">$</span> llc matmul.polly.interchanged.ll -o matmul.polly.interchanged.s -relocation-model<span class="o">=</span>pic
+<span class="gp">$</span> gcc matmul.polly.interchanged.s -o matmul.polly.interchanged.exe
+<span class="gp">$</span> llc matmul.polly.interchanged+tiled.ll -o matmul.polly.interchanged+tiled.s -relocation-model<span class="o">=</span>pic
+<span class="gp">$</span> gcc matmul.polly.interchanged+tiled.s -o matmul.polly.interchanged+tiled.exe
+<span class="gp">$</span> llc matmul.polly.interchanged+tiled+vector.ll -o matmul.polly.interchanged+tiled+vector.s -relocation-model<span class="o">=</span>pic
+<span class="gp">$</span> gcc matmul.polly.interchanged+tiled+vector.s -o matmul.polly.interchanged+tiled+vector.exe
+<span class="gp">$</span> llc matmul.polly.interchanged+tiled+vector+openmp.ll -o matmul.polly.interchanged+tiled+vector+openmp.s -relocation-model<span class="o">=</span>pic
+<span class="gp">$</span> gcc matmul.polly.interchanged+tiled+vector+openmp.s -lgomp -o matmul.polly.interchanged+tiled+vector+openmp.exe
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+<div class="section" id="compare-the-runtime-of-the-executables">
+<h3>11. <strong>Compare the runtime of the executables</strong><a class="headerlink" href="#compare-the-runtime-of-the-executables" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>By comparing the runtimes of the different code snippets we see that a
+simple loop interchange gives here the largest performance boost.
+However in this case, adding vectorization and using OpenMP degrades
+the performance.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$</span> <span class="nb">time</span> ./matmul.normalopt.exe
+
+<span class="go">real    0m11.295s</span>
+<span class="go">user    0m11.288s</span>
+<span class="go">sys     0m0.004s</span>
+<span class="gp">$</span> <span class="nb">time</span> ./matmul.polly.interchanged.exe
+
+<span class="go">real    0m0.988s</span>
+<span class="go">user    0m0.980s</span>
+<span class="go">sys     0m0.008s</span>
+<span class="gp">$</span> <span class="nb">time</span> ./matmul.polly.interchanged+tiled.exe
+
+<span class="go">real    0m0.830s</span>
+<span class="go">user    0m0.816s</span>
+<span class="go">sys     0m0.012s</span>
+<span class="gp">$</span> <span class="nb">time</span> ./matmul.polly.interchanged+tiled+vector.exe
+
+<span class="go">real    0m5.430s</span>
+<span class="go">user    0m5.424s</span>
+<span class="go">sys     0m0.004s</span>
+<span class="gp">$</span> <span class="nb">time</span> ./matmul.polly.interchanged+tiled+vector+openmp.exe
+
+<span class="go">real    0m3.184s</span>
+<span class="go">user    0m11.972s</span>
+<span class="go">sys     0m0.036s</span>
+</pre></div>
+</div>
+</div></blockquote>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UsingPollyWithClang.html">Using Polly with Clang</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="TipsAndTricks.html">Tips and Tricks on using and contributing to Polly</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2010-2021, The Polly Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

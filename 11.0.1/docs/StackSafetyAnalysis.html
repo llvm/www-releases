@@ -1,0 +1,181 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stack Safety Analysis &#8212; LLVM 11 documentation</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Support Library" href="SupportLibrary.html" />
+    <link rel="prev" title="Source Level Debugging with LLVM" href="SourceLevelDebugging.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="SupportLibrary.html" title="Support Library"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="SourceLevelDebugging.html" title="Source Level Debugging with LLVM"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/StackSafetyAnalysis.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="stack-safety-analysis">
+<h1>Stack Safety Analysis<a class="headerlink" href="#stack-safety-analysis" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>The Stack Safety Analysis determines if stack allocated variables can be
+considered ‘safe’ from memory access bugs.</p>
+<p>The primary purpose of the analysis is to be used by sanitizers to avoid
+unnecessary instrumentation of ‘safe’ variables. SafeStack is going to be the
+first user.</p>
+<p>‘safe’ variables can be defined as variables that can not be used out-of-scope
+(e.g. use-after-return) or accessed out of bounds. In the future it can be
+extended to track other variable properties. E.g. we plan to extend
+implementation with a check to make sure that variable is always initialized
+before every read to optimize use-of-uninitialized-memory checks.</p>
+</div>
+<div class="section" id="how-it-works">
+<h2>How it works<a class="headerlink" href="#how-it-works" title="Permalink to this headline">¶</a></h2>
+<p>The analysis is implemented in two stages:</p>
+<p>The intra-procedural, or ‘local’, stage performs a depth-first search inside
+functions to collect all uses of each alloca, including loads/stores and uses as
+arguments functions. After this stage we know which parts of the alloca are used
+by functions itself but we don’t know what happens after it is passed as
+an argument to another function.</p>
+<p>The inter-procedural, or ‘global’, stage, resolves what happens to allocas after
+they are passed as function arguments. This stage performs a depth-first search
+on function calls inside a single module and propagates allocas usage through
+functions calls.</p>
+<p>When used with ThinLTO, the global stage performs a whole program analysis over
+the Module Summary Index.</p>
+</div>
+<div class="section" id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Permalink to this headline">¶</a></h2>
+<p>The analysis is covered with lit tests.</p>
+<p>We expect that users can tolerate false classification of variables as
+‘unsafe’ when in-fact it’s ‘safe’. This may lead to inefficient code. However, we
+can’t accept false ‘safe’ classification which may cause sanitizers to miss actual
+bugs in instrumented code. To avoid that we want additional validation tool.</p>
+<p>AddressSanitizer may help with this validation. We can instrument all variables
+as usual but additionally store stack-safe information in the
+<code class="docutils literal notranslate"><span class="pre">ASanStackVariableDescription</span></code>. Then if AddressSanitizer detects a bug on
+a ‘safe’ variable we can produce an additional report to let the user know that
+probably Stack Safety Analysis failed and we should check for a bug in the
+compiler.</p>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="SupportLibrary.html" title="Support Library"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="SourceLevelDebugging.html" title="Source Level Debugging with LLVM"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2003-2021, LLVM Project.
+      Last updated on 2021-01-15.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
