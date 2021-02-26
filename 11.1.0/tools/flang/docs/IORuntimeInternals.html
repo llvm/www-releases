@@ -1,0 +1,475 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fortran I/O Runtime Library Internal Design &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Fortran 2018 Grammar" href="f2018-grammar.html" />
+    <link rel="prev" title="Design: Fortran IR" href="FortranIR.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="f2018-grammar.html" title="Fortran 2018 Grammar"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="FortranIR.html" title="Design: Fortran IR"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/master/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/IORuntimeInternals.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+--><div class="section" id="fortran-i-o-runtime-library-internal-design">
+<h1>Fortran I/O Runtime Library Internal Design<a class="headerlink" href="#fortran-i-o-runtime-library-internal-design" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview-of-classes" id="id1">Overview of Classes</a></p>
+<ul>
+<li><p><a class="reference internal" href="#terminator" id="id2"><code class="docutils literal notranslate"><span class="pre">Terminator</span></code></a></p></li>
+<li><p><a class="reference internal" href="#ioerrorhandler" id="id3"><code class="docutils literal notranslate"><span class="pre">IoErrorHandler</span></code></a></p></li>
+<li><p><a class="reference internal" href="#mutablemodes" id="id4"><code class="docutils literal notranslate"><span class="pre">MutableModes</span></code></a></p></li>
+<li><p><a class="reference internal" href="#dataedit" id="id5"><code class="docutils literal notranslate"><span class="pre">DataEdit</span></code></a></p></li>
+<li><p><a class="reference internal" href="#formatcontrol" id="id6"><code class="docutils literal notranslate"><span class="pre">FormatControl&lt;&gt;</span></code></a></p></li>
+<li><p><a class="reference internal" href="#openfile" id="id7"><code class="docutils literal notranslate"><span class="pre">OpenFile</span></code></a></p></li>
+<li><p><a class="reference internal" href="#connectionstate" id="id8"><code class="docutils literal notranslate"><span class="pre">ConnectionState</span></code></a></p></li>
+<li><p><a class="reference internal" href="#internaldescriptorunit" id="id9"><code class="docutils literal notranslate"><span class="pre">InternalDescriptorUnit</span></code></a></p></li>
+<li><p><a class="reference internal" href="#fileframe" id="id10"><code class="docutils literal notranslate"><span class="pre">FileFrame&lt;&gt;</span></code></a></p></li>
+<li><p><a class="reference internal" href="#externalfileunit" id="id11"><code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code></a></p></li>
+<li><p><a class="reference internal" href="#iostatementbase" id="id12"><code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code></a></p></li>
+<li><p><a class="reference internal" href="#iostatementstate" id="id13"><code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#a-narrative-overview-of-print-hello-world" id="id14">A Narrative Overview Of <code class="docutils literal notranslate"><span class="pre">PRINT</span> <span class="pre">*,</span> <span class="pre">'HELLO,</span> <span class="pre">WORLD'</span></code></a></p></li>
+</ul>
+</div>
+<p>This note is meant to be an overview of the design of the <em>implementation</em>
+of the f18 Fortran compiler’s runtime support library for I/O statements.</p>
+<p>The <em>interface</em> to the I/O runtime support library is defined in the
+C++ header file <code class="docutils literal notranslate"><span class="pre">runtime/io-api.h</span></code>.
+This interface was designed to minimize the amount of complexity exposed
+to its clients, which are of course the sequences of calls generated by
+the compiler to implement each I/O statement.
+By keeping this interface as simple as possible, we hope that we have
+lowered the risk of future incompatible changes that would necessitate
+recompilation of Fortran codes in order to link with later versions of
+the runtime library.
+As one will see in <code class="docutils literal notranslate"><span class="pre">io-api.h</span></code>, the interface is also directly callable
+from C and C++ programs.</p>
+<p>The I/O facilities of the Fortran 2018 language are specified in the
+language standard in its clauses 12 (I/O statements) and 13 (<code class="docutils literal notranslate"><span class="pre">FORMAT</span></code>).
+It’s a complicated collection of language features:</p>
+<ul class="simple">
+<li><p>Files can comprise <em>records</em> or <em>streams</em>.</p></li>
+<li><p>Records can be fixed-length or variable-length.</p></li>
+<li><p>Record files can be accessed sequentially or directly (random access).</p></li>
+<li><p>Files can be <em>formatted</em>, or <em>unformatted</em> raw bits.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> scalars and arrays can be used as if they were
+fixed-length formatted sequential record files.</p></li>
+<li><p>Formatted I/O can be under control of a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statement
+or <code class="docutils literal notranslate"><span class="pre">FMT=</span></code> specifier, <em>list-directed</em> with default formatting chosen
+by the runtime, or <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code>, in which a collection of variables
+can be given a name and passed as a group to the runtime library.</p></li>
+<li><p>Sequential records of a file can be partially processed by one
+or more <em>non-advancing</em> I/O statements and eventually completed by
+another.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> strings can manipulate the position in the current
+record arbitrarily, causing re-reading or overwriting.</p></li>
+<li><p>Floating-point output formatting supports more rounding modes
+than the IEEE standard for floating-point arithmetic.</p></li>
+</ul>
+<p>The Fortran I/O runtime support library is written in C++17, and
+uses some C++17 standard library facilities, but it is intended
+to not have any link-time dependences on the C++ runtime support
+library or any LLVM libraries.
+This is important because there are at least two C++ runtime support
+libraries, and we don’t want Fortran application builders to have to
+build multiple versions of their codes; neither do we want to require
+them to ship LLVM libraries along with their products.</p>
+<p>Consequently, dynamic memory allocation in the Fortran runtime
+uses only C’s <code class="docutils literal notranslate"><span class="pre">malloc()</span></code> and <code class="docutils literal notranslate"><span class="pre">free()</span></code> functions, and the few
+C++ standard class templates that we instantiate in the library have been
+modified with optional template arguments that override their
+allocators and deallocators.</p>
+<p>Conversions between the many binary floating-point formats supported
+by f18 and their decimal representations are performed with the same
+template library of fast conversion algorithms used to interpret
+floating-point values in Fortran source programs and to emit them
+to module files.</p>
+<div class="section" id="overview-of-classes">
+<h2><a class="toc-backref" href="#id1">Overview of Classes</a><a class="headerlink" href="#overview-of-classes" title="Permalink to this headline">¶</a></h2>
+<p>A suite of C++ classes and class templates are composed to construct
+the Fortran I/O runtime support library.
+They (mostly) reside in the C++ namespace <code class="docutils literal notranslate"><span class="pre">Fortran::runtime::io</span></code>.
+They are summarized here in a bottom-up order of dependence.</p>
+<p>The header and C++ implementation source file names of these
+classes are in the process of being vigorously rearranged and
+modified; use <code class="docutils literal notranslate"><span class="pre">grep</span></code> or an IDE to discover these classes in
+the source for now.  (Sorry!)</p>
+<div class="section" id="terminator">
+<h3><a class="toc-backref" href="#id2"><code class="docutils literal notranslate"><span class="pre">Terminator</span></code></a><a class="headerlink" href="#terminator" title="Permalink to this headline">¶</a></h3>
+<p>A general facility for the entire library, <code class="docutils literal notranslate"><span class="pre">Terminator</span></code> latches a
+source program statement location in terms of an unowned pointer to
+its source file path name and line number and uses them to construct
+a fatal error message if needed.
+It is used for both user program errors and internal runtime library crashes.</p>
+</div>
+<div class="section" id="ioerrorhandler">
+<h3><a class="toc-backref" href="#id3"><code class="docutils literal notranslate"><span class="pre">IoErrorHandler</span></code></a><a class="headerlink" href="#ioerrorhandler" title="Permalink to this headline">¶</a></h3>
+<p>When I/O error conditions arise at runtime that the Fortran program
+might have the privilege to handle itself via <code class="docutils literal notranslate"><span class="pre">ERR=</span></code>, <code class="docutils literal notranslate"><span class="pre">END=</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">EOR=</span></code> labels and/or by an <code class="docutils literal notranslate"><span class="pre">IOSTAT=</span></code> variable, this subclass of
+<code class="docutils literal notranslate"><span class="pre">Terminator</span></code> is used to either latch the error indication or to crash.
+It sorts out priorities in the case of multiple errors and determines
+the final <code class="docutils literal notranslate"><span class="pre">IOSTAT=</span></code> value at the end of an I/O statement.</p>
+</div>
+<div class="section" id="mutablemodes">
+<h3><a class="toc-backref" href="#id4"><code class="docutils literal notranslate"><span class="pre">MutableModes</span></code></a><a class="headerlink" href="#mutablemodes" title="Permalink to this headline">¶</a></h3>
+<p>Fortran’s formatted I/O statements are affected by a suite of
+modes that can be configured by <code class="docutils literal notranslate"><span class="pre">OPEN</span></code> statements, overridden by
+data transfer I/O statement control lists, and further overridden
+between data items with control edit descriptors in a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> string.
+These modes are represented with a <code class="docutils literal notranslate"><span class="pre">MutableModes</span></code> instance, and these
+are instantiated and copied where one would expect them to be in
+order to properly isolate their modifications.
+The modes in force at the time each data item is processed constitute
+a member of each <code class="docutils literal notranslate"><span class="pre">DataEdit</span></code>.</p>
+</div>
+<div class="section" id="dataedit">
+<h3><a class="toc-backref" href="#id5"><code class="docutils literal notranslate"><span class="pre">DataEdit</span></code></a><a class="headerlink" href="#dataedit" title="Permalink to this headline">¶</a></h3>
+<p>Represents a single data edit descriptor from a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statement
+or <code class="docutils literal notranslate"><span class="pre">FMT=</span></code> character value, with some hidden extensions to also
+support formatting of list-directed transfers.
+It holds an instance of <code class="docutils literal notranslate"><span class="pre">MutableModes</span></code>, and also has a repetition
+count for when an array appears as a data item in the <em>io-list</em>.
+For simplicity and efficiency, each data edit descriptor is
+encoded in the <code class="docutils literal notranslate"><span class="pre">DataEdit</span></code> as a simple capitalized character
+(or two) and some optional field widths.</p>
+</div>
+<div class="section" id="formatcontrol">
+<h3><a class="toc-backref" href="#id6"><code class="docutils literal notranslate"><span class="pre">FormatControl&lt;&gt;</span></code></a><a class="headerlink" href="#formatcontrol" title="Permalink to this headline">¶</a></h3>
+<p>This class template traverses a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statement’s contents (or <code class="docutils literal notranslate"><span class="pre">FMT=</span></code>
+character value) to extract data edit descriptors like <code class="docutils literal notranslate"><span class="pre">E20.14</span></code> to
+serve each item in an I/O data transfer statement’s <em>io-list</em>,
+making callbacks to an instance of its class template argument
+along the way to effect character literal output and record
+positioning.
+The Fortran language standard defines formatted I/O as if the <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code>
+string were driving the traversal of the data items in the <em>io-list</em>,
+but our implementation reverses that perspective to allow a more
+convenient (for the compiler) I/O runtime support library API design
+in which each data item is presented to the library with a distinct
+type-dependent call.</p>
+<p>Clients of <code class="docutils literal notranslate"><span class="pre">FormatControl</span></code> instantiations call its <code class="docutils literal notranslate"><span class="pre">GetNextDataEdit()</span></code>
+member function to acquire the next data edit descriptor to be processed
+from the format, and <code class="docutils literal notranslate"><span class="pre">FinishOutput()</span></code> to flush out any remaining
+output strings or record positionings at the end of the <em>io-list</em>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">DefaultFormatControlCallbacks</span></code> structure summarizes the API
+expected by <code class="docutils literal notranslate"><span class="pre">FormatControl</span></code> from its class template actual arguments.</p>
+</div>
+<div class="section" id="openfile">
+<h3><a class="toc-backref" href="#id7"><code class="docutils literal notranslate"><span class="pre">OpenFile</span></code></a><a class="headerlink" href="#openfile" title="Permalink to this headline">¶</a></h3>
+<p>This class encapsulates all (I hope) the operating system interfaces
+used to interact with the host’s filesystems for operations on
+external units.
+Asynchronous I/O interfaces are faked for now with synchronous
+operations and deferred results.</p>
+</div>
+<div class="section" id="connectionstate">
+<h3><a class="toc-backref" href="#id8"><code class="docutils literal notranslate"><span class="pre">ConnectionState</span></code></a><a class="headerlink" href="#connectionstate" title="Permalink to this headline">¶</a></h3>
+<p>An active connection to an external or internal unit maintains
+the common parts of its state in this subclass of <code class="docutils literal notranslate"><span class="pre">ConnectionAttributes</span></code>.
+The base class holds state that should not change during the
+lifetime of the connection, while the subclass maintains state
+that may change during I/O statement execution.</p>
+</div>
+<div class="section" id="internaldescriptorunit">
+<h3><a class="toc-backref" href="#id9"><code class="docutils literal notranslate"><span class="pre">InternalDescriptorUnit</span></code></a><a class="headerlink" href="#internaldescriptorunit" title="Permalink to this headline">¶</a></h3>
+<p>When I/O is being performed from/to a Fortran <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> array
+rather than an external file, this class manages the standard
+interoperable descriptor used to access its elements as records.
+It has the necessary interfaces to serve as an actual argument
+to the <code class="docutils literal notranslate"><span class="pre">FormatControl</span></code> class template.</p>
+</div>
+<div class="section" id="fileframe">
+<h3><a class="toc-backref" href="#id10"><code class="docutils literal notranslate"><span class="pre">FileFrame&lt;&gt;</span></code></a><a class="headerlink" href="#fileframe" title="Permalink to this headline">¶</a></h3>
+<p>This CRTP class template isolates all of the complexity involved between
+an external unit’s <code class="docutils literal notranslate"><span class="pre">OpenFile</span></code> and the buffering requirements
+imposed by the capabilities of Fortran <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> control edit
+descriptors that allow repositioning within the current record.
+Its interface enables its clients to define a “frame” (my term,
+not Fortran’s) that is a contiguous range of bytes that are
+or may soon be in the file.
+This frame is defined as a file offset and a byte size.
+The <code class="docutils literal notranslate"><span class="pre">FileFrame</span></code> instance manages an internal circular buffer
+with two essential guarantees:</p>
+<ol class="simple">
+<li><p>The most recently requested frame is present in the buffer
+and contiguous in memory.</p></li>
+<li><p>Any extra data after the frame that may have been read from
+the external unit will be preserved, so that it’s safe to
+read from a socket, pipe, or tape and not have to worry about
+repositioning and rereading.</p></li>
+</ol>
+<p>In end-of-file situations, it’s possible that a request to read
+a frame may come up short.</p>
+<p>As a CRTP class template, <code class="docutils literal notranslate"><span class="pre">FileFrame</span></code> accesses the raw filesystem
+facilities it needs from <code class="docutils literal notranslate"><span class="pre">*this</span></code>.</p>
+</div>
+<div class="section" id="externalfileunit">
+<h3><a class="toc-backref" href="#id11"><code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code></a><a class="headerlink" href="#externalfileunit" title="Permalink to this headline">¶</a></h3>
+<p>This class mixes in <code class="docutils literal notranslate"><span class="pre">ConnectionState</span></code>, <code class="docutils literal notranslate"><span class="pre">OpenFile</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">FileFrame&lt;ExternalFileUnit&gt;</span></code> to represent the state of an open
+(or soon to be opened) external file descriptor as a Fortran
+I/O unit.
+It has the contextual APIs required to serve as a template actual
+argument to <code class="docutils literal notranslate"><span class="pre">FormatControl</span></code>.
+And it contains a <code class="docutils literal notranslate"><span class="pre">std::variant&lt;&gt;</span></code> suitable for holding the
+state of the active I/O statement in progress on the unit
+(see below).</p>
+<p><code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code> instances reside in a <code class="docutils literal notranslate"><span class="pre">Map</span></code> that is allocated
+as a static variable and indexed by Fortran unit number.
+Static member functions <code class="docutils literal notranslate"><span class="pre">LookUp()</span></code>, <code class="docutils literal notranslate"><span class="pre">LookUpOrCrash()</span></code>, and <code class="docutils literal notranslate"><span class="pre">LookUpOrCreate()</span></code>
+probe the map to convert Fortran <code class="docutils literal notranslate"><span class="pre">UNIT=</span></code> numbers from I/O statements
+into references to active units.</p>
+</div>
+<div class="section" id="iostatementbase">
+<h3><a class="toc-backref" href="#id12"><code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code></a><a class="headerlink" href="#iostatementbase" title="Permalink to this headline">¶</a></h3>
+<p>The subclasses of <code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code> each encapsulate and maintain
+the state of one active Fortran I/O statement across the several
+I/O runtime library API function calls it may comprise.
+The subclasses handle the distinctions between internal vs. external I/O,
+formatted vs. list-directed vs. unformatted I/O, input vs. output,
+and so on.</p>
+<p><code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code> inherits default <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> processing callbacks and
+an <code class="docutils literal notranslate"><span class="pre">IoErrorHandler</span></code>.
+Each of the <code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code> classes that pertain to formatted I/O
+support the contextual callback interfaces needed by <code class="docutils literal notranslate"><span class="pre">FormatControl</span></code>,
+overriding the default callbacks of the base class, which crash if
+called inappropriately (e.g., if a <code class="docutils literal notranslate"><span class="pre">CLOSE</span></code> statement somehow
+passes a data item from an <em>io-list</em>).</p>
+<p>The lifetimes of these subclasses’ instances each begin with a user
+program call to an I/O API routine with a name like <code class="docutils literal notranslate"><span class="pre">BeginExternalListOutput()</span></code>
+and persist until <code class="docutils literal notranslate"><span class="pre">EndIoStatement()</span></code> is called.</p>
+<p>To reduce dynamic memory allocation, <em>external</em> I/O statements allocate
+their per-statement state class instances in space reserved in the
+<code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code> instance.
+Internal I/O statements currently use dynamic allocation, but
+the I/O API supports a means whereby the code generated for the Fortran
+program may supply stack space to the I/O runtime support library
+for this purpose.</p>
+</div>
+<div class="section" id="iostatementstate">
+<h3><a class="toc-backref" href="#id13"><code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code></a><a class="headerlink" href="#iostatementstate" title="Permalink to this headline">¶</a></h3>
+<p>F18’s Fortran I/O runtime support library defines and implements an API
+that uses a sequence of function calls to implement each Fortran I/O
+statement.
+The state of each I/O statement in progress is maintained in some
+subclass of <code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code>, as noted above.
+The purpose of <code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code> is to provide generic access
+to the specific state classes without recourse to C++ <code class="docutils literal notranslate"><span class="pre">virtual</span></code>
+functions or function pointers, language features that may not be
+available to us in some important execution environments.
+<code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code> comprises a <code class="docutils literal notranslate"><span class="pre">std::variant&lt;&gt;</span></code> of wrapped references
+to the various possibilities, and uses <code class="docutils literal notranslate"><span class="pre">std::visit()</span></code> to
+access them as needed by the I/O API calls that process each specifier
+in the I/O <em>control-list</em> and each item in the <em>io-list</em>.</p>
+<p>Pointers to <code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code> instances are the <code class="docutils literal notranslate"><span class="pre">Cookie</span></code> type returned
+in the I/O API for <code class="docutils literal notranslate"><span class="pre">Begin...</span></code> I/O statement calls, passed back for
+the <em>control-list</em> specifiers and <em>io-list</em> data items, and consumed
+by the <code class="docutils literal notranslate"><span class="pre">EndIoStatement()</span></code> call at the end of the statement.</p>
+<p>Storage for <code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code> is reserved in <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code> for
+external I/O units, and in the various final subclasses for internal
+I/O statement states otherwise.</p>
+<p>Since Fortran permits a <code class="docutils literal notranslate"><span class="pre">CLOSE</span></code> statement to reference a nonexistent
+unit, the library has to treat that (expected to be rare) situation
+as a weird variation of internal I/O since there’s no <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code>
+available to hold its <code class="docutils literal notranslate"><span class="pre">IoStatementBase</span></code> subclass or <code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code>.</p>
+</div>
+</div>
+<div class="section" id="a-narrative-overview-of-print-hello-world">
+<h2><a class="toc-backref" href="#id14">A Narrative Overview Of <code class="docutils literal notranslate"><span class="pre">PRINT</span> <span class="pre">*,</span> <span class="pre">'HELLO,</span> <span class="pre">WORLD'</span></code></a><a class="headerlink" href="#a-narrative-overview-of-print-hello-world" title="Permalink to this headline">¶</a></h2>
+<ol class="simple">
+<li><p>When the compiled Fortran program begins execution at the <code class="docutils literal notranslate"><span class="pre">main()</span></code>
+entry point exported from its main program, it calls <code class="docutils literal notranslate"><span class="pre">ProgramStart()</span></code>
+with its arguments and environment.</p></li>
+<li><p>The generated code calls <code class="docutils literal notranslate"><span class="pre">BeginExternalListOutput()</span></code> to
+start the sequence of calls that implement the <code class="docutils literal notranslate"><span class="pre">PRINT</span></code> statement.
+Since the Fortran runtime I/O library has not yet been used in
+this process, its data structures are initialized on this
+first call, and Fortran I/O units 5 and 6 are connected with
+the stadard input and output file descriptors (respectively).
+The default unit code is converted to 6 and passed to
+<code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::LookUpOrCrash()</span></code>, which returns a reference to
+unit 6’s instance.</p></li>
+<li><p>We check that the unit was opened for formatted I/O.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::BeginIoStatement&lt;&gt;()</span></code> is called to initialize
+an instance of <code class="docutils literal notranslate"><span class="pre">ExternalListIoStatementState&lt;false&gt;</span></code> in the unit,
+point to it with an <code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code>, and return a reference to
+that object whose address will be the <code class="docutils literal notranslate"><span class="pre">Cookie</span></code> for this statement.</p></li>
+<li><p>The generated code calls <code class="docutils literal notranslate"><span class="pre">OutputAscii()</span></code> with that cookie and the
+address and length of the string.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OutputAscii()</span></code> confirms that the cookie corresponds to an output
+statement and determines that it’s list-directed.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ListDirectedStatementState&lt;false&gt;::EmitLeadingSpaceOrAdvance()</span></code>
+emits the required initial space on the new current output record
+by calling <code class="docutils literal notranslate"><span class="pre">IoStatementState::GetConnectionState()</span></code> to locate
+the connection state, determining from the record position state
+that the space is necessary, and calling <code class="docutils literal notranslate"><span class="pre">IoStatementState::Emit()</span></code>
+to cough it out.  That call is redirected to <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::Emit()</span></code>,
+which calls <code class="docutils literal notranslate"><span class="pre">FileFrame&lt;ExternalFileUnit&gt;::WriteFrame()</span></code> to extend
+the frame of the current record and then <code class="docutils literal notranslate"><span class="pre">memcpy()</span></code> to fill its
+first byte with the space.</p></li>
+<li><p>Back in <code class="docutils literal notranslate"><span class="pre">OutputAscii()</span></code>, the mutable modes and connection state
+of the <code class="docutils literal notranslate"><span class="pre">IoStatementState</span></code> are queried to see whether we’re in an
+<code class="docutils literal notranslate"><span class="pre">WRITE(UNIT=,FMT=,DELIM=)</span></code> statement with a delimited specifier.
+If we were, the library would emit the appropriate quote marks,
+double up any instances of that character in the text, and split the
+text over multiple records if it’s long.</p></li>
+<li><p>But we don’t have a delimiter, so <code class="docutils literal notranslate"><span class="pre">OutputAscii()</span></code> just carves
+up the text into record-sized chunks and emits them.  There’s just
+one chunk for our short <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> string value in this example.
+It’s passed to <code class="docutils literal notranslate"><span class="pre">IoStatementState::Emit()</span></code>, which (as above) is
+redirected to <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::Emit()</span></code>, which interacts with the
+frame to extend the frame and <code class="docutils literal notranslate"><span class="pre">memcpy</span></code> data into the buffer.</p></li>
+<li><p>A flag is set in <code class="docutils literal notranslate"><span class="pre">ListDirectedStatementState&lt;false&gt;</span></code> to remember
+that the last item emitted in this list-directed output statement
+was an undelimited <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> value, so that if the next item is
+also an undelimited <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code>, no interposing space will be emitted
+between them.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OutputAscii()</span></code> return <code class="docutils literal notranslate"><span class="pre">true</span></code> to its caller.</p></li>
+<li><p>The generated code calls <code class="docutils literal notranslate"><span class="pre">EndIoStatement()</span></code>, which is redirected to
+<code class="docutils literal notranslate"><span class="pre">ExternalIoStatementState&lt;false&gt;</span></code>’s override of that function.
+As this is not a non-advancing I/O statement, <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::AdvanceRecord()</span></code>
+is called to end the record.  Since this is a sequential formatted
+file, a newline is emitted.</p></li>
+<li><p>If unit 6 is connected to a terminal, the buffer is flushed.
+<code class="docutils literal notranslate"><span class="pre">FileFrame&lt;ExternalFileUnit&gt;::Flush()</span></code> drives <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::Write()</span></code>
+to push out the data in maximal contiguous chunks, dealing with any
+short writes that might occur, and collecting I/O errors along the way.
+This statement has no <code class="docutils literal notranslate"><span class="pre">ERR=</span></code> label or <code class="docutils literal notranslate"><span class="pre">IOSTAT=</span></code> specifier, so errors
+arriving at <code class="docutils literal notranslate"><span class="pre">IoErrorHandler::SignalErrno()</span></code> will cause an immediate
+crash.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ExternalIoStatementBase::EndIoStatement()</span></code> is called.
+It gets the final <code class="docutils literal notranslate"><span class="pre">IOSTAT=</span></code> value from <code class="docutils literal notranslate"><span class="pre">IoStatementBase::EndIoStatement()</span></code>,
+tells the <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit</span></code> that no I/O statement remains active, and
+returns the I/O status value back to the program.</p></li>
+<li><p>Eventually, the program calls <code class="docutils literal notranslate"><span class="pre">ProgramEndStatement()</span></code>, which
+calls <code class="docutils literal notranslate"><span class="pre">ExternalFileUnit::CloseAll()</span></code>, which flushes and closes all
+open files.  If the standard output were not a terminal, the output
+would be written now with the same sequence of calls as above.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">exit(EXIT_SUCCESS)</span></code>.</p></li>
+</ol>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="f2018-grammar.html" title="Fortran 2018 Grammar"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="FortranIR.html" title="Design: Fortran IR"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2021, The Flang Team.
+      Last updated on Feb 26, 2021.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
