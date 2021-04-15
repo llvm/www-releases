@@ -1,0 +1,426 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>DO CONCURRENT isn’t necessarily concurrent &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Bijective Internal Name Uniquing" href="BijectiveInternalNameUniquing.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="BijectiveInternalNameUniquing.html" title="Bijective Internal Name Uniquing"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/master/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/DoConcurrent.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+--><div class="section" id="do-concurrent-isn-t-necessarily-concurrent">
+<h1><code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> isn’t necessarily concurrent<a class="headerlink" href="#do-concurrent-isn-t-necessarily-concurrent" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#localization" id="id1">Localization</a></p></li>
+<li><p><a class="reference internal" href="#the-identification-problem" id="id2">The identification problem</a></p></li>
+<li><p><a class="reference internal" href="#the-global-variable-localization-problem" id="id3">The global variable localization problem</a></p></li>
+<li><p><a class="reference internal" href="#locality-specifiers" id="id4">Locality specifiers</a></p></li>
+<li><p><a class="reference internal" href="#what-to-do-now" id="id5">What to do now</a></p></li>
+<li><p><a class="reference internal" href="#other-precedents" id="id6">Other precedents</a></p></li>
+</ul>
+</div>
+<p>A variant form of Fortran’s primary looping construct was
+added to the Fortran 2008 language standard with the apparent
+intent of enabling more effective automatic parallel execution of code
+written in the standard language without the use of
+non-standard directives.
+Spelled <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>, the construct takes a rectilinear iteration
+space specification like <code class="docutils literal notranslate"><span class="pre">FORALL</span></code> and allows us to write
+a multidimensional loop nest construct with a single <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>
+statement and a single terminating <code class="docutils literal notranslate"><span class="pre">END</span> <span class="pre">DO</span></code> statement.</p>
+<p>Within the body of a <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> loop the program must respect
+a long list of restrictions on its use of Fortran language features.
+Actions that obviously can’t be executed in parallel or that
+don’t allow all iterations to execute are prohibited.
+These include:</p>
+<ul class="simple">
+<li><p>Control flow statements that would prevent the loop nest from
+executing all its iterations: <code class="docutils literal notranslate"><span class="pre">RETURN</span></code>, <code class="docutils literal notranslate"><span class="pre">EXIT</span></code>, and any
+<code class="docutils literal notranslate"><span class="pre">GOTO</span></code> or <code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> that leaves the construct.</p></li>
+<li><p>Image control statements: <code class="docutils literal notranslate"><span class="pre">STOP</span></code>, <code class="docutils literal notranslate"><span class="pre">SYNC</span></code>, <code class="docutils literal notranslate"><span class="pre">LOCK</span></code>/<code class="docutils literal notranslate"><span class="pre">UNLOCK</span></code>, <code class="docutils literal notranslate"><span class="pre">EVENT</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code>/<code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> of a coarray.</p></li>
+<li><p>Calling a procedure that is not <code class="docutils literal notranslate"><span class="pre">PURE</span></code>.</p></li>
+<li><p>Deallocation of any polymorphic entity, as that could cause
+an impure FINAL subroutine to be called.</p></li>
+<li><p>Messing with the IEEE floating-point control and status flags.</p></li>
+<li><p>Accepting some restrictions on data flow between iterations
+(i.e., none) and on liveness of modified objects after the loop.
+(The details are spelled out later.)</p></li>
+</ul>
+<p>In return for accepting these restrictions, a <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> might
+compile into code that exploits the parallel features of the target
+machine to run the iterations of the <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct.
+One needn’t necessarily require OpenACC or OpenMP directives.</p>
+<p>But it turns out that these rules, though <em>necessary</em> for safe parallel
+execution, are not <em>sufficient</em>.
+One may write conforming <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs that cannot
+be safely parallelized by a compiler; worse, one may write conforming
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs whose parallelizability a compiler cannot
+determine even in principle – forcing a conforming compiler to
+assume the worst and generate sequential code.</p>
+<div class="section" id="localization">
+<h2><a class="toc-backref" href="#id1">Localization</a><a class="headerlink" href="#localization" title="Permalink to this headline">¶</a></h2>
+<p>The Fortran language standard does not actually define <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> as a
+concurrent construct, or even as a construct that imposes sufficient
+requirements on the programmer to allow for parallel execution.
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> is instead defined as executing the iterations
+of the loop in some arbitrary order (see subclause 11.1.7.4.3 paragraph 3).</p>
+<p>A <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct cannot modify an object in one iteration
+and expect to be able to read it in another, or read it in one before it gets
+modified by another – there’s no way to synchronize inter-iteration
+communication with critical sections or atomics.</p>
+<p>But a conforming <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct <em>can</em> modify an object in
+multiple iterations of the loop so long as its only reads from that
+object <em>after</em> having modified it earler in the <em>same</em> iteration.
+(See 11.1.7.5 paragraph 4 for the details.)</p>
+<p>For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  DO CONCURRENT (J=1:N)
+    TMP = A(J) + B(J)
+    C(J) = TMP
+  END DO
+  ! And TMP is undefined afterwards
+</pre></div>
+</div>
+<p>The scalar variable <code class="docutils literal notranslate"><span class="pre">TMP</span></code> is used in this loop in a way that conforms
+to the standard, as every use of <code class="docutils literal notranslate"><span class="pre">TMP</span></code> follows a definition that appears
+earlier in the same iteration.</p>
+<p>The idea, of course, is that a parallelizing compiler isn’t required to
+use the same word of memory to hold the value of <code class="docutils literal notranslate"><span class="pre">TMP</span></code>;
+for parallel execution, <code class="docutils literal notranslate"><span class="pre">TMP</span></code> can be <em>localized</em>.
+This means that the loop can be internally rewritten as if it had been</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">DO</span> <span class="n">CONCURRENT</span> <span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">)</span>
+    <span class="n">BLOCK</span>
+      <span class="n">REAL</span> <span class="p">::</span> <span class="n">TMP</span>
+      <span class="n">TMP</span> <span class="o">=</span> <span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">+</span> <span class="n">B</span><span class="p">(</span><span class="n">J</span><span class="p">)</span>
+      <span class="n">C</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">=</span> <span class="n">TMP</span>
+    <span class="n">END</span> <span class="n">BLOCK</span>
+  <span class="n">END</span> <span class="n">DO</span>
+</pre></div>
+</div>
+<p>and thus any risk of data flow between the iterations is removed.</p>
+</div>
+<div class="section" id="the-identification-problem">
+<h2><a class="toc-backref" href="#id2">The identification problem</a><a class="headerlink" href="#the-identification-problem" title="Permalink to this headline">¶</a></h2>
+<p>The automatic localization rules of <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> that allow
+usage like <code class="docutils literal notranslate"><span class="pre">TMP</span></code> above are not limited to simple local scalar
+variables.
+They also apply to arbitrary variables, and thus may apply
+in cases that a compiler cannot determine exactly due to
+the presence of indexing, indirection, and interprocedural data flow.</p>
+<p>Let’s see why this turns out to be a problem.</p>
+<p>Examples:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">DO</span> <span class="n">CONCURRENT</span> <span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">)</span>
+    <span class="n">T</span><span class="p">(</span><span class="n">IX</span><span class="p">(</span><span class="n">J</span><span class="p">))</span> <span class="o">=</span> <span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">+</span> <span class="n">B</span><span class="p">(</span><span class="n">J</span><span class="p">)</span>
+    <span class="n">C</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">=</span> <span class="n">T</span><span class="p">(</span><span class="n">IY</span><span class="p">(</span><span class="n">J</span><span class="p">))</span>
+  <span class="n">END</span> <span class="n">DO</span>
+</pre></div>
+</div>
+<p>This loop conforms to the standard language if,
+whenever <code class="docutils literal notranslate"><span class="pre">IX(J)</span></code> equals <code class="docutils literal notranslate"><span class="pre">IY(J')</span></code> for any distinct pair of iterations
+<code class="docutils literal notranslate"><span class="pre">J</span></code> and <code class="docutils literal notranslate"><span class="pre">J'</span></code>,
+then the load must be reading a value stored earlier in the
+same iteration – so <code class="docutils literal notranslate"><span class="pre">IX(J')==IY(J')</span></code>, and hence <code class="docutils literal notranslate"><span class="pre">IX(J)==IX(J')</span></code> too,
+in this example.
+Otherwise, a load in one iteration might depend on a store
+in another.</p>
+<p>When all values of <code class="docutils literal notranslate"><span class="pre">IX(J)</span></code> are distinct, and the program conforms
+to the restrictions of <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>, a compiler can parallelize
+the construct easily without applying localization to <code class="docutils literal notranslate"><span class="pre">T(...)</span></code>.
+And when some values of <code class="docutils literal notranslate"><span class="pre">IX(J)</span></code> are duplicates, a compiler can parallelize
+the loop by forwarding the stored value to the load in those
+iterations.
+But at compilation time, there’s <em>no way to distinguish</em> these
+cases in general, and a conservative implementation has to assume
+the worst and run the loop’s iterations serially.
+(Or compare <code class="docutils literal notranslate"><span class="pre">IX(J)</span></code> with <code class="docutils literal notranslate"><span class="pre">IY(J)</span></code> at runtime and forward the
+stored value conditionally, which adds overhead and becomes
+quickly impractical in loops with multiple loads and stores.)</p>
+<p>In</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">TYPE</span> <span class="p">::</span> <span class="n">T</span>
+    <span class="n">REAL</span><span class="p">,</span> <span class="n">POINTER</span> <span class="p">::</span> <span class="n">P</span>
+  <span class="n">END</span> <span class="n">TYPE</span>
+  <span class="n">TYPE</span><span class="p">(</span><span class="n">T</span><span class="p">)</span> <span class="p">::</span> <span class="n">T1</span><span class="p">(</span><span class="n">N</span><span class="p">),</span> <span class="n">T2</span><span class="p">(</span><span class="n">N</span><span class="p">)</span>
+  <span class="n">DO</span> <span class="n">CONCURRENT</span> <span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">)</span>
+    <span class="n">T1</span><span class="p">(</span><span class="n">J</span><span class="p">)</span><span class="o">%</span><span class="n">P</span> <span class="o">=</span> <span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">+</span> <span class="n">B</span><span class="p">(</span><span class="n">J</span><span class="p">)</span>
+    <span class="n">C</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">=</span> <span class="n">T2</span><span class="p">(</span><span class="n">J</span><span class="p">)</span><span class="o">%</span><span class="n">P</span>
+  <span class="n">END</span> <span class="n">DO</span>
+</pre></div>
+</div>
+<p>we have the same kind of ambiguity from the compiler’s perspective.
+Are the targets of the pointers used for the stores all distinct
+from the targets of the pointers used for the loads?
+The programmer may know that they are so, but a compiler
+cannot; and there is no syntax by which one can stipulate
+that they are so.</p>
+</div>
+<div class="section" id="the-global-variable-localization-problem">
+<h2><a class="toc-backref" href="#id3">The global variable localization problem</a><a class="headerlink" href="#the-global-variable-localization-problem" title="Permalink to this headline">¶</a></h2>
+<p>Here’s another case:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">MODULE</span> <span class="n">M</span>
+    <span class="n">REAL</span> <span class="p">::</span> <span class="n">T</span>
+  <span class="n">END</span> <span class="n">MODULE</span>
+  <span class="o">...</span>
+  <span class="n">USE</span> <span class="n">M</span>
+  <span class="n">INTERFACE</span>
+    <span class="n">PURE</span> <span class="n">REAL</span> <span class="n">FUNCTION</span> <span class="n">F</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+      <span class="n">REAL</span><span class="p">,</span> <span class="n">INTENT</span><span class="p">(</span><span class="n">IN</span><span class="p">)</span> <span class="p">::</span> <span class="n">X</span>
+    <span class="n">END</span> <span class="n">FUNCTION</span>
+  <span class="n">END</span> <span class="n">INTERFACE</span>
+  <span class="n">DO</span> <span class="n">CONCURRENT</span> <span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">)</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">+</span> <span class="n">B</span><span class="p">(</span><span class="n">J</span><span class="p">)</span>
+    <span class="n">D</span><span class="p">(</span><span class="n">J</span><span class="p">)</span> <span class="o">=</span> <span class="n">F</span><span class="p">(</span><span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">))</span> <span class="o">+</span> <span class="n">T</span>
+  <span class="n">END</span> <span class="n">DO</span>
+</pre></div>
+</div>
+<p>The variable <code class="docutils literal notranslate"><span class="pre">T</span></code> is obviously meant to be localized.
+However, a compiler can’t be sure that the pure function <code class="docutils literal notranslate"><span class="pre">F</span></code>
+doesn’t read from <code class="docutils literal notranslate"><span class="pre">T</span></code>; if it does, there wouldn’t be a
+practical way to convey the localized copy to it.</p>
+<p>In summary, standard Fortran defines <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> as a serial
+construct with a sheaf of constraints that we assume are intended
+to enable straightforward parallelization without
+all of the complexity of defining threading models or shared memory semantics,
+with the addition of an automatic localization rule that provides
+convenient temporaries objects without requiring the use of nested
+<code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> or <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code> constructs.
+But the language allows ambiguous cases in which a compiler can neither</p>
+<ol class="simple">
+<li><p>prove that automatic localization <em>is</em> required for a given
+object in every iteration, nor</p></li>
+<li><p>prove that automatic localization <em>isn’t</em> required in any iteration.</p></li>
+</ol>
+</div>
+<div class="section" id="locality-specifiers">
+<h2><a class="toc-backref" href="#id4">Locality specifiers</a><a class="headerlink" href="#locality-specifiers" title="Permalink to this headline">¶</a></h2>
+<p>The Fortran 2018 standard added “locality specifiers” to the
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> statement.
+These allow one to define some variable names as being <code class="docutils literal notranslate"><span class="pre">LOCAL</span></code> or
+<code class="docutils literal notranslate"><span class="pre">SHARED</span></code>, overriding the automatic localization rule so that it
+applies only in the remaining cases of “unspecified” locality.</p>
+<p><code class="docutils literal notranslate"><span class="pre">LOCAL</span></code> variables are those that can be defined by more than one
+iteration but are referenced only after having been defined
+earlier in the same iteration.
+<code class="docutils literal notranslate"><span class="pre">SHARED</span></code> variables are those that, if defined in
+any iteration, are not defined or referenced in any other iteration.</p>
+<p>(There is also a <code class="docutils literal notranslate"><span class="pre">LOCAL_INIT</span></code> specifier that is not relevant to the
+problem at hand, and a <code class="docutils literal notranslate"><span class="pre">DEFAULT(NONE)</span></code> specifier that requires a
+locality specifier be present for every variable mentioned in the
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct.)</p>
+<p>These locality specifiers can help resolve some otherwise ambiguous
+cases of localization, but they’re not a complete solution to the problems
+described above.</p>
+<p>First, the specifiers allow explicit localization of objects
+(like the scalar <code class="docutils literal notranslate"><span class="pre">T</span></code> in <code class="docutils literal notranslate"><span class="pre">MODULE</span> <span class="pre">M</span></code> above) that are not local variables
+of the subprogram.
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> still allows a pure procedure called from the loop
+to reference <code class="docutils literal notranslate"><span class="pre">T</span></code>, and so explicit localization just confirms the
+worst-case assumptions about interprocedural data flow
+within an iteration that a compiler must make anyway.</p>
+<p>Second, the specifiers allow arbitary variables to be localized,
+not just scalars.
+One may localize a million-element array of derived type
+with allocatable components to be created in each iteration,
+for example.
+(It is not clear whether localized objects are finalized;
+probably not.)</p>
+<p>Third, as Fortran uses context to distinguish references to
+pointers from (de)references to their targets, it’s not clear
+whether <code class="docutils literal notranslate"><span class="pre">LOCAL(PTR)</span></code> localizes a pointer, its target, or both.</p>
+<p>Fourth, the specifiers can be applied only to variable <em>names</em>,
+not to any designator with subscripts or component references.
+One may have defined a derived type to hold a representation
+of a sparse matrix, using <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> components to store its
+packed data and indexing structures, but a program cannot localize
+some parts of it and share the rest.
+(Perhaps one may wrap <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code> constructs around the
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct;
+the interaction between locality specifiers and construct entities is
+not clearly defined in the language.)</p>
+<p>In the example above that defines <code class="docutils literal notranslate"><span class="pre">T(IX(J))</span></code> and reads from <code class="docutils literal notranslate"><span class="pre">T(IY(J))</span></code>,
+the locality specifiers can’t be used to share those elements of <code class="docutils literal notranslate"><span class="pre">T()</span></code>
+that are modified at most once and localize the cases where
+<code class="docutils literal notranslate"><span class="pre">IX(J)</span></code> is a duplicate and <code class="docutils literal notranslate"><span class="pre">IY(J)==IX(J)</span></code>.</p>
+<p>Last, when a loop both defines and references many shared objects,
+including potential references to globally accessible object
+in called procedures, one may need to name all of them in a <code class="docutils literal notranslate"><span class="pre">SHARED</span></code>
+specifier.</p>
+</div>
+<div class="section" id="what-to-do-now">
+<h2><a class="toc-backref" href="#id5">What to do now</a><a class="headerlink" href="#what-to-do-now" title="Permalink to this headline">¶</a></h2>
+<p>These problems have been presented to the J3 Fortran language
+standard committee.
+Their responses in
+recent <a class="reference external" href="https://mailman.j3-fortran.org/pipermail/j3/2020-July/thread.html">e-mail discussions</a>
+did not include an intent to address them in future standards or corrigenda.
+The most effective-looking response – which was essentially “just use
+<code class="docutils literal notranslate"><span class="pre">DEFAULT(SHARED)</span></code> to disable all automatic localization” – is not an
+viable option, since the language does not include such a specifier!</p>
+<p>Programmers writing <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> loops that are safely parallelizable
+need an effective means to convey to compilers that those compilers
+do not have to assume only the weaker stipulations required by
+today’s <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> without having to write verbose and
+error-prone locality specifiers (when those would suffice).
+Specifically, an easy means is required that stipulates that localization
+should apply at most only to the obvious cases of local non-pointer
+non-allocatable scalars.</p>
+<p>In the LLVM Fortran compiler project (a/k/a “flang”, “f18”) we considered
+several solutions to this problem.</p>
+<ol class="simple">
+<li><p>Add syntax (e.g., <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">PARALLEL</span></code> or <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT()</span> <span class="pre">DEFAULT(PARALLEL)</span></code>)
+by which one can inform the compiler that it should localize only
+the obvious cases of simple local scalars.
+Such syntax seems unlikely to ever be standardized, so its usage
+would be nonportable.</p></li>
+<li><p>Add a command-line option &amp;/or a source directive to stipulate
+the stronger guarantees.  Obvious non-parallelizable usage in the construct
+would elicit a stern warning.  The <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> loops in the source
+would continue to be portable to other compilers.</p></li>
+<li><p>Assume that these stronger conditions hold by default, and add a command-line
+option &amp;/or a source directive to “opt out” back to the weaker
+requirements of the standard language
+in the event that the program contains one of those inherently
+non-parallelizable <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> loops that perhaps should never have
+been possible to write in a conforming program in the first place.
+Actual parallel <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs would produce parallel
+code for users who would otherwise be surprised to learn about these
+problems in the language.
+But this option could lead to non-standard behavior for codes that depend,
+accidentally or not, on non-parallelizable implicit localization.</p></li>
+<li><p>Accept the standard as it exists, do the best job of automatic
+parallelization that can be done, and refer dissatisfied users to J3.
+This would be avoiding the problem.</p></li>
+</ol>
+<p>None of these options is without a fairly obvious disadvantage.
+The best option seems to be the one that assumes that users who write
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs are doing so with the intent to write parallel code.</p>
+</div>
+<div class="section" id="other-precedents">
+<h2><a class="toc-backref" href="#id6">Other precedents</a><a class="headerlink" href="#other-precedents" title="Permalink to this headline">¶</a></h2>
+<p>As of August 2020, we observe that the GNU Fortran compiler (10.1) does not
+yet implement the Fortran 2018 locality clauses, but will parallelize some
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs without ambiguous data dependences when the automatic
+parallelization option is enabled.</p>
+<p>The Intel Fortran compiler supports the new locality clauses and will parallelize
+some <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs when automatic parallelization option is enabled.
+When OpenMP is enabled, ifort reports that all <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> constructs are
+parallelized, but they seem to execute in a serial fashion when data flow
+hazards are present.</p>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="BijectiveInternalNameUniquing.html" title="Bijective Internal Name Uniquing"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2021, The Flang Team.
+      Last updated on Apr 15, 2021.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
