@@ -1,0 +1,111 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>clang-tidy - altera-single-work-item-barrier &#8212; Extra Clang Tools 12 documentation</title>
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/jquery.js"></script>
+    <script src="../../_static/underscore.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="altera-struct-pack-align" href="altera-struct-pack-align.html" />
+    <link rel="prev" title="altera-kernel-name-restriction" href="altera-kernel-name-restriction.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 12 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - altera-single-work-item-barrier</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="altera-kernel-name-restriction.html">altera-kernel-name-restriction</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="altera-struct-pack-align.html">altera-struct-pack-align</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="altera-single-work-item-barrier">
+<h1>altera-single-work-item-barrier<a class="headerlink" href="#altera-single-work-item-barrier" title="Permalink to this headline">¶</a></h1>
+<p>Finds OpenCL kernel functions that call a barrier function but do not call
+an ID function (<code class="docutils literal notranslate"><span class="pre">get_local_id</span></code>, <code class="docutils literal notranslate"><span class="pre">get_local_id</span></code>, <code class="docutils literal notranslate"><span class="pre">get_group_id</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">get_local_linear_id</span></code>).</p>
+<p>These kernels may be viable single work-item kernels, but will be forced to
+execute as NDRange kernels if using a newer version of the Altera Offline
+Compiler (&gt;= v17.01).</p>
+<p>If using an older version of the Altera Offline Compiler, these kernel
+functions will be treated as single work-item kernels, which could be
+inefficient or lead to errors if NDRange semantics were intended.</p>
+<p>Based on the <a class="reference external" href="https://www.altera.com/en_US/pdfs/literature/hb/opencl-sdk/aocl_optimization_guide.pdf">Altera SDK for OpenCL: Best Practices Guide</a>.</p>
+<p>Examples:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// error: function calls barrier but does not call an ID function.</span>
+<span class="kt">void</span> <span class="n">__kernel</span> <span class="n">barrier_no_id</span><span class="p">(</span><span class="n">__global</span> <span class="kt">int</span> <span class="o">*</span> <span class="n">foo</span><span class="p">,</span> <span class="kt">int</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">100</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">foo</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">5</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="n">barrier</span><span class="p">(</span><span class="n">CLK_GLOBAL_MEM_FENCE</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// ok: function calls barrier and an ID function.</span>
+<span class="kt">void</span> <span class="n">__kernel</span> <span class="n">barrier_with_id</span><span class="p">(</span><span class="n">__global</span> <span class="kt">int</span> <span class="o">*</span> <span class="n">foo</span><span class="p">,</span> <span class="kt">int</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">100</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="n">tid</span> <span class="o">=</span> <span class="n">get_global_id</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+    <span class="n">foo</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">5</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="n">barrier</span><span class="p">(</span><span class="n">CLK_GLOBAL_MEM_FENCE</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// ok with AOC Version 17.01: the reqd_work_group_size turns this into</span>
+<span class="c1">// an NDRange.</span>
+<span class="n">__attribute__</span><span class="p">((</span><span class="n">reqd_work_group_size</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">)))</span>
+<span class="kt">void</span> <span class="n">__kernel</span> <span class="n">barrier_with_id</span><span class="p">(</span><span class="n">__global</span> <span class="kt">int</span> <span class="o">*</span> <span class="n">foo</span><span class="p">,</span> <span class="kt">int</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">100</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">foo</span><span class="p">[</span><span class="n">tid</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">5</span><span class="p">;</span>
+  <span class="p">}</span>
+  <span class="n">barrier</span><span class="p">(</span><span class="n">CLK_GLOBAL_MEM_FENCE</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="section" id="options">
+<h2>Options<a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt id="cmdoption-arg-AOCVersion">
+<span id="cmdoption-arg-aocversion"></span><code class="sig-name descname">AOCVersion</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-AOCVersion" title="Permalink to this definition">¶</a></dt>
+<dd><p>Defines the version of the Altera Offline Compiler. Defaults to <code class="docutils literal notranslate"><span class="pre">1600</span></code>
+(corresponding to version 16.00).</p>
+</dd></dl>
+
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="altera-kernel-name-restriction.html">altera-kernel-name-restriction</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="altera-struct-pack-align.html">altera-struct-pack-align</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 3.4.3.
+    </div>
+  </body>
+</html>

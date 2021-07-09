@@ -1,0 +1,102 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>clang-tidy - performance-no-automatic-move &#8212; Extra Clang Tools 12 documentation</title>
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/jquery.js"></script>
+    <script src="../../_static/underscore.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="performance-no-int-to-ptr" href="performance-no-int-to-ptr.html" />
+    <link rel="prev" title="performance-move-constructor-init" href="performance-move-constructor-init.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 12 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - performance-no-automatic-move</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="performance-move-constructor-init.html">performance-move-constructor-init</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="performance-no-int-to-ptr.html">performance-no-int-to-ptr</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="performance-no-automatic-move">
+<h1>performance-no-automatic-move<a class="headerlink" href="#performance-no-automatic-move" title="Permalink to this headline">¶</a></h1>
+<p>Finds local variables that cannot be automatically moved due to constness.</p>
+<p>Under
+<a class="reference external" href="https://en.cppreference.com/w/cpp/language/return#automatic_move_from_local_variables_and_parameters">certain conditions</a>,
+local values are automatically moved out when returning from a function. A
+common mistake is to declare local <code class="docutils literal notranslate"><span class="pre">lvalue</span></code> variables <code class="docutils literal notranslate"><span class="pre">const</span></code>, which
+prevents the move.</p>
+<p>Example <a class="reference external" href="https://godbolt.org/z/x7SYYA">[1]</a>:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&gt;</span> <span class="n">Cool</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">obj</span> <span class="o">=</span> <span class="p">...;</span>
+  <span class="k">return</span> <span class="n">obj</span><span class="p">;</span>  <span class="c1">// calls StatusOr::StatusOr(std::vector&lt;int&gt;&amp;&amp;)</span>
+<span class="p">}</span>
+
+<span class="n">StatusOr</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&gt;</span> <span class="n">NotCool</span><span class="p">()</span> <span class="p">{</span>
+  <span class="k">const</span> <span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">obj</span> <span class="o">=</span> <span class="p">...;</span>
+  <span class="k">return</span> <span class="n">obj</span><span class="p">;</span>  <span class="c1">// calls `StatusOr::StatusOr(const std::vector&lt;int&gt;&amp;)`</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The former version (<code class="docutils literal notranslate"><span class="pre">Cool</span></code>) should be preferred over the latter (<code class="docutils literal notranslate"><span class="pre">Uncool</span></code>)
+as it will avoid allocations and potentially large memory copies.</p>
+<div class="section" id="semantics">
+<h2>Semantics<a class="headerlink" href="#semantics" title="Permalink to this headline">¶</a></h2>
+<p>In the example above, <code class="docutils literal notranslate"><span class="pre">StatusOr::StatusOr(T&amp;&amp;)</span></code> have the same semantics as
+long as the copy and move constructors for <code class="docutils literal notranslate"><span class="pre">T</span></code> have the same semantics. Note
+that there is no guarantee that <code class="docutils literal notranslate"><span class="pre">S::S(T&amp;&amp;)</span></code> and <code class="docutils literal notranslate"><span class="pre">S::S(const</span> <span class="pre">T&amp;)</span></code> have the
+same semantics for any single <code class="docutils literal notranslate"><span class="pre">S</span></code>, so we’re not providing automated fixes for
+this check, and judgement should be exerted when making the suggested changes.</p>
+</div>
+<div class="section" id="wreturn-std-move">
+<h2>-Wreturn-std-move<a class="headerlink" href="#wreturn-std-move" title="Permalink to this headline">¶</a></h2>
+<p>Another case where the move cannot happen is the following:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&gt;</span> <span class="n">Uncool</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;&amp;</span> <span class="n">obj</span> <span class="o">=</span> <span class="p">...;</span>
+  <span class="k">return</span> <span class="n">obj</span><span class="p">;</span>  <span class="c1">// calls `StatusOr::StatusOr(const std::vector&lt;int&gt;&amp;)`</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In that case the fix is more consensual: just <cite>return std::move(obj)</cite>.
+This is handled by the <cite>-Wreturn-std-move</cite> warning.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="performance-move-constructor-init.html">performance-move-constructor-init</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="performance-no-int-to-ptr.html">performance-no-int-to-ptr</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 3.4.3.
+    </div>
+  </body>
+</html>
