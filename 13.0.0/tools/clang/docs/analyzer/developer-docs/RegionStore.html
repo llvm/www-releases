@@ -1,0 +1,212 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>3.5. Region Store &#8212; Clang 13 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Thread Safety Analysis" href="../../ThreadSafetyAnalysis.html" />
+    <link rel="prev" title="3.4. Nullability Checks" href="nullability.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 13 documentation</span></a></h1>
+        <h2 class="heading"><span>3.5. Region Store</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="nullability.html">3.4. Nullability Checks</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="../../ThreadSafetyAnalysis.html">Thread Safety Analysis</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="region-store">
+<h1>3.5. Region Store<a class="headerlink" href="#region-store" title="Permalink to this headline">¶</a></h1>
+<p>The analyzer “Store” represents the contents of memory regions. It is an opaque
+functional data structure stored in each <code class="docutils literal notranslate"><span class="pre">ProgramState</span></code>; the only class that
+can modify the store is its associated StoreManager.</p>
+<p>Currently (Feb. 2013), the only StoreManager implementation being used is
+<code class="docutils literal notranslate"><span class="pre">RegionStoreManager</span></code>. This store records bindings to memory regions using a
+“base region + offset” key. (This allows <code class="docutils literal notranslate"><span class="pre">*p</span></code> and <code class="docutils literal notranslate"><span class="pre">p[0]</span></code> to map to the same
+location, among other benefits.)</p>
+<p>Regions are grouped into “clusters”, which roughly correspond to “regions with
+the same base region”. This allows certain operations to be more efficient,
+such as invalidation.</p>
+<p>Regions that do not have a known offset use a special “symbolic” offset. These
+keys store both the original region, and the “concrete offset region” – the
+last region whose offset is entirely concrete. (For example, in the expression
+<code class="docutils literal notranslate"><span class="pre">foo.bar[1][i].baz</span></code>, the concrete offset region is the array <code class="docutils literal notranslate"><span class="pre">foo.bar[1]</span></code>,
+since that has a known offset from the start of the top-level <code class="docutils literal notranslate"><span class="pre">foo</span></code> struct.)</p>
+<div class="section" id="binding-invalidation">
+<h2>3.5.1. Binding Invalidation<a class="headerlink" href="#binding-invalidation" title="Permalink to this headline">¶</a></h2>
+<p>Supporting both concrete and symbolic offsets makes things a bit tricky. Here’s
+an example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">foo</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="n">foo</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="n">foo</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>After the third assignment, nothing can be said about the value of <code class="docutils literal notranslate"><span class="pre">foo[0]</span></code>,
+because <code class="docutils literal notranslate"><span class="pre">foo[i]</span></code> may have overwritten it! Thus, <em>binding to a region with a
+symbolic offset invalidates the entire concrete offset region.</em> We know
+<code class="docutils literal notranslate"><span class="pre">foo[i]</span></code> is somewhere within <code class="docutils literal notranslate"><span class="pre">foo</span></code>, so we don’t have to invalidate
+anything else, but we do have to be conservative about all other bindings within
+<code class="docutils literal notranslate"><span class="pre">foo</span></code>.</p>
+<p>Continuing the example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">foo</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span><span class="p">;</span>
+<span class="n">foo</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>After this latest assignment, nothing can be said about the value of <code class="docutils literal notranslate"><span class="pre">foo[i]</span></code>,
+because <code class="docutils literal notranslate"><span class="pre">foo[0]</span></code> may have overwritten it! <em>Binding to a region R with a
+concrete offset invalidates any symbolic offset bindings whose concrete offset
+region is a super-region **or*</em> sub-region of R.* All we know about <code class="docutils literal notranslate"><span class="pre">foo[i]</span></code>
+is that it is somewhere within <code class="docutils literal notranslate"><span class="pre">foo</span></code>, so changing <em>anything</em> within <code class="docutils literal notranslate"><span class="pre">foo</span></code>
+might change <code class="docutils literal notranslate"><span class="pre">foo[i]</span></code>, and changing <em>all</em> of <code class="docutils literal notranslate"><span class="pre">foo</span></code> (or its base region) will
+<em>definitely</em> change <code class="docutils literal notranslate"><span class="pre">foo[i]</span></code>.</p>
+<p>This logic could be improved by using the current constraints on <code class="docutils literal notranslate"><span class="pre">i</span></code>, at the
+cost of speed. The latter case could also be improved by matching region kinds,
+i.e. changing <code class="docutils literal notranslate"><span class="pre">foo[0].a</span></code> is unlikely to affect <code class="docutils literal notranslate"><span class="pre">foo[i].b</span></code>, no matter what
+<code class="docutils literal notranslate"><span class="pre">i</span></code> is.</p>
+<p>For more detail, read through <code class="docutils literal notranslate"><span class="pre">RegionStoreManager::removeSubRegionBindings</span></code> in
+RegionStore.cpp.</p>
+</div>
+<div class="section" id="objcivarregions">
+<h2>3.5.2. ObjCIvarRegions<a class="headerlink" href="#objcivarregions" title="Permalink to this headline">¶</a></h2>
+<p>Objective-C instance variables require a bit of special handling. Like struct
+fields, they are not base regions, and when their parent object region is
+invalidated, all the instance variables must be invalidated as well. However,
+they have no concrete compile-time offsets (in the modern, “non-fragile”
+runtime), and so cannot easily be represented as an offset from the start of
+the object in the analyzer. Moreover, this means that invalidating a single
+instance variable should <em>not</em> invalidate the rest of the object, since unlike
+struct fields or array elements there is no way to perform pointer arithmetic
+to access another instance variable.</p>
+<p>Consequently, although the base region of an ObjCIvarRegion is the entire
+object, RegionStore offsets are computed from the start of the instance
+variable. Thus it is not valid to assume that all bindings with non-symbolic
+offsets start from the base region!</p>
+</div>
+<div class="section" id="region-invalidation">
+<h2>3.5.3. Region Invalidation<a class="headerlink" href="#region-invalidation" title="Permalink to this headline">¶</a></h2>
+<p>Unlike binding invalidation, region invalidation occurs when the entire
+contents of a region may have changed—say, because it has been passed to a
+function the analyzer can model, like memcpy, or because its address has
+escaped, usually as an argument to an opaque function call. In these cases we
+need to throw away not just all bindings within the region itself, but within
+its entire cluster, since neighboring regions may be accessed via pointer
+arithmetic.</p>
+<p>Region invalidation typically does even more than this, however. Because it
+usually represents the complete escape of a region from the analyzer’s model,
+its <em>contents</em> must also be transitively invalidated. (For example, if a region
+<code class="docutils literal notranslate"><span class="pre">p</span></code> of type <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">**</span></code> is invalidated, the contents of <code class="docutils literal notranslate"><span class="pre">*p</span></code> and <code class="docutils literal notranslate"><span class="pre">**p</span></code> may
+have changed as well.) The algorithm that traverses this transitive closure of
+accessible regions is known as ClusterAnalysis, and is also used for finding
+all live bindings in the store (in order to throw away the dead ones). The name
+“ClusterAnalysis” predates the cluster-based organization of bindings, but
+refers to the same concept: during invalidation and liveness analysis, all
+bindings within a cluster must be treated in the same way for a conservative
+model of program behavior.</p>
+</div>
+<div class="section" id="default-bindings">
+<h2>3.5.4. Default Bindings<a class="headerlink" href="#default-bindings" title="Permalink to this headline">¶</a></h2>
+<p>Most bindings in RegionStore are simple scalar values – integers and pointers.
+These are known as “Direct” bindings. However, RegionStore supports a second
+type of binding called a “Default” binding. These are used to provide values to
+all the elements of an aggregate type (struct or array) without having to
+explicitly specify a binding for each individual element.</p>
+<p>When there is no Direct binding for a particular region, the store manager
+looks at each super-region in turn to see if there is a Default binding. If so,
+this value is used as the value of the original region. The search ends when
+the base region is reached, at which point the RegionStore will pick an
+appropriate default value for the region (usually a symbolic value, but
+sometimes zero, for static data, or “uninitialized”, for stack variables).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="n">manyInts</span><span class="p">[</span><span class="mi">10</span><span class="p">];</span>
+<span class="n">manyInts</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>   <span class="c1">// Creates a Direct binding for manyInts[1].</span>
+<span class="n">print</span><span class="p">(</span><span class="n">manyInts</span><span class="p">[</span><span class="mi">1</span><span class="p">]);</span> <span class="c1">// Retrieves the Direct binding for manyInts[1];</span>
+<span class="n">print</span><span class="p">(</span><span class="n">manyInts</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span> <span class="c1">// There is no Direct binding for manyInts[0].</span>
+                    <span class="c1">// Is there a Default binding for the entire array?</span>
+                    <span class="c1">// There is not, but it is a stack variable, so we use</span>
+                    <span class="c1">// &quot;uninitialized&quot; as the default value (and emit a</span>
+                    <span class="c1">// diagnostic!).</span>
+</pre></div>
+</div>
+<p>NOTE: The fact that bindings are stored as a base region plus an offset limits
+the Default Binding strategy, because in C aggregates can contain other
+aggregates. In the current implementation of RegionStore, there is no way to
+distinguish a Default binding for an entire aggregate from a Default binding
+for the sub-aggregate at offset 0.</p>
+</div>
+<div class="section" id="lazy-bindings-lazycompoundval">
+<h2>3.5.5. Lazy Bindings (LazyCompoundVal)<a class="headerlink" href="#lazy-bindings-lazycompoundval" title="Permalink to this headline">¶</a></h2>
+<p>RegionStore implements an optimization for copying aggregates (structs and
+arrays) called “lazy bindings”, implemented using a special SVal called
+LazyCompoundVal. When the store is asked for the “binding” for an entire
+aggregate (i.e. for an lvalue-to-rvalue conversion), it returns a
+LazyCompoundVal instead. When this value is then stored into a variable, it is
+bound as a Default value. This makes copying arrays and structs much cheaper
+than if they had required memberwise access.</p>
+<p>Under the hood, a LazyCompoundVal is implemented as a uniqued pair of (region,
+store), representing “the value of the region during this ‘snapshot’ of the
+store”. This has important implications for any sort of liveness or
+reachability analysis, which must take the bindings in the old store into
+account.</p>
+<p>Retrieving a value from a lazy binding happens in the same way as any other
+Default binding: since there is no direct binding, the store manager falls back
+to super-regions to look for an appropriate default binding. LazyCompoundVal
+differs from a normal default binding, however, in that it contains several
+different values, instead of one value that will appear several times. Because
+of this, the store manager has to reconstruct the subregion chain on top of the
+LazyCompoundVal region, and look up <em>that</em> region in the previous store.</p>
+<p>Here’s a concrete example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">CGPoint</span> <span class="n">p</span><span class="p">;</span>
+<span class="n">p</span><span class="p">.</span><span class="n">x</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>       <span class="c1">// A Direct binding is made to the FieldRegion &#39;p.x&#39;.</span>
+<span class="n">CGPoint</span> <span class="n">p2</span> <span class="o">=</span> <span class="n">p</span><span class="p">;</span> <span class="c1">// A LazyCompoundVal is created for &#39;p&#39;, along with a</span>
+                <span class="c1">// snapshot of the current store state. This value is then</span>
+                <span class="c1">// used as a Default binding for the VarRegion &#39;p2&#39;.</span>
+<span class="k">return</span> <span class="n">p2</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>    <span class="c1">// The binding for FieldRegion &#39;p2.x&#39; is requested.</span>
+                <span class="c1">// There is no Direct binding, so we look for a Default</span>
+                <span class="c1">// binding to &#39;p2&#39; and find the LCV.</span>
+                <span class="c1">// Because it&#39;s a LCV, we look at our requested region</span>
+                <span class="c1">// and see that it&#39;s the &#39;.x&#39; field. We ask for the value</span>
+                <span class="c1">// of &#39;p.x&#39; within the snapshot, and get back 42.</span>
+</pre></div>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="nullability.html">3.4. Nullability Checks</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="../../ThreadSafetyAnalysis.html">Thread Safety Analysis</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

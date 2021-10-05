@@ -1,0 +1,92 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>clang-tidy - abseil-upgrade-duration-conversions &#8212; Extra Clang Tools 13 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="altera-id-dependent-backward-branch" href="altera-id-dependent-backward-branch.html" />
+    <link rel="prev" title="abseil-time-subtraction" href="abseil-time-subtraction.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 13 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - abseil-upgrade-duration-conversions</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="abseil-time-subtraction.html">abseil-time-subtraction</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="altera-id-dependent-backward-branch.html">altera-id-dependent-backward-branch</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="abseil-upgrade-duration-conversions">
+<h1>abseil-upgrade-duration-conversions<a class="headerlink" href="#abseil-upgrade-duration-conversions" title="Permalink to this headline">¶</a></h1>
+<p>Finds calls to <code class="docutils literal notranslate"><span class="pre">absl::Duration</span></code> arithmetic operators and factories whose
+argument needs an explicit cast to continue compiling after upcoming API
+changes.</p>
+<p>The operators <code class="docutils literal notranslate"><span class="pre">*=</span></code>, <code class="docutils literal notranslate"><span class="pre">/=</span></code>, <code class="docutils literal notranslate"><span class="pre">*</span></code>, and <code class="docutils literal notranslate"><span class="pre">/</span></code> for <code class="docutils literal notranslate"><span class="pre">absl::Duration</span></code> currently
+accept an argument of class type that is convertible to an arithmetic type. Such
+a call currently converts the value to an <code class="docutils literal notranslate"><span class="pre">int64_t</span></code>, even in a case such as
+<code class="docutils literal notranslate"><span class="pre">std::atomic&lt;float&gt;</span></code> that would result in lossy conversion.</p>
+<p>Additionally, the <code class="docutils literal notranslate"><span class="pre">absl::Duration</span></code> factory functions (<code class="docutils literal notranslate"><span class="pre">absl::Hours</span></code>,
+<code class="docutils literal notranslate"><span class="pre">absl::Minutes</span></code>, etc) currently accept an <code class="docutils literal notranslate"><span class="pre">int64_t</span></code> or a floating-point
+type. Similar to the arithmetic operators, calls with an argument of class type
+that is convertible to an arithmetic type go through the <code class="docutils literal notranslate"><span class="pre">int64_t</span></code> path.</p>
+<p>These operators and factories will be changed to only accept arithmetic types to
+prevent unintended behavior. After these changes are released, passing an
+argument of class type will no longer compile, even if the type is implicitly
+convertible to an arithmetic type.</p>
+<p>Here are example fixes created by this check:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">atomic</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">;</span>
+<span class="n">absl</span><span class="o">::</span><span class="n">Duration</span> <span class="n">d</span> <span class="o">=</span> <span class="n">absl</span><span class="o">::</span><span class="n">Milliseconds</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="n">d</span> <span class="o">*=</span> <span class="n">a</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>becomes</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">atomic</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">;</span>
+<span class="n">absl</span><span class="o">::</span><span class="n">Duration</span> <span class="n">d</span> <span class="o">=</span> <span class="n">absl</span><span class="o">::</span><span class="n">Milliseconds</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">a</span><span class="p">));</span>
+<span class="n">d</span> <span class="o">*=</span> <span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int64_t</span><span class="o">&gt;</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Note that this check always adds a cast to <code class="docutils literal notranslate"><span class="pre">int64_t</span></code> in order to preserve the
+current behavior of user code. It is possible that this uncovers unintended
+behavior due to types implicitly convertible to a floating-point type.</p>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="abseil-time-subtraction.html">abseil-time-subtraction</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="altera-id-dependent-backward-branch.html">altera-id-dependent-backward-branch</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

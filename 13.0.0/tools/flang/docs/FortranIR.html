@@ -1,0 +1,341 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Design: Fortran IR &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Fortran I/O Runtime Library Internal Design" href="IORuntimeInternals.html" />
+    <link rel="prev" title="Control Flow Graph" href="ControlFlowGraph.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="IORuntimeInternals.html" title="Fortran I/O Runtime Library Internal Design"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="ControlFlowGraph.html" title="Control Flow Graph"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/FortranIR.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+--><div class="section" id="design-fortran-ir">
+<h1>Design: Fortran IR<a class="headerlink" href="#design-fortran-ir" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#requirements" id="id2">Requirements</a></p>
+<ul>
+<li><p><a class="reference internal" href="#white-paper-control-flow-graph-sup-1-sup" id="id3">White Paper: <a class="reference internal" href="ControlFlowGraph.html"><span class="doc">Control Flow Graph</span></a><sup>1</sup></a></p></li>
+<li><p><a class="reference internal" href="#explicit-control-flow" id="id4">Explicit Control Flow</a></p>
+<ul>
+<li><p><a class="reference internal" href="#structured-control-flow" id="id5">Structured Control Flow</a></p></li>
+<li><p><a class="reference internal" href="#unstructured-control-flow" id="id6">Unstructured Control Flow</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#operations" id="id7">Operations</a></p></li>
+<li><p><a class="reference internal" href="#other" id="id8">Other</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#exploration" id="id9">Exploration</a></p>
+<ul>
+<li><p><a class="reference internal" href="#construction" id="id10">Construction</a></p>
+<ul>
+<li><p><a class="reference internal" href="#alternative-direct-approach" id="id11">Alternative: direct approach</a></p></li>
+<li><p><a class="reference internal" href="#alternative-linearized-approach-decomposing-the-problem" id="id12">Alternative: linearized approach (decomposing the problem)</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#details" id="id13">Details</a></p>
+<ul>
+<li><p><a class="reference internal" href="#grappling-with-control-flow" id="id14">Grappling with Control Flow</a></p></li>
+<li><p><a class="reference internal" href="#scope" id="id15">Scope</a></p></li>
+<li><p><a class="reference internal" href="#structure" id="id16">Structure</a></p></li>
+<li><p><a class="reference internal" href="#support" id="id17">Support</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#data-structures" id="id18">Data Structures</a></p>
+<ul>
+<li><p><a class="reference internal" href="#alternative-llvm" id="id19">Alternative: LLVM</a></p></li>
+<li><p><a class="reference internal" href="#alternative-c-standard-template-library" id="id20">Alternative: C++ Standard Template Library</a></p></li>
+<li><p><a class="reference internal" href="#alternative-boost-library-xyz-etc" id="id21">Alternative: Boost, Library XYZ, etc.</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id1">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>After semantic analysis is complete and it has been determined that the compiler has a legal Fortran program as input, the parse tree will be lowered to an intermediate representation for the purposes of high-level analysis and optimization.  In this document, that intermediate representation will be called Fortran IR or FIR.  The pass that converts from the parse tree and other data structures of the front-end to FIR will be called the “Burnside bridge”.</p>
+<p>FIR will be an explicit, operational, and strongly-typed representation, which shall encapsulate control-flow as graphs.</p>
+</div>
+<div class="section" id="requirements">
+<h2><a class="toc-backref" href="#id2">Requirements</a><a class="headerlink" href="#requirements" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="white-paper-control-flow-graph-sup-1-sup">
+<h3>White Paper: <a class="reference internal" href="ControlFlowGraph.html"><span class="doc">Control Flow Graph</span></a><sup>1</sup><a class="headerlink" href="#white-paper-control-flow-graph-sup-1-sup" title="Permalink to this headline">¶</a></h3>
+<p>This is a list of requirements extracted from that document, which will be referred to as CFG-WP.</p>
+<ol class="simple">
+<li><p>Control flow to be explicit (e.g. ERR= specifiers)</p></li>
+<li><p>May need critical edge splitting</p></li>
+<li><p>Lowering of procedures with ENTRY statements is specified</p></li>
+<li><p>Procedures will have a start node</p></li>
+<li><p>Non-executable statements will be ignored</p></li>
+<li><p>Labeled DO loop execution with GOTO specified</p></li>
+<li><p>Operations and actions (statements) are defined</p></li>
+<li><p>The last statement in a basic block can represent a change in control flow</p></li>
+<li><p>Scope transitions to be made explicit (special actions)</p></li>
+<li><p>The IR will be in SSA form</p></li>
+</ol>
+</div>
+<div class="section" id="explicit-control-flow">
+<h3><a class="toc-backref" href="#id4">Explicit Control Flow</a><a class="headerlink" href="#explicit-control-flow" title="Permalink to this headline">¶</a></h3>
+<p>In Fortran, there are a number of statements that result in control flow to statements other than the one immediately subsequent. These can be sorted these into two categories: structured and unstructured.</p>
+<div class="section" id="structured-control-flow">
+<h4><a class="toc-backref" href="#id5">Structured Control Flow</a><a class="headerlink" href="#structured-control-flow" title="Permalink to this headline">¶</a></h4>
+<p>Fortran has executable constructs that imply three basic control flow forms.  The first form is a structured loop (DO construct)<sup>2</sup>. The second form is a structured cascade of conditional branches (IF construct, IF statement,<sup>3</sup> WHERE construct).  The third form is a structured multiway branch (SELECT CASE, SELECT RANK, and SELECT TYPE constructs).  The FORALL construct, while it implies a semantic model of interleaved iterations, can be modeled as a special single-entry single-exit region in FIR perhaps with backstage marker statements.<sup>4</sup></p>
+<p>The CYCLE and EXIT statements interact with the above structured executable constructs by providing structured transfers of control.<sup>5</sup> CYCLE (possibly named) is only valid in DO constructs and creates an alternate backedge in the enclosing loop.  EXIT transfers control out of the enclosing (possibly named) construct, which need not be a DO construct.</p>
+</div>
+<div class="section" id="unstructured-control-flow">
+<h4><a class="toc-backref" href="#id6">Unstructured Control Flow</a><a class="headerlink" href="#unstructured-control-flow" title="Permalink to this headline">¶</a></h4>
+<p>Fortran also has mechanisms of transferring control between a statement and another statement with a corresponding label.  The origin of these edges can be GOTO statements, computed GOTO statements, assigned GOTO statements, arithmetic IF statements, alt-return specifications, and END/EOR/ERR I/O specifiers.  These statements are “unstructured” in the sense that the target of the control-flow has fewer constraints and the labelled statements must be linked to their origins.</p>
+<p>Another category of unstructured control flow are statements that terminate execution.  These include RETURN, FAIL IMAGE, STOP and ERROR STOP statements.  The PAUSE statement can be modeled as a call to the runtime.</p>
+</div>
+</div>
+<div class="section" id="operations">
+<h3><a class="toc-backref" href="#id7">Operations</a><a class="headerlink" href="#operations" title="Permalink to this headline">¶</a></h3>
+<p>The compiler’s to be determined optimization passes will inform us as to the exact composition of FIR at the operations level.  This details here will necessarily change, so please read them with a grain of salt.</p>
+<p>The plan (see CFG-WP) is that statements (actions) will be a veneer model of Fortran syntactical executable constructs. Fortran statements will correspond one to one with actions. Actions will be composed of and own objects of Fortran::evaluate::GenericExprWrapper. Values of type GenericExprWrapper will have Fortran types. This implies that actions will not be in an explicit data flow representation and have optional type information.<sup>6</sup> Initially, values will bind to symbols in a context and have an implicit use-def relation. An action statement may entail a “big step” operation with many side-effects. No semantics has been defined at this time.  Actions may reference other non-executable statements from the parse tree in some to be determined manner.</p>
+<p>From the CFG-WP, it is stated that the FIR will ultimately be in an SSA form.  It is clear that a later pass can rewrite the values/expressions and construct a factored use-def version of the expressions. This may/should also involve expanding “big step” actions to a series of instructions and introducing typing information for all instructions. Again, the exact “lowered representation” will be informed from the requirements of the optimization passes and is presently to be determined.</p>
+</div>
+<div class="section" id="other">
+<h3><a class="toc-backref" href="#id8">Other</a><a class="headerlink" href="#other" title="Permalink to this headline">¶</a></h3>
+<p>Overall project goals include becoming part of the LLVM ecosystem as well as using LLVM as a backend.</p>
+<p>Critical edge splitting can be constructed on-demand and as needed.</p>
+<p>Lowering of procedures with ENTRY statements is specified.  The plan is to lower procedures with ENTRY statements as specified in the CFG-WP.</p>
+<p>In FIR, a procedure will have a method that returns the start node.</p>
+<p>When lowering to FIR statements, non-executable statements will be discarded.</p>
+<p>Labeled DO loops are converted to non-labeled DO loops in the semantics processing.</p>
+<p>The last statement in a basic block can represent a change in control flow. LLVM-IR and SIL<sup>7</sup> require that basic blocks end with a terminator. FIR will also have terminators.</p>
+<p>The CFG-WP states that scope transitions are to be made explicit. We will cover this more below.</p>
+<p>LLVM does not require the FIR to be in SSA form. LLVM’s mem-to-reg pass does the conversion into SSA form. FIR can support SSA for optimization passes on-demand with its own mem-to-reg and reg-to-mem type passes.</p>
+<p>Data objects with process lifetime will be captured indirectly by a reference to the (global) symbol table.</p>
+</div>
+</div>
+<div class="section" id="exploration">
+<h2><a class="toc-backref" href="#id9">Exploration</a><a class="headerlink" href="#exploration" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="construction">
+<h3><a class="toc-backref" href="#id10">Construction</a><a class="headerlink" href="#construction" title="Permalink to this headline">¶</a></h3>
+<p>Our aim to construct a CFG where all control-flow is explicitly modeled by relations. A basic block will be a sequence of statements for which if the first statement is executed then all other statements in the basic block will also be executed, in order.<sup>8</sup>  A CFG is therefore this set of basic blocks and the control-flow relations between those blocks.</p>
+<div class="section" id="alternative-direct-approach">
+<h4><a class="toc-backref" href="#id11">Alternative: direct approach</a><a class="headerlink" href="#alternative-direct-approach" title="Permalink to this headline">¶</a></h4>
+<p>The CFG can be directly constructed by traversing the parse tree, threading contextual state, and building basic blocks along with control-flow relationships.</p>
+<ul class="simple">
+<li><p>Pro: Straightforward implementation when control-flow is well-structured as the contextual state parallels the syntax of the language closely.</p></li>
+<li><p>Con: The contextual state needed can become large and difficult to manage in the presence of unstructured control-flow. For example, not every labeled statement in Fortran may be a control-flow destination.</p></li>
+<li><p>Con: The contextual state must deal with the recursive nature of the parse tree.</p></li>
+<li><p>Con: Complexity. Since structured constructs cohabitate with unstructured constructs, the context needs to carry information about all combinations until the basic blocks and relations are fully elaborated.</p></li>
+</ul>
+</div>
+<div class="section" id="alternative-linearized-approach-decomposing-the-problem">
+<h4><a class="toc-backref" href="#id12">Alternative: linearized approach (decomposing the problem)</a><a class="headerlink" href="#alternative-linearized-approach-decomposing-the-problem" title="Permalink to this headline">¶</a></h4>
+<p>Instead of constructing the CFG directly from a parse tree traversal, an intermediate form can be constructed to explicitly capture the executable statements, which ones give rise to control-flow graph edge sources, and which are control-flow graph edge targets.  This linearized form flattens the tree structure of the parse tree. The linearized form does not require recursive visitation of nested constructs and can be used to directly identify the entries and exits of basic blocks.</p>
+<p>While each control-flow source statement is explicit in the traversal, it can be the case that not all of the targets have been traversed yet (references to forward basic blocks), and those basic blocks will not yet have been created.  These relations can be captured at the time the source is traversed, added to a to do list, and then completed when all the basic blocks for the procedure have been created. Specifically, at the point when we create a terminator all information is known to create the FIR terminator, however all basic blocks that may be referenced may not have been created. Those are resolved in one final “clean up” pass over a list of closures.</p>
+<ul class="simple">
+<li><p>Con: An extra representation must be defined and constructed.</p></li>
+<li><p>Pro: This representation reifies all the information that is referred to as contextual state in the direct approach.</p></li>
+<li><p>Pro: Constructing the linearized form can be done with a simple traversal of the parse tree.</p></li>
+<li><p>Pro: Once composed the linearized form can be traversed and a CFG directly constructed.  This greatly reduces bookkeeping of contextual state.</p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="details">
+<h3><a class="toc-backref" href="#id13">Details</a><a class="headerlink" href="#details" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="grappling-with-control-flow">
+<h4><a class="toc-backref" href="#id14">Grappling with Control Flow</a><a class="headerlink" href="#grappling-with-control-flow" title="Permalink to this headline">¶</a></h4>
+<p>Above, various Fortran executable constructs were discussed with respect to how they (may) give rise to control flow.  These Fortran statements are mapped to a small number of FIR statements: ReturnStmt, BranchStmt, SwitchStmt, IndirectBrStmt, and UnreachableStmt.</p>
+<p><em>ReturnStmt</em>: execution leaves the enclosing Procedure. A ReturnStmt can return an optional value. This would appear for RETURN statements or at END SUBROUTINE.</p>
+<p><em>BranchStmt</em>: execution of the current basic block ends. If the branch is unconditional then control transfers to exactly one successor basic block. If the branch is conditional then control transfers to exactly one of two successor blocks depending on the true/false value of the condition. All successors must be in the current Procedure. Unconditional branches would appear for GOTO statements. Conditional branches would appear for IF constructs, IF statements, etc.</p>
+<p><em>SwitchStmt</em>: Exactly one of multiple successors is selected based on the control expression. Successors are pairs of case expressions and basic blocks.  If the control expression compares to the case expression and returns true, then that control transfers to that block. There may be one special block, the default block, that is selected if none of the case expressions compares true. This would appear for SELECT CASE, SELECT TYPE, SELECT RANK, COMPUTED GOTO, WRITE with exceptional condition label specificers, alternate return specifiers, etc.</p>
+<p><em>IndirectBrStmt</em>: A variable is loaded with the address of a basic block in the containing Procedure. Control is transferred to the contents of this variable. An IndirectBrStmt also requires a complete list of potential basic blocks that may be loaded into the variable. This would appear for ASSIGNED GOTO.</p>
+<p>Supporting ASSIGNED GOTO offers a little extra challenge as the ASSIGN GOTO statement’s list of target labels is optional.  If that list is not present, then the procedure must be analyzed to find ASSIGN statements. The implementation proactively looks for ASSIGN statements and keeps a dictionary mapping an assigned Symbol to its set of targets. When constructing the CFG, ASSIGNED GOTOs can be processed as to potential targets either from the list provided in the ASSIGNED GOTO or from the analysis pass.</p>
+<p>Alternatively, ASSIGNED GOTO could be implemented as a <em>SwitchStmt</em> that tests on a compiler-defined value and fully elaborates all potential target basic blocks.</p>
+<p><em>UnreachableStmt</em>: If control reaches an unreachable statement, then an error has occurred. Calls to library routines that do not return should be followed by an UnreachableStmt.  An example would be the STOP statement.</p>
+</div>
+<div class="section" id="scope">
+<h4><a class="toc-backref" href="#id15">Scope</a><a class="headerlink" href="#scope" title="Permalink to this headline">¶</a></h4>
+<p>In the CFG-WP, scopes are meant to be captured by a pair of backstage statements for entering and exiting a particular scope. In structured code, these pairs would not be problematic; however, control flow in Fortran is ad hoc, particularly in legacy Fortran. In short, Fortran does not have a clean sense of structure with respect to scope.</p>
+<p>To separate concerns, FIR will construct the ad hoc CFG and impose bounding boxes over regions of that graph to demarcate and superimpose scope structures on that CFG. Any GOTO-like statements that are side-entries and side-exits to the region will be explicit.</p>
+<p>Once the basic blocks are constructed, CFG edges defined, and the CFG is simplified, a simple pass that analyzes the region bounding boxes can decorate the basic blocks with the SCOPE ENTER and SCOPE EXIT statements and flatten/remove the region structure. It will then be the burden of any optimization passes to guarantee legal orderings of SCOPE ENTER and SCOPE EXIT pairs.</p>
+<ul class="simple">
+<li><p>Pro: Separation of concerns allows for simpler, easier to maintain code</p></li>
+<li><p>Pro: Simplification of the CFG can be done without worrying about SCOPE markers</p></li>
+<li><p>Pro: Allows a precise superimposing of all Fortran constructs with scoping considerations over an otherwise ad hoc CFG.</p></li>
+<li><p>Con: Adds “an extra layer” to FIR as compared to SIL. However, that can be mitigated/made inconsequential by a pass that flattens the Region tree and inserts the backstage SCOPE marker statements.</p></li>
+</ul>
+</div>
+<div class="section" id="structure">
+<h4><a class="toc-backref" href="#id16">Structure</a><a class="headerlink" href="#structure" title="Permalink to this headline">¶</a></h4>
+<p><em>Program</em>: A program instance is the top-level object that contains the representation of all the code being compiled, the compilation unit. It contains a list of procedures and a reference to the global symbol table.</p>
+<p><em>Procedure</em>: This is a named Fortran procedure (subroutine or function). It contains a (hierarchical) list of regions. It also owns the master list of all basic blocks for the procedure.</p>
+<p><em>Region</em>: A region is owned by a procedure or by another region. A region owns a reference to a scope in the symbol table tree. The list of delineated basic blocks can also be requested from a region.</p>
+<p><em>Basic block</em>: A basic block is owned by a procedure. A basic block owns a list of statements. The last statement in the list must be a terminator, and no other statement in the list can be a terminator. A basic block owns a list of its predecessors, which are also basic blocks. (Precisely, it is this level of FIR that is the CFG.)</p>
+<p><em>Statement</em>: An executable Fortran construct that owns/refers to expressions, symbols, scopes, etc. produced by the front-end.</p>
+<p><em>Terminator</em>: A statement that orchestrates control-flow. Terminator statements may reference other basic blocks and can be accessed by their parent basic block to discover successor blocks, if any.</p>
+</div>
+<div class="section" id="support">
+<h4><a class="toc-backref" href="#id17">Support</a><a class="headerlink" href="#support" title="Permalink to this headline">¶</a></h4>
+<p>Since there is some state that needs to be maintained and forwarded as the FIR is constructed, a FIRBuilder can be used for convenience.  The FIRBuilder constructs statements and updates the CFG accordingly.</p>
+<p>To support visualization, there is a support class to dump the FIR to a dotty graph.</p>
+</div>
+</div>
+<div class="section" id="data-structures">
+<h3><a class="toc-backref" href="#id18">Data Structures</a><a class="headerlink" href="#data-structures" title="Permalink to this headline">¶</a></h3>
+<p>FIR is intentionally similar to SIL from the statement level up to the level of a program.</p>
+<div class="section" id="alternative-llvm">
+<h4><a class="toc-backref" href="#id19">Alternative: LLVM</a><a class="headerlink" href="#alternative-llvm" title="Permalink to this headline">¶</a></h4>
+<p>Program, procedure, region, and basic block all leverage code from LLVM, in much the same way as SIL. These data structures have significant investment and engineering behind their use in compilers, and it makes sense to leverage that work.</p>
+<ul class="simple">
+<li><p>Pro: Uses LLVM data structures, pervasive in compiler projects such as LLVM, SIL, etc.</p></li>
+<li><p>Pro: Get used to seeing and using LLVM, as f18 aims to be an LLVM project</p></li>
+<li><p>Con: Uses LLVM data structures, which the project has been avoiding</p></li>
+</ul>
+</div>
+<div class="section" id="alternative-c-standard-template-library">
+<h4><a class="toc-backref" href="#id20">Alternative: C++ Standard Template Library</a><a class="headerlink" href="#alternative-c-standard-template-library" title="Permalink to this headline">¶</a></h4>
+<p>Clearly, the STL can be used to maintain lists, etc.</p>
+<ul class="simple">
+<li><p>Pro: Keeps the number of libraries minimal</p></li>
+<li><p>Con: The STL is general purpose and not necessarily tuned to support compiler construction</p></li>
+</ul>
+</div>
+<div class="section" id="alternative-boost-library-xyz-etc">
+<h4><a class="toc-backref" href="#id21">Alternative: Boost, Library XYZ, etc.</a><a class="headerlink" href="#alternative-boost-library-xyz-etc" title="Permalink to this headline">¶</a></h4>
+<ul class="simple">
+<li><p>Con: Don’t see a strong motivation at present for adding another library.</p></li>
+</ul>
+<p>Statements are a bit of a transition point. Instead of the LLVM-IR approach of strictly using subtype polymorphism (for hash consing, etc.), FIR statements are a hybrid between ad hoc/subtype polymorphism and parametric polymorphism. This gives us a middle ground of genericity through superclassing and the strong and exact type-safety of algebraic data types — effectively providing type casing and type classing.</p>
+<p>The operations (expressions) owned/referenced by a statement, variable references, etc. will be data structures from the Fortran::evaluate, Fortran::semantics, etc. namespaces.</p>
+<hr><p><sup>1</sup> CFG paper. https://bit.ly/2q9IRaQ</p>
+<p><sup>2</sup> All labeled DO sequences will have been translated to DO constructs by semantic analysis.</p>
+<p><sup>3</sup> IF statements are handled like IF constructs with no ELSE alternatives.</p>
+<p><sup>4</sup> In a subsequent discussion, we may want to lower FORALL constructs to semantically distinct loops or even another canonical representation.</p>
+<p><sup>5</sup> These statements are only valid in structured constructs and the branches are well-defined by that executable construct.</p>
+<p><sup>6</sup> Unlike SIL and LLVM-IR.</p>
+<p><sup>7</sup> SIL is the Swift (high-level) intermediate language. https://bit.ly/2RHW0DQ</p>
+<p><sup>8</sup> Single-threaded semantics.</p>
+</div>
+</div>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="IORuntimeInternals.html" title="Fortran I/O Runtime Library Internal Design"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="ControlFlowGraph.html" title="Control Flow Graph"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2021, The Flang Team.
+      Last updated on Oct 05, 2021.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

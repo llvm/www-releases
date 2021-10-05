@@ -1,0 +1,223 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>IRTranslator &#8212; LLVM 13 documentation</title>
+    <link rel="stylesheet" href="../_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Legalizer" href="Legalizer.html" />
+    <link rel="prev" title="Core Pipeline" href="Pipeline.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="../index.html">
+    <img src="../_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="Legalizer.html" title="Legalizer"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Pipeline.html" title="Core Pipeline"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../Reference.html" >Reference</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >Global Instruction Selection</a> &#187;</li>
+          <li class="nav-item nav-item-3"><a href="Pipeline.html" accesskey="U">Core Pipeline</a> &#187;</li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/GlobalISel/IRTranslator.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="irtranslator">
+<span id="id1"></span><h1>IRTranslator<a class="headerlink" href="#irtranslator" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#target-intrinsics" id="id2">Target Intrinsics</a></p></li>
+<li><p><a class="reference internal" href="#translating-function-calls" id="id3">Translating Function Calls</a></p>
+<ul>
+<li><p><a class="reference internal" href="#aggregates" id="id4">Aggregates</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#translation-of-constants" id="id5">Translation of Constants</a></p></li>
+</ul>
+</div>
+<p>This pass translates the input LLVM-IR <code class="docutils literal notranslate"><span class="pre">Function</span></code> to a GMIR
+<code class="docutils literal notranslate"><span class="pre">MachineFunction</span></code>. This is typically a direct translation but does
+occasionally get a bit more involved. For example:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv nv-Anonymous">%2</span> <span class="p">=</span> <span class="k">add</span> <span class="k">i32</span> <span class="nv nv-Anonymous">%0</span><span class="p">,</span> <span class="nv nv-Anonymous">%1</span>
+</pre></div>
+</div>
+<p>becomes:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>%2:_(s32) = G_ADD %0:_(s32), %1:_(s32)
+</pre></div>
+</div>
+<p>whereas</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">call</span> <span class="k">i32</span> <span class="vg">@puts</span><span class="p">(</span><span class="k">i8</span><span class="p">*</span> <span class="nv">%cast210</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>is translated according to the ABI rules of the target.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The currently implemented portion of the <a class="reference internal" href="../LangRef.html"><span class="doc">LLVM Language Reference Manual</span></a> is sufficient for
+many compilations but it is not 100% complete. Users seeking to compile
+LLVM-IR containing some of the rarer features may need to implement the
+translation.</p>
+</div>
+<div class="section" id="target-intrinsics">
+<h2><a class="toc-backref" href="#id2">Target Intrinsics</a><a class="headerlink" href="#target-intrinsics" title="Permalink to this headline">¶</a></h2>
+<p>There has been some (off-list) debate about whether to add target hooks for
+translating target intrinsics. Among those who discussed it, it was generally
+agreed that the IRTranslator should be able to lower target intrinsics in a
+customizable way but no work has happened to implement this at the time of
+writing.</p>
+</div>
+<div class="section" id="translating-function-calls">
+<span id="translator-call-lower"></span><h2><a class="toc-backref" href="#id3">Translating Function Calls</a><a class="headerlink" href="#translating-function-calls" title="Permalink to this headline">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">IRTranslator</span></code> also implements the ABI’s calling convention by lowering
+calls, returns, and arguments to the appropriate physical register usage and
+instruction sequences. This is achieved using the <code class="docutils literal notranslate"><span class="pre">CallLowering</span></code>
+implementation,</p>
+<div class="section" id="aggregates">
+<span id="irtranslator-aggregates"></span><h3><a class="toc-backref" href="#id4">Aggregates</a><a class="headerlink" href="#aggregates" title="Permalink to this headline">¶</a></h3>
+<div class="admonition caution">
+<p class="admonition-title">Caution</p>
+<p>This has changed since it was written and is no longer accurate. It has not
+been refreshed in this pass of improving the documentation as I haven’t
+worked much in this part of the codebase and it should have attention from
+someone more knowledgeable about it.</p>
+</div>
+<p>Aggregates are lowered into multiple virtual registers, similar to
+SelectionDAG’s multiple vregs via <code class="docutils literal notranslate"><span class="pre">GetValueVTs</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">TODO</span></code>:
+As some of the bits are undef (padding), we should consider augmenting the
+representation with additional metadata (in effect, caching computeKnownBits
+information on vregs).
+See <a class="reference external" href="https://llvm.org/PR26161">PR26161</a>: [GlobalISel] Value to vreg during
+IR to MachineInstr translation for aggregate type</p>
+</div>
+</div>
+<div class="section" id="translation-of-constants">
+<span id="irtranslator-constants"></span><h2><a class="toc-backref" href="#id5">Translation of Constants</a><a class="headerlink" href="#translation-of-constants" title="Permalink to this headline">¶</a></h2>
+<p>Constant operands are translated as a use of a virtual register that is defined
+by a <code class="docutils literal notranslate"><span class="pre">G_CONSTANT</span></code> or <code class="docutils literal notranslate"><span class="pre">G_FCONSTANT</span></code> instruction. These instructions are
+placed in the entry block to allow them to be subject to the continuous CSE
+implementation (<code class="docutils literal notranslate"><span class="pre">CSEMIRBuilder</span></code>). Their debug location information is removed
+to prevent this from confusing debuggers.</p>
+<p>This is beneficial as it allows us to fold constants into immediate operands
+during <a class="reference internal" href="InstructionSelect.html#instructionselect"><span class="std std-ref">InstructionSelect</span></a>, while still avoiding redundant materializations
+for expensive non-foldable constants. However, this can lead to unnecessary
+spills and reloads in an -O0 pipeline, as these virtual registers can have long
+live ranges. This can be mitigated by running a <a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/llvm/lib/CodeGen/GlobalISel/Localizer.cpp">localizer</a>
+after the translator.</p>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="Legalizer.html" title="Legalizer"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Pipeline.html" title="Core Pipeline"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../Reference.html" >Reference</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >Global Instruction Selection</a> &#187;</li>
+          <li class="nav-item nav-item-3"><a href="Pipeline.html" >Core Pipeline</a> &#187;</li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2003-2021, LLVM Project.
+      Last updated on 2021-10-05.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

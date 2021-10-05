@@ -1,0 +1,281 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Opaque Pointers &#8212; LLVM 13 documentation</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="JITLink and ORC’s ObjectLinkingLayer" href="JITLink.html" />
+    <link rel="prev" title="ORC Design and Implementation" href="ORCv2.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="JITLink.html" title="JITLink and ORC’s ObjectLinkingLayer"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="ORCv2.html" title="ORC Design and Implementation"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/OpaquePointers.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="opaque-pointers">
+<h1>Opaque Pointers<a class="headerlink" href="#opaque-pointers" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="the-opaque-pointer-type">
+<h2>The Opaque Pointer Type<a class="headerlink" href="#the-opaque-pointer-type" title="Permalink to this headline">¶</a></h2>
+<p>Traditionally, LLVM IR pointer types have contained a pointee type. For example,
+<code class="docutils literal notranslate"><span class="pre">i32</span> <span class="pre">*</span></code> is a pointer that points to an <code class="docutils literal notranslate"><span class="pre">i32</span></code> somewhere in memory. However,
+due to a lack of pointee type semantics and various issues with having pointee
+types, there is a desire to remove pointee types from pointers.</p>
+<p>The opaque pointer type project aims to replace all pointer types containing
+pointee types in LLVM with an opaque pointer type. The new pointer type is
+tentatively represented textually as <code class="docutils literal notranslate"><span class="pre">ptr</span></code>.</p>
+<p>Address spaces are still used to distinguish between different kinds of pointers
+where the distinction is relevant for lowering (e.g. data vs function pointers
+have different sizes on some architectures). Opaque pointers are not changing
+anything related to address spaces and lowering. For more information, see
+<a class="reference external" href="LangRef.html#langref-datalayout">DataLayout</a>.</p>
+</div>
+<div class="section" id="issues-with-explicit-pointee-types">
+<h2>Issues with explicit pointee types<a class="headerlink" href="#issues-with-explicit-pointee-types" title="Permalink to this headline">¶</a></h2>
+<p>LLVM IR pointers can be cast back and forth between pointers with different
+pointee types. The pointee type does not necessarily actually represent the
+actual underlying type in memory. In other words, the pointee type contains no
+real semantics.</p>
+<p>Lots of operations do not actually care about the underlying type. These
+operations, typically intrinsics, usually end up taking an <code class="docutils literal notranslate"><span class="pre">i8</span> <span class="pre">*</span></code>. This causes
+lots of redundant no-op bitcasts in the IR to and from a pointer with a
+different pointee type. The extra bitcasts take up space and require extra work
+to look through in optimizations. And more bitcasts increases the chances of
+incorrect bitcasts, especially in regards to address spaces.</p>
+<p>Some instructions still need to know what type to treat the memory pointed to by
+the pointer as. For example, a load needs to know how many bytes to load from
+memory. In these cases, instructions themselves contain a type argument. For
+example the load instruction from older versions of LLVM</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">load</span> <span class="k">i64</span><span class="p">*</span> <span class="nv">%p</span>
+</pre></div>
+</div>
+<p>becomes</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span>load i64, ptr %p
+</pre></div>
+</div>
+<p>A nice analogous transition that happened earlier in LLVM is integer signedness.
+There is no distinction between signed and unsigned integer types, rather the
+integer operations themselves contain what to treat the integer as. Initially,
+LLVM IR distinguished between unsigned and signed integer types. The transition
+from manifesting signedness in types to instructions happened early on in LLVM’s
+life to the betterment of LLVM IR.</p>
+</div>
+<div class="section" id="i-still-need-pointee-types">
+<h2>I Still Need Pointee Types!<a class="headerlink" href="#i-still-need-pointee-types" title="Permalink to this headline">¶</a></h2>
+<p>The frontend should already know what type each operation operates on based on
+the input source code. However, some frontends like Clang may end up relying on
+LLVM pointer pointee types to keep track of pointee types. The frontend needs to
+keep track of frontend pointee types on its own.</p>
+<p>For optimizations around frontend types, pointee types are not useful due their
+lack of semantics. Rather, since LLVM IR works on untyped memory, for a frontend
+to tell LLVM about frontend types for the purposes of alias analysis, extra
+metadata is added to the IR. For more information, see <a class="reference external" href="LangRef.html#tbaa-metadata">TBAA</a>.</p>
+<p>Some specific operations still need to know what type a pointer types to. For
+the most part, this is codegen and ABI specific. For example, <a class="reference external" href="LangRef.html#parameter-attributes">byval</a> arguments are pointers, but backends need
+to know the underlying type of the argument to properly lower it. In cases like
+these, the attributes contain a type argument. For example,</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span>call void @f(ptr byval(i32) %p)
+</pre></div>
+</div>
+<p>signifies that <code class="docutils literal notranslate"><span class="pre">%p</span></code> as an argument should be lowered as an <code class="docutils literal notranslate"><span class="pre">i32</span></code> passed
+indirectly.</p>
+<p>If you have use cases that this sort of fix doesn’t cover, please email
+llvm-dev.</p>
+</div>
+<div class="section" id="transition-plan">
+<h2>Transition Plan<a class="headerlink" href="#transition-plan" title="Permalink to this headline">¶</a></h2>
+<p>LLVM currently has many places that depend on pointee types. Each dependency on
+pointee types needs to be resolved in some way or another. This essentially
+translates to figuring out how to remove all calls to
+<code class="docutils literal notranslate"><span class="pre">PointerType::getElementType</span></code> and <code class="docutils literal notranslate"><span class="pre">Type::getPointerElementType()</span></code>.</p>
+<p>Making everything use opaque pointers in one huge commit is infeasible. This
+needs to be done incrementally. The following steps need to be done, in no
+particular order:</p>
+<ul class="simple">
+<li><p>Introduce the opaque pointer type</p>
+<ul>
+<li><p>Already done</p></li>
+</ul>
+</li>
+<li><p>Remove remaining in-tree users of pointee types</p>
+<ul>
+<li><p>There are many miscellaneous uses that should be cleaned up individually</p></li>
+<li><p>Some of the larger use cases are mentioned below</p></li>
+</ul>
+</li>
+<li><p>Various ABI attributes and instructions that rely on pointee types need to be
+modified to specify the type separately</p>
+<ul>
+<li><p>This has already happened for all instructions like loads, stores, GEPs,
+and various attributes like <code class="docutils literal notranslate"><span class="pre">byval</span></code></p></li>
+<li><p>More cases may be found as work continues</p></li>
+</ul>
+</li>
+<li><p>Remove calls to and deprecate <code class="docutils literal notranslate"><span class="pre">IRBuilder</span></code> methods that rely on pointee types</p>
+<ul>
+<li><p>For example, some of the <code class="docutils literal notranslate"><span class="pre">IRBuilder::CreateGEP()</span></code> methods use the pointer
+operand’s pointee type to determine the GEP operand type</p></li>
+<li><p>Some methods are already deprecated with <code class="docutils literal notranslate"><span class="pre">LLVM_ATTRIBUTE_DEPRECATED</span></code>, such
+as some overloads of <code class="docutils literal notranslate"><span class="pre">IRBuilder::CreateLoad()</span></code></p></li>
+</ul>
+</li>
+<li><p>Allow bitcode auto-upgrade of legacy pointer type to the new opaque pointer
+type (not to be turned on until ready)</p>
+<ul>
+<li><p>To support legacy bitcode, such as legacy stores/loads, we need to track
+pointee types for all values since legacy instructions may infer the types
+from a pointer operand’s pointee type</p></li>
+</ul>
+</li>
+<li><p>Migrate frontends to not keep track of frontend pointee types via LLVM pointer
+pointee types</p>
+<ul>
+<li><p>This is mostly Clang, see <code class="docutils literal notranslate"><span class="pre">clang::CodeGen::Address::getElementType()</span></code></p></li>
+</ul>
+</li>
+<li><p>Add option to internally treat all pointer types opaque pointers and see what
+breaks, starting with LLVM tests, then run Clang over large codebases</p>
+<ul>
+<li><p>We don’t want to start mass-updating tests until we’re fairly confident that opaque pointers won’t cause major issues</p></li>
+</ul>
+</li>
+<li><p>Replace legacy pointer types in LLVM tests with opaque pointer types</p></li>
+</ul>
+</div>
+<div class="section" id="frontend-migration-steps">
+<h2>Frontend Migration Steps<a class="headerlink" href="#frontend-migration-steps" title="Permalink to this headline">¶</a></h2>
+<p>If you have your own frontend, there are a couple of things to do after opaque
+pointer types fully work.</p>
+<ul class="simple">
+<li><p>Don’t rely on LLVM pointee types to keep track of frontend pointee types</p></li>
+<li><p>Migrate away from LLVM IR instruction builders that rely on pointee types</p>
+<ul>
+<li><p>For example, <code class="docutils literal notranslate"><span class="pre">IRBuilder::CreateGEP()</span></code> has multiple overloads; make sure to
+use one where the source element type is explicitly passed in, not inferred
+from the pointer operand pointee type</p></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="JITLink.html" title="JITLink and ORC’s ObjectLinkingLayer"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="ORCv2.html" title="ORC Design and Implementation"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2003-2021, LLVM Project.
+      Last updated on 2021-10-05.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

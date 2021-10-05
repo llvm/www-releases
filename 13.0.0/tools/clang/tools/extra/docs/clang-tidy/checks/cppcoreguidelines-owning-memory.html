@@ -1,0 +1,217 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>clang-tidy - cppcoreguidelines-owning-memory &#8212; Extra Clang Tools 13 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="cppcoreguidelines-prefer-member-initializer" href="cppcoreguidelines-prefer-member-initializer.html" />
+    <link rel="prev" title="cppcoreguidelines-non-private-member-variables-in-classes" href="cppcoreguidelines-non-private-member-variables-in-classes.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 13 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - cppcoreguidelines-owning-memory</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="cppcoreguidelines-non-private-member-variables-in-classes.html">cppcoreguidelines-non-private-member-variables-in-classes</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="cppcoreguidelines-prefer-member-initializer.html">cppcoreguidelines-prefer-member-initializer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="cppcoreguidelines-owning-memory">
+<h1>cppcoreguidelines-owning-memory<a class="headerlink" href="#cppcoreguidelines-owning-memory" title="Permalink to this headline">¶</a></h1>
+<p>This check implements the type-based semantics of <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code>, which allows
+static analysis on code, that uses raw pointers to handle resources like
+dynamic memory, but won’t introduce RAII concepts.</p>
+<p>The relevant sections in the <a class="reference external" href="https://github.com/isocpp/CppCoreGuidelines/blob/master/CppCoreGuidelines.md">C++ Core Guidelines</a> are I.11, C.33, R.3 and GSL.Views
+The definition of a <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> is straight forward</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">namespace</span> <span class="n">gsl</span> <span class="p">{</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span> <span class="n">owner</span> <span class="o">=</span> <span class="n">T</span><span class="p">;</span> <span class="p">}</span>
+</pre></div>
+</div>
+<p>It is therefore simple to introduce the owner even without using an implementation of
+the <a class="reference external" href="https://github.com/isocpp/CppCoreGuidelines/blob/master/CppCoreGuidelines.md#gsl-guideline-support-library">Guideline Support Library</a>.</p>
+<p>All checks are purely type based and not (yet) flow sensitive.</p>
+<p>The following examples will demonstrate the correct and incorrect initializations
+of owners, assignment is handled the same way. Note that both <code class="docutils literal notranslate"><span class="pre">new</span></code> and
+<code class="docutils literal notranslate"><span class="pre">malloc()</span></code>-like resource functions are considered to produce resources.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Creating an owner with factory functions is checked.</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">function_that_returns_owner</span><span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">));</span> <span class="p">}</span>
+
+<span class="c1">// Dynamic memory must be assigned to an owner</span>
+<span class="kt">int</span><span class="o">*</span> <span class="n">Something</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span> <span class="c1">// BAD, will be caught</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span> <span class="c1">// Good</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">[</span><span class="mi">42</span><span class="p">];</span> <span class="c1">// Good as well</span>
+
+<span class="c1">// Returned owner must be assigned to an owner</span>
+<span class="kt">int</span><span class="o">*</span> <span class="n">Something</span> <span class="o">=</span> <span class="n">function_that_returns_owner</span><span class="p">();</span> <span class="c1">// Bad, factory function</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner</span> <span class="o">=</span> <span class="n">function_that_returns_owner</span><span class="p">();</span> <span class="c1">// Good, result lands in owner</span>
+
+<span class="c1">// Something not a resource or owner should not be assigned to owners</span>
+<span class="kt">int</span> <span class="n">Stack</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owned</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">Stack</span><span class="p">;</span> <span class="c1">// Bad, not a resource assigned</span>
+</pre></div>
+</div>
+<p>In the case of dynamic memory as resource, only <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> variables are allowed
+to be deleted.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Example Bad, non-owner as resource handle, will be caught.</span>
+<span class="kt">int</span><span class="o">*</span> <span class="n">NonOwner</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span> <span class="c1">// First warning here, since new must land in an owner</span>
+<span class="k">delete</span> <span class="n">NonOwner</span><span class="p">;</span> <span class="c1">// Second warning here, since only owners are allowed to be deleted</span>
+
+<span class="c1">// Example Good, Ownership correctly stated</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span> <span class="c1">// Good</span>
+<span class="k">delete</span> <span class="n">Owner</span><span class="p">;</span> <span class="c1">// Good as well, statically enforced, that only owners get deleted</span>
+</pre></div>
+</div>
+<p>The check will furthermore ensure, that functions, that expect a <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> as
+argument get called with either a <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> or a newly created resource.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span> <span class="nf">expects_owner</span><span class="p">(</span><span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">o</span><span class="p">)</span> <span class="p">{</span> <span class="k">delete</span> <span class="n">o</span><span class="p">;</span> <span class="p">}</span>
+
+<span class="c1">// Bad Code</span>
+<span class="kt">int</span> <span class="n">NonOwner</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+<span class="n">expects_owner</span><span class="p">(</span><span class="o">&amp;</span><span class="n">NonOwner</span><span class="p">);</span> <span class="c1">// Bad, will get caught</span>
+
+<span class="c1">// Good Code</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span>
+<span class="n">expects_owner</span><span class="p">(</span><span class="n">Owner</span><span class="p">);</span> <span class="c1">// Good</span>
+<span class="n">expects_owner</span><span class="p">(</span><span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">));</span> <span class="c1">// Good as well, recognized created resource</span>
+
+<span class="c1">// Port legacy code for better resource-safety</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">FILE</span><span class="o">*&gt;</span> <span class="n">File</span> <span class="o">=</span> <span class="n">fopen</span><span class="p">(</span><span class="s">&quot;my_file.txt&quot;</span><span class="p">,</span> <span class="s">&quot;rw+&quot;</span><span class="p">);</span>
+<span class="kt">FILE</span><span class="o">*</span> <span class="n">BadFile</span> <span class="o">=</span> <span class="n">fopen</span><span class="p">(</span><span class="s">&quot;another_file.txt&quot;</span><span class="p">,</span> <span class="s">&quot;w&quot;</span><span class="p">);</span> <span class="c1">// Bad, warned</span>
+
+<span class="c1">// ... use the file</span>
+
+<span class="n">fclose</span><span class="p">(</span><span class="n">File</span><span class="p">);</span> <span class="c1">// Ok, File is annotated as &#39;owner&lt;&gt;&#39;</span>
+<span class="n">fclose</span><span class="p">(</span><span class="n">BadFile</span><span class="p">);</span> <span class="c1">// BadFile is not an &#39;owner&lt;&gt;&#39;, will be warned</span>
+</pre></div>
+</div>
+<div class="section" id="options">
+<h2>Options<a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h2>
+<dl class="option">
+<dt id="cmdoption-arg-legacyresourceproducers">
+<code class="sig-name descname">LegacyResourceProducers</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-legacyresourceproducers" title="Permalink to this definition">¶</a></dt>
+<dd><p>Semicolon-separated list of fully qualified names of legacy functions that create
+resources but cannot introduce <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;&gt;</span></code>.
+Defaults to <code class="docutils literal notranslate"><span class="pre">::malloc;::aligned_alloc;::realloc;::calloc;::fopen;::freopen;::tmpfile</span></code>.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-arg-legacyresourceconsumers">
+<code class="sig-name descname">LegacyResourceConsumers</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-legacyresourceconsumers" title="Permalink to this definition">¶</a></dt>
+<dd><p>Semicolon-separated list of fully qualified names of legacy functions expecting
+resource owners as pointer arguments but cannot introduce <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;&gt;</span></code>.
+Defaults to <code class="docutils literal notranslate"><span class="pre">::free;::realloc;::freopen;::fclose</span></code>.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="limitations">
+<h2>Limitations<a class="headerlink" href="#limitations" title="Permalink to this headline">¶</a></h2>
+<p>Using <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> in a typedef or alias is not handled correctly.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">using</span> <span class="n">heap_int</span> <span class="o">=</span> <span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">;</span>
+<span class="n">heap_int</span> <span class="n">allocated</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span> <span class="c1">// False positive!</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> is declared as a templated type alias.
+In template functions and classes, like in the example below, the information
+of the type aliases gets lost. Therefore using <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> in a heavy templated
+code base might lead to false positives.</p>
+<p>Known code constructs that do not get diagnosed correctly are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">std::exchange</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">std::vector&lt;gsl::owner&lt;T*&gt;&gt;</span></code></p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// This template function works as expected. Type information doesn&#39;t get lost.</span>
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="kt">void</span> <span class="n">delete_owner</span><span class="p">(</span><span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="n">T</span><span class="o">*&gt;</span> <span class="n">owned_object</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">delete</span> <span class="n">owned_object</span><span class="p">;</span> <span class="c1">// Everything alright</span>
+<span class="p">}</span>
+
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">function_that_returns_owner</span><span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">));</span> <span class="p">}</span>
+
+<span class="c1">// Type deduction does not work for auto variables.</span>
+<span class="c1">// This is caught by the check and will be noted accordingly.</span>
+<span class="k">auto</span> <span class="n">OwnedObject</span> <span class="o">=</span> <span class="n">function_that_returns_owner</span><span class="p">();</span> <span class="c1">// Type of OwnedObject will be int*</span>
+
+<span class="c1">// Problematic function template that looses the typeinformation on owner</span>
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="kt">void</span> <span class="n">bad_template_function</span><span class="p">(</span><span class="n">T</span> <span class="n">some_object</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// This line will trigger the warning, that a non-owner is assigned to an owner</span>
+  <span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="n">T</span><span class="o">*&gt;</span> <span class="n">new_owner</span> <span class="o">=</span> <span class="n">some_object</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// Calling the function with an owner still yields a false positive.</span>
+<span class="n">bad_template_function</span><span class="p">(</span><span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span><span class="p">(</span><span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">)));</span>
+
+
+<span class="c1">// The same issue occurs with templated classes like the following.</span>
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="k">class</span> <span class="nc">OwnedValue</span> <span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+  <span class="k">const</span> <span class="n">T</span> <span class="n">getValue</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span> <span class="k">return</span> <span class="n">_val</span><span class="p">;</span> <span class="p">}</span>
+<span class="k">private</span><span class="o">:</span>
+  <span class="n">T</span> <span class="n">_val</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="c1">// Code, that yields a false positive.</span>
+<span class="n">OwnedValue</span><span class="o">&lt;</span><span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;&gt;</span> <span class="n">Owner</span><span class="p">(</span><span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">));</span> <span class="c1">// Type deduction yield T -&gt; int *</span>
+<span class="c1">// False positive, getValue returns int* and not gsl::owner&lt;int*&gt;</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">OwnedInt</span> <span class="o">=</span> <span class="n">Owner</span><span class="p">.</span><span class="n">getValue</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>Another limitation of the current implementation is only the type based checking.
+Suppose you have code like the following:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Two owners with assigned resources</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner1</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span>
+<span class="n">gsl</span><span class="o">::</span><span class="n">owner</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">*&gt;</span> <span class="n">Owner2</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">(</span><span class="mi">42</span><span class="p">);</span>
+
+<span class="n">Owner2</span> <span class="o">=</span> <span class="n">Owner1</span><span class="p">;</span> <span class="c1">// Conceptual Leak of initial resource of Owner2!</span>
+<span class="n">Owner1</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The semantic of a <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> is mostly like a <code class="docutils literal notranslate"><span class="pre">std::unique_ptr&lt;T&gt;</span></code>, therefore
+assignment of two <code class="docutils literal notranslate"><span class="pre">gsl::owner&lt;T*&gt;</span></code> is considered a move, which requires that the
+resource <code class="docutils literal notranslate"><span class="pre">Owner2</span></code> must have been released before the assignment.
+This kind of condition could be caught in later improvements of this check with
+flowsensitive analysis. Currently, the <cite>Clang Static Analyzer</cite> catches this bug
+for dynamic memory, but not for general types of resources.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="cppcoreguidelines-non-private-member-variables-in-classes.html">cppcoreguidelines-non-private-member-variables-in-classes</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="cppcoreguidelines-prefer-member-initializer.html">cppcoreguidelines-prefer-member-initializer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
