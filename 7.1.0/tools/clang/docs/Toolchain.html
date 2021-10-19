@@ -1,0 +1,375 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Assembling a Complete Toolchain &#8212; Clang 7 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clang Language Extensions" href="LanguageExtensions.html" />
+    <link rel="prev" title="Clang Compiler User’s Manual" href="UsersManual.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 7 documentation</span></a></h1>
+        <h2 class="heading"><span>Assembling a Complete Toolchain</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UsersManual.html">Clang Compiler User’s Manual</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LanguageExtensions.html">Clang Language Extensions</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="assembling-a-complete-toolchain">
+<h1>Assembling a Complete Toolchain<a class="headerlink" href="#assembling-a-complete-toolchain" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id8">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#tools" id="id9">Tools</a></p>
+<ul>
+<li><p><a class="reference internal" href="#clang-frontend" id="id10">Clang frontend</a></p></li>
+<li><p><a class="reference internal" href="#language-frontends-for-other-languages" id="id11">Language frontends for other languages</a></p></li>
+<li><p><a class="reference internal" href="#assember" id="id12">Assember</a></p></li>
+<li><p><a class="reference internal" href="#linker" id="id13">Linker</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#runtime-libraries" id="id14">Runtime libraries</a></p>
+<ul>
+<li><p><a class="reference internal" href="#compiler-runtime" id="id15">Compiler runtime</a></p></li>
+<li><p><a class="reference internal" href="#atomics-library" id="id16">Atomics library</a></p></li>
+<li><p><a class="reference internal" href="#unwind-library" id="id17">Unwind library</a></p></li>
+<li><p><a class="reference internal" href="#sanitizer-runtime" id="id18">Sanitizer runtime</a></p></li>
+<li><p><a class="reference internal" href="#c-standard-library" id="id19">C standard library</a></p></li>
+<li><p><a class="reference internal" href="#c-abi-library" id="id20">C++ ABI library</a></p></li>
+<li><p><a class="reference internal" href="#id6" id="id21">C++ standard library</a></p></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id8">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>Clang is only one component in a complete tool chain for C family
+programming languages. In order to assemble a complete toolchain,
+additional tools and runtime libraries are required. Clang is designed
+to interoperate with existing tools and libraries for its target
+platforms, and the LLVM project provides alternatives for a number
+of these components.</p>
+<p>This document describes the required and optional components in a
+complete toolchain, where to find them, and the supported versions
+and limitations of each option.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>This document currently describes Clang configurations on POSIX-like
+operating systems with the GCC-compatible <code class="docutils literal notranslate"><span class="pre">clang</span></code> driver. When
+targeting Windows with the MSVC-compatible <code class="docutils literal notranslate"><span class="pre">clang-cl</span></code> driver, some
+of the details are different.</p>
+</div>
+</div>
+<div class="section" id="tools">
+<h2><a class="toc-backref" href="#id9">Tools</a><a class="headerlink" href="#tools" title="Permalink to this headline">¶</a></h2>
+<p>A complete compilation of C family programming languages typically
+involves the following pipeline of tools, some of which are omitted
+in some compilations:</p>
+<ul class="simple">
+<li><p><strong>Preprocessor</strong>: This performs the actions of the C preprocessor:
+expanding #includes and #defines.
+The <code class="docutils literal notranslate"><span class="pre">-E</span></code> flag instructs Clang to stop after this step.</p></li>
+<li><p><strong>Parsing</strong>: This parses and semantically analyzes the source language and
+builds a source-level intermediate representation (“AST”), producing a
+<a class="reference internal" href="UsersManual.html#usersmanual-precompiled-headers"><span class="std std-ref">precompiled header (PCH)</span></a>,
+preamble, or
+<a class="reference internal" href="Modules.html"><span class="doc">precompiled module file (PCM)</span></a>,
+depending on the input.
+The <code class="docutils literal notranslate"><span class="pre">-precompile</span></code> flag instructs Clang to stop after this step. This is
+the default when the input is a header file.</p></li>
+<li><p><strong>IR generation</strong>: This converts the source-level intermediate representation
+into an optimizer-specific intermediate representation (IR); for Clang, this
+is LLVM IR.
+The <code class="docutils literal notranslate"><span class="pre">-emit-llvm</span></code> flag instructs Clang to stop after this step. If combined
+with <code class="docutils literal notranslate"><span class="pre">-S</span></code>, Clang will produce textual LLVM IR; otherwise, it will produce
+LLVM IR bitcode.</p></li>
+<li><p><strong>Compiler backend</strong>: This converts the intermediate representation
+into target-specific assembly code.
+The <code class="docutils literal notranslate"><span class="pre">-S</span></code> flag instructs Clang to stop after this step.</p></li>
+<li><p><strong>Assembler</strong>: This converts target-specific assembly code into
+target-specific machine code object files.
+The <code class="docutils literal notranslate"><span class="pre">-c</span></code> flag instructs Clang to stop after this step.</p></li>
+<li><p><strong>Linker</strong>: This combines multiple object files into a single image
+(either a shared object or an executable).</p></li>
+</ul>
+<p>Clang provides all of these pieces other than the linker. When multiple
+steps are performed by the same tool, it is common for the steps to be
+fused together to avoid creating intermediate files.</p>
+<p>When given an output of one of the above steps as an input, earlier steps
+are skipped (for instance, a <code class="docutils literal notranslate"><span class="pre">.s</span></code> file input will be assembled and linked).</p>
+<p>The Clang driver can be invoked with the <code class="docutils literal notranslate"><span class="pre">-###</span></code> flag (this argument will need
+to be escaped under most shells) to see which commands it would run for the
+above steps, without running them. The <code class="docutils literal notranslate"><span class="pre">-v</span></code> (verbose) flag will print the
+commands in addition to running them.</p>
+<div class="section" id="clang-frontend">
+<h3><a class="toc-backref" href="#id10">Clang frontend</a><a class="headerlink" href="#clang-frontend" title="Permalink to this headline">¶</a></h3>
+<p>The Clang frontend (<code class="docutils literal notranslate"><span class="pre">clang</span> <span class="pre">-cc1</span></code>) is used to compile C family languages. The
+command-line interface of the frontend is considered to be an implementation
+detail, intentionally has no external documentation, and is subject to change
+without notice.</p>
+</div>
+<div class="section" id="language-frontends-for-other-languages">
+<h3><a class="toc-backref" href="#id11">Language frontends for other languages</a><a class="headerlink" href="#language-frontends-for-other-languages" title="Permalink to this headline">¶</a></h3>
+<p>Clang can be provided with inputs written in non-C-family languages. In such
+cases, an external tool will be used to compile the input. The
+currently-supported languages are:</p>
+<ul class="simple">
+<li><p>Ada (<code class="docutils literal notranslate"><span class="pre">-x</span> <span class="pre">ada</span></code>, <code class="docutils literal notranslate"><span class="pre">.ad[bs]</span></code>)</p></li>
+<li><p>Fortran (<code class="docutils literal notranslate"><span class="pre">-x</span> <span class="pre">f95</span></code>, <code class="docutils literal notranslate"><span class="pre">.f</span></code>, <code class="docutils literal notranslate"><span class="pre">.f9[05]</span></code>, <code class="docutils literal notranslate"><span class="pre">.for</span></code>, <code class="docutils literal notranslate"><span class="pre">.fpp</span></code>, case-insensitive)</p></li>
+<li><p>Java (<code class="docutils literal notranslate"><span class="pre">-x</span> <span class="pre">java</span></code>)</p></li>
+</ul>
+<p>In each case, GCC will be invoked to compile the input.</p>
+</div>
+<div class="section" id="assember">
+<h3><a class="toc-backref" href="#id12">Assember</a><a class="headerlink" href="#assember" title="Permalink to this headline">¶</a></h3>
+<p>Clang can either use LLVM’s integrated assembler or an external system-specific
+tool (for instance, the GNU Assembler on GNU OSes) to produce machine code from
+assembly.
+By default, Clang uses LLVM’s integrated assembler on all targets where it is
+supported. If you wish to use the system assember instead, use the
+<code class="docutils literal notranslate"><span class="pre">-fno-integrated-as</span></code> option.</p>
+</div>
+<div class="section" id="linker">
+<h3><a class="toc-backref" href="#id13">Linker</a><a class="headerlink" href="#linker" title="Permalink to this headline">¶</a></h3>
+<p>Clang can be configured to use one of several different linkers:</p>
+<ul class="simple">
+<li><p>GNU ld</p></li>
+<li><p>GNU gold</p></li>
+<li><p>LLVM’s <a class="reference external" href="http://lld.llvm.org">lld</a></p></li>
+<li><p>MSVC’s link.exe</p></li>
+</ul>
+<p>Link-time optimization is natively supported by lld, and supported via
+a <a class="reference external" href="http://llvm.org/docs/GoldPlugin.html">linker plugin</a> when using gold.</p>
+<p>The default linker varies between targets, and can be overridden via the
+<code class="docutils literal notranslate"><span class="pre">-fuse-ld=&lt;linker</span> <span class="pre">name&gt;</span></code> flag.</p>
+</div>
+</div>
+<div class="section" id="runtime-libraries">
+<h2><a class="toc-backref" href="#id14">Runtime libraries</a><a class="headerlink" href="#runtime-libraries" title="Permalink to this headline">¶</a></h2>
+<p>A number of different runtime libraries are required to provide different
+layers of support for C family programs. Clang will implicitly link an
+appropriate implementation of each runtime library, selected based on
+target defaults or explicitly selected by the <code class="docutils literal notranslate"><span class="pre">--rtlib=</span></code> and <code class="docutils literal notranslate"><span class="pre">--stdlib=</span></code>
+flags.</p>
+<p>The set of implicitly-linked libraries depend on the language mode. As a
+consequence, you should use <code class="docutils literal notranslate"><span class="pre">clang++</span></code> when linking C++ programs in order
+to ensure the C++ runtimes are provided.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>There may exist other implementations for these components not described
+below. Please let us know how well those other implementations work with
+Clang so they can be added to this list!</p>
+</div>
+<div class="section" id="compiler-runtime">
+<h3><a class="toc-backref" href="#id15">Compiler runtime</a><a class="headerlink" href="#compiler-runtime" title="Permalink to this headline">¶</a></h3>
+<p>The compiler runtime library provides definitions of functions implicitly
+invoked by the compiler to support operations not natively supported by
+the underlying hardware (for instance, 128-bit integer multiplications),
+and where inline expansion of the operation is deemed unsuitable.</p>
+<p>The default runtime library is target-specific. For targets where GCC is
+the dominant compiler, Clang currently defaults to using libgcc_s. On most
+other targets, compiler-rt is used by default.</p>
+<div class="section" id="compiler-rt-llvm">
+<h4>compiler-rt (LLVM)<a class="headerlink" href="#compiler-rt-llvm" title="Permalink to this headline">¶</a></h4>
+<p><a class="reference external" href="http://compiler-rt.llvm.org/">LLVM’s compiler runtime library</a> provides a
+complete set of runtime library functions containing all functions that
+Clang will implicitly call, in <code class="docutils literal notranslate"><span class="pre">libclang_rt.builtins.&lt;arch&gt;.a</span></code>.</p>
+<p>You can instruct Clang to use compiler-rt with the <code class="docutils literal notranslate"><span class="pre">--rtlib=compiler-rt</span></code> flag.
+This is not supported on every platform.</p>
+<p>If using libc++ and/or libc++abi, you may need to configure them to use
+compiler-rt rather than libgcc_s by passing <code class="docutils literal notranslate"><span class="pre">-DLIBCXX_USE_COMPILER_RT=YES</span></code>
+and/or <code class="docutils literal notranslate"><span class="pre">-DLIBCXXABI_USE_COMPILER_RT=YES</span></code> to <code class="docutils literal notranslate"><span class="pre">cmake</span></code>. Otherwise, you
+may end up with both runtime libraries linked into your program (this is
+typically harmless, but wasteful).</p>
+</div>
+<div class="section" id="libgcc-s-gnu">
+<h4>libgcc_s (GNU)<a class="headerlink" href="#libgcc-s-gnu" title="Permalink to this headline">¶</a></h4>
+<p><a class="reference external" href="https://gcc.gnu.org/onlinedocs/gccint/Libgcc.html">GCC’s runtime library</a>
+can be used in place of compiler-rt. However, it lacks several functions
+that LLVM may emit references to, particularly when using Clang’s
+<code class="docutils literal notranslate"><span class="pre">__builtin_*_overflow</span></code> family of intrinsics.</p>
+<p>You can instruct Clang to use libgcc_s with the <code class="docutils literal notranslate"><span class="pre">--rtlib=libgcc</span></code> flag.
+This is not supported on every platform.</p>
+</div>
+</div>
+<div class="section" id="atomics-library">
+<h3><a class="toc-backref" href="#id16">Atomics library</a><a class="headerlink" href="#atomics-library" title="Permalink to this headline">¶</a></h3>
+<p>If your program makes use of atomic operations and the compiler is not able
+to lower them all directly to machine instructions (because there either is
+no known suitable machine instruction or the operand is not known to be
+suitably aligned), a call to a runtime library <code class="docutils literal notranslate"><span class="pre">__atomic_*</span></code> function
+will be generated. A runtime library containing these atomics functions is
+necessary for such programs.</p>
+<div class="section" id="id1">
+<h4>compiler-rt (LLVM)<a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h4>
+<p>compiler-rt contains an implementation of an atomics library.</p>
+</div>
+<div class="section" id="libatomic-gnu">
+<h4>libatomic (GNU)<a class="headerlink" href="#libatomic-gnu" title="Permalink to this headline">¶</a></h4>
+<p>libgcc_s does not provide an implementation of an atomics library. Instead,
+<a class="reference external" href="https://gcc.gnu.org/wiki/Atomic/GCCMM">GCC’s libatomic library</a> can be
+used to supply these when using libgcc_s.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Clang does not currently automatically link against libatomic when using
+libgcc_s. You may need to manually add <code class="docutils literal notranslate"><span class="pre">-latomic</span></code> to support this
+configuration when using non-native atomic operations (if you see link errors
+referring to <code class="docutils literal notranslate"><span class="pre">__atomic_*</span></code> functions).</p>
+</div>
+</div>
+</div>
+<div class="section" id="unwind-library">
+<h3><a class="toc-backref" href="#id17">Unwind library</a><a class="headerlink" href="#unwind-library" title="Permalink to this headline">¶</a></h3>
+<p>The unwind library provides a family of <code class="docutils literal notranslate"><span class="pre">_Unwind_*</span></code> functions implementing
+the language-neutral stack unwinding portion of the Itanium C++ ABI
+(<a class="reference external" href="http://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html#base-abi">Level I</a>).
+It is a dependency of the C++ ABI library, and sometimes is a dependency
+of other runtimes.</p>
+<div class="section" id="libunwind-llvm">
+<h4>libunwind (LLVM)<a class="headerlink" href="#libunwind-llvm" title="Permalink to this headline">¶</a></h4>
+<p>LLVM’s unwinder library can be obtained from subversion:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">llvm-src$ svn co http://llvm.org/svn/llvm-project/libunwind/trunk projects/libunwind</span>
+</pre></div>
+</div>
+<p>When checked out into projects/libunwind within an LLVM checkout,
+it should be automatically picked up by the LLVM build system.</p>
+<p>If using libc++abi, you may need to configure it to use libunwind
+rather than libgcc_s by passing <code class="docutils literal notranslate"><span class="pre">-DLIBCXXABI_USE_LLVM_UNWINDER=YES</span></code>
+to <code class="docutils literal notranslate"><span class="pre">cmake</span></code>. If libc++abi is configured to use some version of
+libunwind, that library will be implicitly linked into binaries that
+link to libc++abi.</p>
+</div>
+<div class="section" id="id2">
+<h4>libgcc_s (GNU)<a class="headerlink" href="#id2" title="Permalink to this headline">¶</a></h4>
+<p>libgcc_s has an integrated unwinder, and does not need an external unwind
+library to be provided.</p>
+</div>
+<div class="section" id="libunwind-nongnu-org">
+<h4>libunwind (nongnu.org)<a class="headerlink" href="#libunwind-nongnu-org" title="Permalink to this headline">¶</a></h4>
+<p>This is another implementation of the libunwind specification.
+See <a class="reference external" href="http://www.nongnu.org/libunwind">libunwind (nongnu.org)</a>.</p>
+</div>
+<div class="section" id="libunwind-pathscale">
+<h4>libunwind (PathScale)<a class="headerlink" href="#libunwind-pathscale" title="Permalink to this headline">¶</a></h4>
+<p>This is another implementation of the libunwind specification.
+See <a class="reference external" href="https://github.com/pathscale/libunwind">libunwind (pathscale)</a>.</p>
+</div>
+</div>
+<div class="section" id="sanitizer-runtime">
+<h3><a class="toc-backref" href="#id18">Sanitizer runtime</a><a class="headerlink" href="#sanitizer-runtime" title="Permalink to this headline">¶</a></h3>
+<p>The instrumentation added by Clang’s sanitizers (<code class="docutils literal notranslate"><span class="pre">-fsanitize=...</span></code>) implicitly
+makes calls to a runtime library, in order to maintain side state about the
+execution of the program and to issue diagnostic messages when a problem is
+detected.</p>
+<p>The only supported implementation of these runtimes is provided by LLVM’s
+compiler-rt, and the relevant portion of that library
+(<code class="docutils literal notranslate"><span class="pre">libclang_rt.&lt;sanitizer&gt;.&lt;arch&gt;.a</span></code>)
+will be implicitly linked when linking with a <code class="docutils literal notranslate"><span class="pre">-fsanitize=...</span></code> flag.</p>
+</div>
+<div class="section" id="c-standard-library">
+<h3><a class="toc-backref" href="#id19">C standard library</a><a class="headerlink" href="#c-standard-library" title="Permalink to this headline">¶</a></h3>
+<p>Clang supports a wide variety of
+<a class="reference external" href="http://en.cppreference.com/w/c">C standard library</a>
+implementations.</p>
+</div>
+<div class="section" id="c-abi-library">
+<h3><a class="toc-backref" href="#id20">C++ ABI library</a><a class="headerlink" href="#c-abi-library" title="Permalink to this headline">¶</a></h3>
+<p>The C++ ABI library provides an implementation of the library portion of
+the Itanium C++ ABI, covering both the
+<a class="reference external" href="http://itanium-cxx-abi.github.io/cxx-abi/abi.html">support functionality in the main Itanium C++ ABI document</a> and
+<a class="reference external" href="http://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html#cxx-abi">Level II of the exception handling support</a>.
+References to the functions and objects in this library are implicitly
+generated by Clang when compiling C++ code.</p>
+<p>While it is possible to link C++ code using libstdc++ and code using libc++
+together into the same program (so long as you do not attempt to pass C++
+standard library objects across the boundary), it is not generally possible
+to have more than one C++ ABI library in a program.</p>
+<p>The version of the C++ ABI library used by Clang will be the one that the
+chosen C++ standard library was linked against. Several implementations are
+available:</p>
+<div class="section" id="libc-abi-llvm">
+<h4>libc++abi (LLVM)<a class="headerlink" href="#libc-abi-llvm" title="Permalink to this headline">¶</a></h4>
+<p><a class="reference external" href="http://libcxxabi.llvm.org/">libc++abi</a> is LLVM’s implementation of this
+specification.</p>
+</div>
+<div class="section" id="libsupc-gnu">
+<h4>libsupc++ (GNU)<a class="headerlink" href="#libsupc-gnu" title="Permalink to this headline">¶</a></h4>
+<p>libsupc++ is GCC’s implementation of this specification. However, this
+library is only used when libstdc++ is linked statically. The dynamic
+library version of libstdc++ contains a copy of libsupc++.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Clang does not currently automatically link against libatomic when statically
+linking libstdc++. You may need to manually add <code class="docutils literal notranslate"><span class="pre">-lsupc++</span></code> to support this
+configuration when using <code class="docutils literal notranslate"><span class="pre">-static</span></code> or <code class="docutils literal notranslate"><span class="pre">-static-libstdc++</span></code>.</p>
+</div>
+</div>
+<div class="section" id="libcxxrt-pathscale">
+<h4>libcxxrt (PathScale)<a class="headerlink" href="#libcxxrt-pathscale" title="Permalink to this headline">¶</a></h4>
+<p>This is another implementation of the Itanium C++ ABI specification.
+See <a class="reference external" href="https://github.com/pathscale/libcxxrt">libcxxrt</a>.</p>
+</div>
+</div>
+<div class="section" id="id6">
+<h3><a class="toc-backref" href="#id21">C++ standard library</a><a class="headerlink" href="#id6" title="Permalink to this headline">¶</a></h3>
+<p>Clang supports use of either LLVM’s libc++ or GCC’s libstdc++ implementation
+of the <a class="reference external" href="http://en.cppreference.com/w/cpp">C++ standard library</a>.</p>
+<div class="section" id="libc-llvm">
+<h4>libc++ (LLVM)<a class="headerlink" href="#libc-llvm" title="Permalink to this headline">¶</a></h4>
+<p><a class="reference external" href="http://libcxx.llvm.org/">libc++</a> is LLVM’s implementation of the C++
+standard library, aimed at being a complete implementation of the C++
+standards from C++11 onwards.</p>
+<p>You can instruct Clang to use libc++ with the <code class="docutils literal notranslate"><span class="pre">-stdlib=libc++</span></code> flag.</p>
+</div>
+<div class="section" id="libstdc-gnu">
+<h4>libstdc++ (GNU)<a class="headerlink" href="#libstdc-gnu" title="Permalink to this headline">¶</a></h4>
+<p><a class="reference external" href="https://gcc.gnu.org/onlinedocs/libstdc++/">libstdc++</a> is GCC’s implementation
+of the C++ standard library. Clang supports a wide range of versions of
+libstdc++, from around version 4.2 onwards, and will implicitly work around
+some bugs in older versions of libstdc++.</p>
+<p>You can instruct Clang to use libstdc++ with the <code class="docutils literal notranslate"><span class="pre">-stdlib=libstdc++</span></code> flag.</p>
+</div>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UsersManual.html">Clang Compiler User’s Manual</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LanguageExtensions.html">Clang Language Extensions</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
