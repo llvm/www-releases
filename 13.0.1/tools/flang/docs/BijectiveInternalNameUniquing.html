@@ -1,0 +1,290 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bijective Internal Name Uniquing &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="DO CONCURRENT isn’t necessarily concurrent" href="DoConcurrent.html" />
+    <link rel="prev" title="Array Composition" href="ArrayComposition.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="DoConcurrent.html" title="DO CONCURRENT isn’t necessarily concurrent"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="ArrayComposition.html" title="Array Composition"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="bijective-internal-name-uniquing">
+<h1>Bijective Internal Name Uniquing<a class="headerlink" href="#bijective-internal-name-uniquing" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#prefix-q" id="id1">Prefix <code class="docutils literal notranslate"><span class="pre">_Q</span></code></a></p></li>
+<li><p><a class="reference internal" href="#scope-building" id="id2">Scope Building</a></p></li>
+<li><p><a class="reference internal" href="#common-blocks" id="id3">Common blocks</a></p></li>
+<li><p><a class="reference internal" href="#module-scope-global-data" id="id4">Module scope global data</a></p></li>
+<li><p><a class="reference internal" href="#procedures-subprograms" id="id5">Procedures/Subprograms</a></p></li>
+<li><p><a class="reference internal" href="#derived-types-and-related" id="id6">Derived types and related</a></p></li>
+<li><p><a class="reference internal" href="#compiler-generated-names" id="id7">Compiler generated names</a></p></li>
+</ul>
+</div>
+<p>FIR has a flat namespace.  No two objects may have the same name at
+the module level.  (These would be functions, globals, etc.)
+This necessitates some sort of encoding scheme to unique
+symbols from the front-end into FIR.</p>
+<p>Another requirement is
+to be able to reverse these unique names and recover the associated
+symbol in the symbol table.</p>
+<p>Fortran is case insensitive, which allows the compiler to convert the
+user’s identifiers to all lower case.  Such a universal conversion implies
+that all upper case letters are available for use in uniquing.</p>
+<div class="section" id="prefix-q">
+<h2><a class="toc-backref" href="#id1">Prefix <code class="docutils literal notranslate"><span class="pre">_Q</span></code></a><a class="headerlink" href="#prefix-q" title="Permalink to this headline">¶</a></h2>
+<p>All uniqued names have the prefix sequence <code class="docutils literal notranslate"><span class="pre">_Q</span></code> to indicate the name has
+been uniqued.  (Q is chosen because it is a
+<a class="reference external" href="http://pi.math.cornell.edu/~mec/2003-2004/cryptography/subs/frequencies.html">low frequency letter</a>
+in English.)</p>
+</div>
+<div class="section" id="scope-building">
+<h2><a class="toc-backref" href="#id2">Scope Building</a><a class="headerlink" href="#scope-building" title="Permalink to this headline">¶</a></h2>
+<p>Symbols can be scoped by the module, submodule, or procedure that contains
+that symbol.  After the <code class="docutils literal notranslate"><span class="pre">_Q</span></code> sigil, names are constructed from outermost to
+innermost scope as</p>
+<ul class="simple">
+<li><p>Module name prefixed with <code class="docutils literal notranslate"><span class="pre">M</span></code></p></li>
+<li><p>Submodule name prefixed with <code class="docutils literal notranslate"><span class="pre">S</span></code></p></li>
+<li><p>Procedure name prefixed with <code class="docutils literal notranslate"><span class="pre">F</span></code></p></li>
+</ul>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">submodule</span> <span class="p">(</span><span class="n">mod</span><span class="p">:</span><span class="n">s1mod</span><span class="p">)</span> <span class="n">s2mod</span>
+      <span class="o">...</span>
+      <span class="n">subroutine</span> <span class="n">sub</span>
+        <span class="o">...</span>
+      <span class="n">contains</span>
+        <span class="n">function</span> <span class="n">fun</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">fun</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QMmodSs1modSs2modFsubPfun</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="common-blocks">
+<h2><a class="toc-backref" href="#id3">Common blocks</a><a class="headerlink" href="#common-blocks" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>A common block name will be prefixed with <code class="docutils literal notranslate"><span class="pre">B</span></code></p></li>
+</ul>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>   <span class="n">common</span> <span class="o">/</span><span class="n">variables</span><span class="o">/</span> <span class="n">i</span><span class="p">,</span> <span class="n">j</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">variables</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QBvariables</span>
+</pre></div>
+</div>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>   <span class="n">common</span> <span class="n">i</span><span class="p">,</span> <span class="n">j</span>
+</pre></div>
+</div>
+<p>The uniqued name in case of <code class="docutils literal notranslate"><span class="pre">blank</span> <span class="pre">common</span> <span class="pre">block</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QB</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="module-scope-global-data">
+<h2><a class="toc-backref" href="#id4">Module scope global data</a><a class="headerlink" href="#module-scope-global-data" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>A global data entity is prefixed with <code class="docutils literal notranslate"><span class="pre">E</span></code></p></li>
+<li><p>A global entity that is constant (parameter) will be prefixed with <code class="docutils literal notranslate"><span class="pre">EC</span></code></p></li>
+</ul>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">module</span> <span class="n">mod</span>
+      <span class="n">integer</span> <span class="p">::</span> <span class="n">intvar</span>
+      <span class="n">real</span><span class="p">,</span> <span class="n">parameter</span> <span class="p">::</span> <span class="n">pi</span> <span class="o">=</span> <span class="mf">3.14</span>
+    <span class="n">end</span> <span class="n">module</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">intvar</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QMmodEintvar</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">pi</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QMmodECpi</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="procedures-subprograms">
+<h2><a class="toc-backref" href="#id5">Procedures/Subprograms</a><a class="headerlink" href="#procedures-subprograms" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>A procedure/subprogram is prefixed with <code class="docutils literal notranslate"><span class="pre">P</span></code></p></li>
+</ul>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">subroutine</span> <span class="n">sub</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">sub</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QPsub</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="derived-types-and-related">
+<h2><a class="toc-backref" href="#id6">Derived types and related</a><a class="headerlink" href="#derived-types-and-related" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>A derived type is prefixed with <code class="docutils literal notranslate"><span class="pre">T</span></code></p></li>
+<li><p>If a derived type has KIND parameters, they are listed in a consistent
+canonical order where each takes the form <code class="docutils literal notranslate"><span class="pre">Ki</span></code> and where <em>i</em> is the
+compile-time constant value. (All type parameters are integer.)  If <em>i</em>
+is a negative value, the prefix <code class="docutils literal notranslate"><span class="pre">KN</span></code> will be used and <em>i</em> will reflect
+the magnitude of the value.</p></li>
+</ul>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">module</span> <span class="n">mymodule</span>
+      <span class="nb">type</span> <span class="n">mytype</span>
+        <span class="n">integer</span> <span class="p">::</span> <span class="n">member</span>
+      <span class="n">end</span> <span class="nb">type</span>
+      <span class="o">...</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">mytype</span></code> becomes:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QMmymoduleTmytype</span>
+</pre></div>
+</div>
+<p>Given:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="nb">type</span> <span class="n">yourtype</span><span class="p">(</span><span class="n">k1</span><span class="p">,</span><span class="n">k2</span><span class="p">)</span>
+      <span class="n">integer</span><span class="p">,</span> <span class="n">kind</span> <span class="p">::</span> <span class="n">k1</span><span class="p">,</span> <span class="n">k2</span>
+      <span class="n">real</span> <span class="p">::</span> <span class="n">mem1</span>
+      <span class="nb">complex</span> <span class="p">::</span> <span class="n">mem2</span>
+    <span class="n">end</span> <span class="nb">type</span>
+</pre></div>
+</div>
+<p>The uniqued name of <code class="docutils literal notranslate"><span class="pre">yourtype</span></code> where <code class="docutils literal notranslate"><span class="pre">k1=4</span></code> and <code class="docutils literal notranslate"><span class="pre">k2=-6</span></code> (at compile-time):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">_QTyourtypeK4KN6</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>A derived type dispatch table is prefixed with <code class="docutils literal notranslate"><span class="pre">D</span></code>.  The dispatch table
+for <code class="docutils literal notranslate"><span class="pre">type</span> <span class="pre">t</span></code> would be <code class="docutils literal notranslate"><span class="pre">_QDTt</span></code></p></li>
+<li><p>A type descriptor instance is prefixed with <code class="docutils literal notranslate"><span class="pre">C</span></code>.  Intrinsic types can
+be encoded with their names and kinds.  The type descriptor for the
+type <code class="docutils literal notranslate"><span class="pre">yourtype</span></code> above would be <code class="docutils literal notranslate"><span class="pre">_QCTyourtypeK4KN6</span></code>.  The type
+descriptor for <code class="docutils literal notranslate"><span class="pre">REAL(4)</span></code> would be <code class="docutils literal notranslate"><span class="pre">_QCrealK4</span></code>.</p></li>
+</ul>
+</div>
+<div class="section" id="compiler-generated-names">
+<h2><a class="toc-backref" href="#id7">Compiler generated names</a><a class="headerlink" href="#compiler-generated-names" title="Permalink to this headline">¶</a></h2>
+<p>Compiler generated names do not have to be mapped back to Fortran.  These
+names will be prefixed with <code class="docutils literal notranslate"><span class="pre">_QQ</span></code> and followed by a unique compiler
+generated identifier. There is, of course, no mapping back to a symbol
+derived from the input source in this case as no such symbol exists.</p>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="DoConcurrent.html" title="DO CONCURRENT isn’t necessarily concurrent"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="ArrayComposition.html" title="Array Composition"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2022, The Flang Team.
+      Last updated on Feb 08, 2022.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
