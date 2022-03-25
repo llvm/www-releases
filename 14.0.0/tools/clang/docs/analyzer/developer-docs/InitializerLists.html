@@ -1,0 +1,333 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3.3. Initializer List &#8212; Clang 14.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/jquery.js"></script>
+    <script src="../../_static/underscore.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="3.4. Nullability Checks" href="nullability.html" />
+    <link rel="prev" title="3.2. Inlining" href="IPA.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 14.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>3.3. Initializer List</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="IPA.html"><span class="section-number">3.2. </span>Inlining</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="nullability.html"><span class="section-number">3.4. </span>Nullability Checks</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="initializer-list">
+<h1><span class="section-number">3.3. </span>Initializer List<a class="headerlink" href="#initializer-list" title="Permalink to this headline">¶</a></h1>
+<p>This discussion took place in <a class="reference external" href="https://reviews.llvm.org/D35216">https://reviews.llvm.org/D35216</a>
+“Escape symbols when creating std::initializer_list”.</p>
+<p>It touches problems of modelling C++ standard library constructs in general,
+including modelling implementation-defined fields within C++ standard library
+objects, in particular constructing objects into pointers held by such fields,
+and separation of responsibilities between analyzer’s core and checkers.</p>
+<p><strong>Artem:</strong></p>
+<p>I’ve seen a few false positives that appear because we construct
+C++11 std::initializer_list objects with brace initializers, and such
+construction is not properly modeled. For instance, if a new object is
+constructed on the heap only to be put into a brace-initialized STL container,
+the object is reported to be leaked.</p>
+<p>Approach (0): This can be trivially fixed by this patch, which causes pointers
+passed into initializer list expressions to immediately escape.</p>
+<p>This fix is overly conservative though. So i did a bit of investigation as to
+how model std::initializer_list better.</p>
+<p>According to the standard, <code class="docutils literal notranslate"><span class="pre">std::initializer_list&lt;T&gt;</span></code> is an object that has
+methods <code class="docutils literal notranslate"><span class="pre">begin(),</span> <span class="pre">end(),</span> <span class="pre">and</span> <span class="pre">size()</span></code>, where <code class="docutils literal notranslate"><span class="pre">begin()</span></code> returns a pointer to continuous
+array of <code class="docutils literal notranslate"><span class="pre">size()</span></code> objects of type T, and end() is equal to begin() plus size().
+The standard does hint that it should be possible to implement
+<code class="docutils literal notranslate"><span class="pre">std::initializer_list&lt;T&gt;</span></code> as a pair of pointers, or as a pointer and a size
+integer, however specific fields that the object would contain are an
+implementation detail.</p>
+<p>Ideally, we should be able to model the initializer list’s methods precisely.
+Or, at least, it should be possible to explain to the analyzer that the list
+somehow “takes hold” of the values put into it. Initializer lists can also be
+copied, which is a separate story that i’m not trying to address here.</p>
+<p>The obvious approach to modeling <code class="docutils literal notranslate"><span class="pre">std::initializer_list</span></code> in a checker would be to
+construct a SymbolMetadata for the memory region of the initializer list object,
+which would be of type <code class="docutils literal notranslate"><span class="pre">T*</span></code> and represent <code class="docutils literal notranslate"><span class="pre">begin()</span></code>, so we’d trivially model <code class="docutils literal notranslate"><span class="pre">begin()</span></code>
+as a function that returns this symbol. The array pointed to by that symbol
+would be <code class="docutils literal notranslate"><span class="pre">bindLoc()``ed</span> <span class="pre">to</span> <span class="pre">contain</span> <span class="pre">the</span> <span class="pre">list's</span> <span class="pre">contents</span> <span class="pre">(probably</span> <span class="pre">as</span> <span class="pre">a</span> <span class="pre">``CompoundVal</span></code>
+to produce less bindings in the store). Extent of this array would represent
+<code class="docutils literal notranslate"><span class="pre">size()</span></code> and would be equal to the length of the list as written.</p>
+<p>So this sounds good, however apparently it does nothing to address our false
+positives: when the list escapes, our <code class="docutils literal notranslate"><span class="pre">RegionStoreManager</span></code> is not magically
+guessing that the metadata symbol attached to it, together with its contents,
+should also escape. In fact, it’s impossible to trigger a pointer escape from
+within the checker.</p>
+<p>Approach (1): If only we enabled <code class="docutils literal notranslate"><span class="pre">ProgramState::bindLoc(...,</span> <span class="pre">notifyChanges=true)</span></code>
+to cause pointer escapes (not only region changes) (which sounds like the right
+thing to do anyway) such checker would be able to solve the false positives by
+triggering escapes when binding list elements to the list. However, it’d be as
+conservative as the current patch’s solution. Ideally, we do not want escapes to
+happen so early. Instead, we’d prefer them to be delayed until the list itself
+escapes.</p>
+<p>So i believe that escaping metadata symbols whenever their base regions escape
+would be the right thing to do. Currently we didn’t think about that because we
+had neither pointer-type metadatas nor non-pointer escapes.</p>
+<p>Approach (2): We could teach the Store to scan itself for bindings to
+metadata-symbolic-based regions during scanReachableSymbols() whenever a region
+turns out to be reachable. This requires no work on checker side, but it sounds
+performance-heavy.</p>
+<p>Approach (3): We could let checkers maintain the set of active metadata symbols
+in the program state (ideally somewhere in the Store, which sounds weird but
+causes the smallest amount of layering violations), so that the core knew what
+to escape. This puts a stress on the checkers, but with a smart data map it
+wouldn’t be a problem.</p>
+<p>Approach (4): We could allow checkers to trigger pointer escapes in arbitrary
+moments. If we allow doing this within <code class="docutils literal notranslate"><span class="pre">checkPointerEscape</span></code> callback itself, we
+would be able to express facts like “when this region escapes, that metadata
+symbol attached to it should also escape”. This sounds like an ultimate freedom,
+with maximum stress on the checkers - still not too much stress when we have
+smart data maps.</p>
+<p>I’m personally liking the approach (2) - it should be possible to avoid
+performance overhead, and clarity seems nice.</p>
+<p><strong>Gabor:</strong></p>
+<p>At this point, I am a bit wondering about two questions.</p>
+<ul class="simple">
+<li><p>When should something belong to a checker and when should something belong to the engine?
+Sometimes we model library aspects in the engine and model language constructs in checkers.</p></li>
+<li><p>What is the checker programming model that we are aiming for? Maximum freedom or more easy checker development?</p></li>
+</ul>
+<p>I think if we aim for maximum freedom, we do not need to worry about the
+potential stress on checkers, and we can introduce abstractions to mitigate that
+later on.
+If we want to simplify the API, then maybe it makes more sense to move language
+construct modeling to the engine when the checker API is not sufficient instead
+of complicating the API.</p>
+<p>Right now I have no preference or objections between the alternatives but there
+are some random thoughts:</p>
+<ul class="simple">
+<li><p>Maybe it would be great to have a guideline how to evolve the analyzer and
+follow it, so it can help us to decide in similar situations</p></li>
+<li><p>I do care about performance in this case. The reason is that we have a
+limited performance budget. And I think we should not expect most of the checker
+writers to add modeling of language constructs. So, in my opinion, it is ok to
+have less nice/more verbose API for language modeling if we can have better
+performance this way, since it only needs to be done once, and is done by the
+framework developers.</p></li>
+</ul>
+<p><strong>Artem:</strong> These are some great questions, i guess it’d be better to discuss
+them more openly. As a quick dump of my current mood:</p>
+<ul class="simple">
+<li><p>To me it seems obvious that we need to aim for a checker API that is both
+simple and powerful. This can probably by keeping the API as powerful as
+necessary while providing a layer of simple ready-made solutions on top of it.
+Probably a few reusable components for assembling checkers. And this layer
+should ideally be pleasant enough to work with, so that people would prefer to
+extend it when something is lacking, instead of falling back to the complex
+omnipotent API. I’m thinking of AST matchers vs. AST visitors as a roughly
+similar situation: matchers are not omnipotent, but they’re so nice.</p></li>
+<li><p>Separation between core and checkers is usually quite strange. Once we have
+shared state traits, i generally wouldn’t mind having region store or range
+constraint manager as checkers (though it’s probably not worth it to transform
+them - just a mood). The main thing to avoid here would be the situation when
+the checker overwrites stuff written by the core because it thinks it has a
+better idea what’s going on, so the core should provide a good default behavior.</p></li>
+<li><p>Yeah, i totally care about performance as well, and if i try to implement
+approach, i’d make sure it’s good.</p></li>
+</ul>
+<p><strong>Artem:</strong></p>
+<p>&gt; Approach (2): We could teach the Store to scan itself for bindings to
+&gt; metadata-symbolic-based regions during scanReachableSymbols() whenever
+&gt; a region turns out to be reachable. This requires no work on checker side,
+&gt; but it sounds performance-heavy.</p>
+<p>Nope, this approach is wrong. Metadata symbols may become out-of-date: when the
+object changes, metadata symbols attached to it aren’t changing (because symbols
+simply don’t change). The same metadata may have different symbols to denote its
+value in different moments of time, but at most one of them represents the
+actual metadata value. So we’d be escaping more stuff than necessary.</p>
+<p>If only we had “ghost fields”
+(<a class="reference external" href="https://lists.llvm.org/pipermail/cfe-dev/2016-May/049000.html">https://lists.llvm.org/pipermail/cfe-dev/2016-May/049000.html</a>), it would have
+been much easier, because the ghost field would only contain the actual
+metadata, and the Store would always know about it. This example adds to my
+belief that ghost fields are exactly what we need for most C++ checkers.</p>
+<p><strong>Devin:</strong></p>
+<p>In this case, I would be fine with some sort of
+AbstractStorageMemoryRegion that meant “here is a memory region and somewhere
+reachable from here exists another region of type T”. Or even multiple regions
+with different identifiers. This wouldn’t specify how the memory is reachable,
+but it would allow for transfer functions to get at those regions and it would
+allow for invalidation.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">std::initializer_list</span></code> this reachable region would the region for the backing
+array and the transfer functions for begin() and end() yield the beginning and
+end element regions for it.</p>
+<p>In my view this differs from ghost variables in that (1) this storage does
+actually exist (it is just a library implementation detail where that storage
+lives) and (2) it is perfectly valid for a pointer into that storage to be
+returned and for another part of the program to read or write from that storage.
+(Well, in this case just read since it is allowed to be read-only memory).</p>
+<p>What I’m not OK with is modeling abstract analysis state (for example, the count
+of a NSMutableArray or the typestate of a file handle) as a value stored in some
+ginned up region in the store. This takes an easy problem that the analyzer does
+well at (modeling typestate) and turns it into a hard one that the analyzer is
+bad at (reasoning about the contents of the heap).</p>
+<p>I think the key criterion here is: “is the region accessible from outside the
+library”. That is, does the library expose the region as a pointer that can be
+read to or written from in the client program? If so, then it makes sense for
+this to be in the store: we are modeling reachable storage as storage. But if
+we’re just modeling arbitrary analysis facts that need to be invalidated when a
+pointer escapes then we shouldn’t try to gin up storage for them just to get
+invalidation for free.</p>
+<p><strong>Artem:</strong></p>
+<p>&gt; In this case, I would be fine with some sort of <code class="docutils literal notranslate"><span class="pre">AbstractStorageMemoryRegion</span></code>
+&gt; that meant “here is a memory region and somewhere reachable from here exists
+&gt; another region of type T”. Or even multiple regions with different
+&gt; identifiers. This wouldn’t specify how the memory is reachable, but it would
+&gt; allow for transfer functions to get at those regions and it would allow for
+&gt; invalidation.</p>
+<p>Yeah, this is what we can easily implement now as a
+symbolic-region-based-on-a-metadata-symbol (though we can make a new region
+class for that if we eg. want it typed). The problem is that the relation
+between such storage region and its parent object region is essentially
+immaterial, similarly to the relation between <code class="docutils literal notranslate"><span class="pre">SymbolRegionValue</span></code> and its parent
+region. Region contents are mutable: today the abstract storage is reachable
+from its parent object, tomorrow it’s not, and maybe something else becomes
+reachable, something that isn’t even abstract. So the parent region for the
+abstract storage is most of the time at best a “nice to know” thing - we cannot
+rely on it to do any actual work. We’d anyway need to rely on the checker to do
+the job.</p>
+<p>&gt; For std::initializer_list this reachable region would the region for the
+&gt; backing array and the transfer functions for begin() and end() yield the
+&gt; beginning and end element regions for it.</p>
+<p>So maybe in fact for std::initializer_list it may work fine because you cannot
+change the data after the object is constructed - so this region’s contents are
+essentially immutable. For the future, i feel as if it is a dead end.</p>
+<p>I’d like to consider another funny example. Suppose we’re trying to model</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="p">.</span> <span class="n">Consider</span><span class="o">::</span>
+
+  <span class="kt">void</span> <span class="n">bar</span><span class="p">(</span><span class="k">const</span> <span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">);</span>
+
+  <span class="kt">void</span> <span class="nf">foo</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="o">&amp;</span><span class="n">x</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="o">*</span><span class="n">a</span> <span class="o">=</span> <span class="n">x</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>   <span class="c1">// (a, 0, direct): &amp;AbstractStorageRegion</span>
+    <span class="o">*</span><span class="n">a</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>             <span class="c1">// (AbstractStorageRegion, 0, direct): 1 S32b</span>
+    <span class="kt">int</span> <span class="o">*</span><span class="n">b</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">int</span><span class="p">;</span>
+    <span class="o">*</span><span class="n">b</span> <span class="o">=</span> <span class="mi">2</span><span class="p">;</span>             <span class="c1">// (SymRegion{conj_$0&lt;int *&gt;}, 0 ,direct): 2 S32b</span>
+    <span class="n">x</span><span class="p">.</span><span class="n">reset</span><span class="p">(</span><span class="n">b</span><span class="p">);</span>         <span class="c1">// Checker map: x -&gt; SymRegion{conj_$0&lt;int *&gt;}</span>
+    <span class="n">bar</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>             <span class="c1">// &#39;a&#39; doesn&#39;t escape (the pointer was unique), &#39;b&#39; does.</span>
+    <span class="n">clang_analyzer_eval</span><span class="p">(</span><span class="o">*</span><span class="n">a</span> <span class="o">==</span> <span class="mi">1</span><span class="p">);</span> <span class="c1">// Making this true is up to the checker.</span>
+    <span class="n">clang_analyzer_eval</span><span class="p">(</span><span class="o">*</span><span class="n">b</span> <span class="o">==</span> <span class="mi">2</span><span class="p">);</span> <span class="c1">// Making this unknown is up to the checker.</span>
+  <span class="p">}</span>
+</pre></div>
+</div>
+<p>The checker doesn’t totally need to ensure that <code class="docutils literal notranslate"><span class="pre">*a</span> <span class="pre">==</span> <span class="pre">1</span></code> passes - even though the
+pointer was unique, it could theoretically have <code class="docutils literal notranslate"><span class="pre">.get()</span></code>-ed above and the code
+could of course break the uniqueness invariant (though we’d probably want it).
+The checker can say that “even if <code class="docutils literal notranslate"><span class="pre">*a</span></code> did escape, it was not because it was
+stuffed directly into bar()”.</p>
+<p>The checker’s direct responsibility, however, is to solve the <code class="docutils literal notranslate"><span class="pre">*b</span> <span class="pre">==</span> <span class="pre">2</span></code> thing
+(which is in fact the problem we’re dealing with in this patch - escaping the
+storage region of the object).</p>
+<p>So we’re talking about one more operation over the program state (scanning
+reachable symbols and regions) that cannot work without checker support.</p>
+<p>We can probably add a new callback “checkReachableSymbols” to solve this. This
+is in fact also related to the dead symbols problem (we’re scanning for live
+symbols in the store and in the checkers separately, but we need to do so
+simultaneously with a single worklist). Hmm, in fact this sounds like a good
+idea; we can replace checkLiveSymbols with checkReachableSymbols.</p>
+<p>Or we could just have ghost member variables, and no checker support required at
+all. For ghost member variables, the relation with their parent region (which
+would be their superregion) is actually useful, the mutability of their contents
+is expressed naturally, and the store automagically sees reachable symbols, live
+symbols, escapes, invalidations, whatever.</p>
+<p>&gt; In my view this differs from ghost variables in that (1) this storage does
+&gt; actually exist (it is just a library implementation detail where that storage
+&gt; lives) and (2) it is perfectly valid for a pointer into that storage to be
+&gt; returned and for another part of the program to read or write from that
+&gt; storage. (Well, in this case just read since it is allowed to be read-only
+&gt; memory).</p>
+<p>&gt; What I’m not OK with is modeling abstract analysis state (for example, the
+&gt; count of a NSMutableArray or the typestate of a file handle) as a value stored
+&gt; in some ginned up region in the store.This takes an easy problem that the
+&gt; analyzer does well at (modeling typestate) and turns it into a hard one that
+&gt; the analyzer is bad at (reasoning about the contents of the heap).</p>
+<p>Yeah, i tend to agree on that. For simple typestates, this is probably an
+overkill, so let’s definitely put aside the idea of “ghost symbolic regions”
+that i had earlier.</p>
+<p>But, to summarize a bit, in our current case, however, the typestate we’re
+looking for is the contents of the heap. And when we try to model such
+typestates (complex in this specific manner, i.e. heap-like) in any checker, we
+have a choice between re-doing this modeling in every such checker (which is
+something analyzer is indeed good at, but at a price of making checkers heavy)
+or instead relying on the Store to do exactly what it’s designed to do.</p>
+<p>&gt; I think the key criterion here is: “is the region accessible from outside
+&gt; the library”. That is, does the library expose the region as a pointer that
+&gt; can be read to or written from in the client program? If so, then it makes
+&gt; sense for this to be in the store: we are modeling reachable storage as
+&gt; storage. But if we’re just modeling arbitrary analysis facts that need to be
+&gt; invalidated when a pointer escapes then we shouldn’t try to gin up storage
+&gt; for them just to get invalidation for free.</p>
+<p>As a metaphor, i’d probably compare it to body farms - the difference between
+ghost member variables and metadata symbols seems to me like the difference
+between body farms and evalCall. Both are nice to have, and body farms are very
+pleasant to work with, even if not omnipotent. I think it’s fine for a
+FunctionDecl’s body in a body farm to have a local variable, even if such
+variable doesn’t actually exist, even if it cannot be seen from outside the
+function call. I’m not seeing immediate practical difference between “it does
+actually exist” and “it doesn’t actually exist, just a handy abstraction”.
+Similarly, i think it’s fine if we have a <code class="docutils literal notranslate"><span class="pre">CXXRecordDecl</span></code> with
+implementation-defined contents, and try to farm up a member variable as a handy
+abstraction (we don’t even need to know its name or offset, only that it’s there
+somewhere).</p>
+<p><strong>Artem:</strong></p>
+<p>We’ve discussed it in person with Devin, and he provided more points to think
+about:</p>
+<ul class="simple">
+<li><p>If the initializer list consists of non-POD data, constructors of list’s
+objects need to take the sub-region of the list’s region as this-region In the
+current (v2) version of this patch, these objects are constructed elsewhere and
+then trivial-copied into the list’s metadata pointer region, which may be
+incorrect. This is our overall problem with C++ constructors, which manifests in
+this case as well. Additionally, objects would need to be constructed in the
+analyzer’s core, which would not be able to predict that it needs to take a
+checker-specific region as this-region, which makes it harder, though it might
+be mitigated by sharing the checker state traits.</p></li>
+<li><p>Because “ghost variables” are not material to the user, we need to somehow
+make super sure that they don’t make it into the diagnostic messages.</p></li>
+</ul>
+<p>So, because this needs further digging into overall C++ support and rises too
+many questions, i’m delaying a better approach to this problem and will fall
+back to the original trivial patch.</p>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="IPA.html"><span class="section-number">3.2. </span>Inlining</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="nullability.html"><span class="section-number">3.4. </span>Nullability Checks</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.1.2.
+    </div>
+  </body>
+</html>
