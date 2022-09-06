@@ -1,0 +1,142 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Unspecified Behavior Randomization &#8212; libc++  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Symbol Visibility Macros" href="VisibilityMacros.html" />
+    <link rel="prev" title="Enable std::unique_ptr [[clang::trivial_abi]]" href="UniquePtrTrivialAbi.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../index.html">
+          <span>libc++  documentation</span></a></h1>
+        <h2 class="heading"><span>Unspecified Behavior Randomization</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UniquePtrTrivialAbi.html">Enable std::unique_ptr [[clang::trivial_abi]]</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="VisibilityMacros.html">Symbol Visibility Macros</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="unspecified-behavior-randomization">
+<h1>Unspecified Behavior Randomization<a class="headerlink" href="#unspecified-behavior-randomization" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="background">
+<h2>Background<a class="headerlink" href="#background" title="Permalink to this headline">¶</a></h2>
+<p>Consider the follow snippet which steadily happens in tests:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">pair</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">v</span><span class="p">(</span><span class="n">SomeData</span><span class="p">());</span><span class="w"></span>
+<span class="n">std</span><span class="o">::</span><span class="n">sort</span><span class="p">(</span><span class="n">v</span><span class="p">.</span><span class="n">begin</span><span class="p">(),</span><span class="w"> </span><span class="n">v</span><span class="p">.</span><span class="n">end</span><span class="p">(),</span><span class="w"> </span><span class="p">[](</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">lhs</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">rhs</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">   </span><span class="k">return</span><span class="w"> </span><span class="n">lhs</span><span class="p">.</span><span class="n">first</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">rhs</span><span class="p">.</span><span class="n">first</span><span class="p">;</span><span class="w"></span>
+<span class="p">});</span><span class="w"></span>
+</pre></div>
+</div>
+<p>Under this assumption all elements in the vector whose first elements are equal
+do not guarantee any order. Unfortunately, this prevents libcxx introducing
+other implementatiosn because tests might silently fail and the users might
+heavily depend on the stability of implementations.</p>
+</div>
+<div class="section" id="goal">
+<h2>Goal<a class="headerlink" href="#goal" title="Permalink to this headline">¶</a></h2>
+<p>Provide functionality for randomizing the unspecified behavior so that the users
+can test and migrate their components and libcxx can introduce new sorting
+algorithms and optimizations to the containers.</p>
+<p>For example, as of LLVM version 13, libcxx sorting algorithm takes
+<a class="reference external" href="https://llvm.org/PR20837">O(n^2) worst case</a> but according
+to the standard its worst case should be <cite>O(n log n)</cite>. This effort helps users
+to gradually fix their tests while updating to new faster algorithms.</p>
+</div>
+<div class="section" id="design">
+<h2>Design<a class="headerlink" href="#design" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>Introduce new macro <code class="docutils literal notranslate"><span class="pre">_LIBCPP_DEBUG_RANDOMIZE_UNSPECIFIED_STABILITY</span></code> which should
+be a part of the libcxx config.</p></li>
+<li><p>This macro randomizes the unspecified behavior of algorithms and containers.
+For example, for sorting algorithm the input range is shuffled and then
+sorted.</p></li>
+<li><p>This macro is off by default because users should enable it only for testing
+purposes and/or migrations if they happen to libcxx.</p></li>
+<li><p>This feature is only available for C++11 and further because of
+<code class="docutils literal notranslate"><span class="pre">std::shuffle</span></code> availability.</p></li>
+<li><p>We may use <a class="reference external" href="https://en.wikipedia.org/wiki/Address_space_layout_randomization">ASLR</a> or
+static <code class="docutils literal notranslate"><span class="pre">std::random_device</span></code> for seeding the random number generator. This
+guarantees the same stability guarantee within a run but not through different
+runs, for example, for tests become flaky and eventually be seen as broken.
+For platforms which do not support ASLR, the seed is fixed during build.</p></li>
+<li><p>The users can fix the seed of the random number generator by providing
+<code class="docutils literal notranslate"><span class="pre">_LIBCPP_RANDOMIZE_UNSPECIFIED_STABILITY_SEED=seed</span></code> definition.</p></li>
+</ul>
+<p>This comes with some side effects if any of the flags is on:</p>
+<ul class="simple">
+<li><p>Computation penalty, we think users are OK with that if they use this feature.</p></li>
+<li><p>Non reproducible results if they don’t use the fixed seed.</p></li>
+</ul>
+<div class="section" id="impact">
+<h3>Impact<a class="headerlink" href="#impact" title="Permalink to this headline">¶</a></h3>
+<p>Google has measured couple of thousands of tests to be dependent on the
+stability of sorting and selection algorithms. As we also plan on updating
+(or least, providing under flag more) sorting algorithms, this effort helps
+doing it gradually and sustainably. This is also bad for users to depend on the
+unspecified behavior in their tests, this effort helps to turn this flag in
+debug mode.</p>
+</div>
+<div class="section" id="potential-breakages">
+<h3>Potential breakages<a class="headerlink" href="#potential-breakages" title="Permalink to this headline">¶</a></h3>
+<p>None if the flag is off. If the flag is on, it may lead to some non-reproducible
+results, for example, for caching.</p>
+</div>
+<div class="section" id="currently-supported-randomization">
+<h3>Currently supported randomization<a class="headerlink" href="#currently-supported-randomization" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">std::sort</span></code>, there is no guarantee on the order of equal elements</p></li>
+<li><dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">std::partial_sort</span></code>, there is no guarantee on the order of equal elements and</dt><dd><p>on the order of the remaining part</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">std::nth_element</span></code>, there is no guarantee on the order from both sides of the</dt><dd><p>partition</p>
+</dd>
+</dl>
+</li>
+</ul>
+<p>Patches welcome.</p>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UniquePtrTrivialAbi.html">Enable std::unique_ptr [[clang::trivial_abi]]</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="VisibilityMacros.html">Symbol Visibility Macros</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2011-2022, LLVM Project.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.5.0.
+    </div>
+  </body>
+</html>

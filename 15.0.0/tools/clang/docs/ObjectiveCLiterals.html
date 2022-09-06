@@ -1,0 +1,585 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Objective-C Literals &#8212; Clang 15.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Language Specification for Blocks" href="BlockLanguageSpec.html" />
+    <link rel="prev" title="Clang Language Extensions" href="LanguageExtensions.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 15.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Objective-C Literals</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LanguageExtensions.html">Clang Language Extensions</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BlockLanguageSpec.html">Language Specification for Blocks</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="objective-c-literals">
+<h1>Objective-C Literals<a class="headerlink" href="#objective-c-literals" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>Three new features were introduced into clang at the same time:
+<em>NSNumber Literals</em> provide a syntax for creating <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> from
+scalar literal expressions; <em>Collection Literals</em> provide a short-hand
+for creating arrays and dictionaries; <em>Object Subscripting</em> provides a
+way to use subscripting with Objective-C objects. Users of Apple
+compiler releases can use these features starting with the Apple LLVM
+Compiler 4.0. Users of open-source LLVM.org compiler releases can use
+these features starting with clang v3.1.</p>
+<p>These language additions simplify common Objective-C programming
+patterns, make programs more concise, and improve the safety of
+container creation.</p>
+<p>This document describes how the features are implemented in clang, and
+how to use them in your own programs.</p>
+</div>
+<div class="section" id="nsnumber-literals">
+<h2>NSNumber Literals<a class="headerlink" href="#nsnumber-literals" title="Permalink to this headline">¶</a></h2>
+<p>The framework class <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> is used to wrap scalar values inside
+objects: signed and unsigned integers (<code class="docutils literal notranslate"><span class="pre">char</span></code>, <code class="docutils literal notranslate"><span class="pre">short</span></code>, <code class="docutils literal notranslate"><span class="pre">int</span></code>,
+<code class="docutils literal notranslate"><span class="pre">long</span></code>, <code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code>), floating point numbers (<code class="docutils literal notranslate"><span class="pre">float</span></code>,
+<code class="docutils literal notranslate"><span class="pre">double</span></code>), and boolean values (<code class="docutils literal notranslate"><span class="pre">BOOL</span></code>, C++ <code class="docutils literal notranslate"><span class="pre">bool</span></code>). Scalar values
+wrapped in objects are also known as <em>boxed</em> values.</p>
+<p>In Objective-C, any character, numeric or boolean literal prefixed with
+the <code class="docutils literal notranslate"><span class="pre">'&#64;'</span></code> character will evaluate to a pointer to an <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code>
+object initialized with that value. C’s type suffixes may be used to
+control the size of numeric literals.</p>
+<div class="section" id="examples">
+<h3>Examples<a class="headerlink" href="#examples" title="Permalink to this headline">¶</a></h3>
+<p>The following program illustrates the rules for <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> literals:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">argv</span><span class="p">[])</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="c1">// character literals.</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">theLetterZ</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="sc">@&#39;Z&#39;</span><span class="p">;</span><span class="w">          </span><span class="c1">// equivalent to [NSNumber numberWithChar:&#39;Z&#39;]</span>
+
+<span class="w">  </span><span class="c1">// integral literals.</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">fortyTwo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">@42</span><span class="p">;</span><span class="w">             </span><span class="c1">// equivalent to [NSNumber numberWithInt:42]</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">fortyTwoUnsigned</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">@42</span><span class="n">U</span><span class="p">;</span><span class="w">    </span><span class="c1">// equivalent to [NSNumber numberWithUnsignedInt:42U]</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">fortyTwoLong</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">@42L</span><span class="p">;</span><span class="w">        </span><span class="c1">// equivalent to [NSNumber numberWithLong:42L]</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">fortyTwoLongLong</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">@42L</span><span class="n">L</span><span class="p">;</span><span class="w">   </span><span class="c1">// equivalent to [NSNumber numberWithLongLong:42LL]</span>
+
+<span class="w">  </span><span class="c1">// floating point literals.</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">piFloat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">@3.141592654F</span><span class="p">;</span><span class="w">    </span><span class="c1">// equivalent to [NSNumber numberWithFloat:3.141592654F]</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">piDouble</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">@3.1415926535</span><span class="p">;</span><span class="w">   </span><span class="c1">// equivalent to [NSNumber numberWithDouble:3.1415926535]</span>
+
+<span class="w">  </span><span class="c1">// BOOL literals.</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">yesNumber</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">@YES</span><span class="p">;</span><span class="w">           </span><span class="c1">// equivalent to [NSNumber numberWithBool:YES]</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">noNumber</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">@NO</span><span class="p">;</span><span class="w">             </span><span class="c1">// equivalent to [NSNumber numberWithBool:NO]</span>
+
+<span class="cp">#ifdef __cplusplus</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">trueNumber</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">@</span><span class="nb">true</span><span class="p">;</span><span class="w">         </span><span class="c1">// equivalent to [NSNumber numberWithBool:(BOOL)true]</span>
+<span class="w">  </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">falseNumber</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">@</span><span class="nb">false</span><span class="p">;</span><span class="w">       </span><span class="c1">// equivalent to [NSNumber numberWithBool:(BOOL)false]</span>
+<span class="cp">#endif</span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="discussion">
+<h3>Discussion<a class="headerlink" href="#discussion" title="Permalink to this headline">¶</a></h3>
+<p>NSNumber literals only support literal scalar values after the <code class="docutils literal notranslate"><span class="pre">'&#64;'</span></code>.
+Consequently, <code class="docutils literal notranslate"><span class="pre">&#64;INT_MAX</span></code> works, but <code class="docutils literal notranslate"><span class="pre">&#64;INT_MIN</span></code> does not, because
+they are defined like this:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="cp">#define INT_MAX   2147483647  </span><span class="cm">/* max value for an int */</span><span class="cp"></span>
+<span class="cp">#define INT_MIN   (-2147483647-1) </span><span class="cm">/* min value for an int */</span><span class="cp"></span>
+</pre></div>
+</div>
+<p>The definition of <code class="docutils literal notranslate"><span class="pre">INT_MIN</span></code> is not a simple literal, but a
+parenthesized expression. Parenthesized expressions are supported using
+the <a class="reference external" href="#objc_boxed_expressions">boxed expression</a> syntax, which is
+described in the next section.</p>
+<p>Because <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> does not currently support wrapping <code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">double</span></code>
+values, the use of a <code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">double</span> <span class="pre">NSNumber</span></code> literal (e.g.
+<code class="docutils literal notranslate"><span class="pre">&#64;123.23L</span></code>) will be rejected by the compiler.</p>
+<p>Previously, the <code class="docutils literal notranslate"><span class="pre">BOOL</span></code> type was simply a typedef for <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">YES</span></code> and <code class="docutils literal notranslate"><span class="pre">NO</span></code> were macros that expand to <code class="docutils literal notranslate"><span class="pre">(BOOL)1</span></code> and
+<code class="docutils literal notranslate"><span class="pre">(BOOL)0</span></code> respectively. To support <code class="docutils literal notranslate"><span class="pre">&#64;YES</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;NO</span></code> expressions,
+these macros are now defined using new language keywords in
+<code class="docutils literal notranslate"><span class="pre">&lt;objc/objc.h&gt;</span></code>:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="cp">#if __has_feature(objc_bool)</span>
+<span class="cp">#define YES             __objc_yes</span>
+<span class="cp">#define NO              __objc_no</span>
+<span class="cp">#else</span>
+<span class="cp">#define YES             ((BOOL)1)</span>
+<span class="cp">#define NO              ((BOOL)0)</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+<p>The compiler implicitly converts <code class="docutils literal notranslate"><span class="pre">__objc_yes</span></code> and <code class="docutils literal notranslate"><span class="pre">__objc_no</span></code> to
+<code class="docutils literal notranslate"><span class="pre">(BOOL)1</span></code> and <code class="docutils literal notranslate"><span class="pre">(BOOL)0</span></code>. The keywords are used to disambiguate
+<code class="docutils literal notranslate"><span class="pre">BOOL</span></code> and integer literals.</p>
+<p>Objective-C++ also supports <code class="docutils literal notranslate"><span class="pre">&#64;true</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;false</span></code> expressions, which
+are equivalent to <code class="docutils literal notranslate"><span class="pre">&#64;YES</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;NO</span></code>.</p>
+</div>
+</div>
+<div class="section" id="boxed-expressions">
+<h2>Boxed Expressions<a class="headerlink" href="#boxed-expressions" title="Permalink to this headline">¶</a></h2>
+<p>Objective-C provides a new syntax for boxing C expressions:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="l">@(</span><span class="w"> </span><span class="o">&lt;</span><span class="n">expression</span><span class="o">&gt;</span><span class="w"> </span><span class="l">)</span><span class="w"></span>
+</pre></div>
+</div>
+<p>Expressions of scalar (numeric, enumerated, BOOL), C string pointer
+and some C structures (via NSValue) are supported:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="c1">// numbers.</span>
+<span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">smallestInt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="o">-</span><span class="n">INT_MAX</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="l">)</span><span class="p">;</span><span class="w">  </span><span class="c1">// [NSNumber numberWithInt:(-INT_MAX - 1)]</span>
+<span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">piOverTwo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">M_PI</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="l">)</span><span class="p">;</span><span class="w">        </span><span class="c1">// [NSNumber numberWithDouble:(M_PI / 2)]</span>
+
+<span class="c1">// enumerated types.</span>
+<span class="k">typedef</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Red</span><span class="p">,</span><span class="w"> </span><span class="n">Green</span><span class="p">,</span><span class="w"> </span><span class="n">Blue</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">Color</span><span class="p">;</span><span class="w"></span>
+<span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">favoriteColor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">Green</span><span class="l">)</span><span class="p">;</span><span class="w">       </span><span class="c1">// [NSNumber numberWithInt:((int)Green)]</span>
+
+<span class="c1">// strings.</span>
+<span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">getenv</span><span class="p">(</span><span class="s">&quot;PATH&quot;</span><span class="p">)</span><span class="l">)</span><span class="p">;</span><span class="w">       </span><span class="c1">// [NSString stringWithUTF8String:(getenv(&quot;PATH&quot;))]</span>
+<span class="bp">NSArray</span><span class="w"> </span><span class="o">*</span><span class="n">pathComponents</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">path</span><span class="w"> </span><span class="nl">componentsSeparatedByString</span><span class="p">:</span><span class="s">@&quot;:&quot;</span><span class="p">];</span><span class="w"></span>
+
+<span class="c1">// structs.</span>
+<span class="bp">NSValue</span><span class="w"> </span><span class="o">*</span><span class="n">center</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">view</span><span class="p">.</span><span class="n">center</span><span class="l">)</span><span class="p">;</span><span class="w">         </span><span class="c1">// Point p = view.center;</span>
+<span class="w">                                          </span><span class="c1">// [NSValue valueWithBytes:&amp;p objCType:@encode(Point)];</span>
+<span class="bp">NSValue</span><span class="w"> </span><span class="o">*</span><span class="n">frame</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">view</span><span class="p">.</span><span class="n">frame</span><span class="l">)</span><span class="p">;</span><span class="w">           </span><span class="c1">// Rect r = view.frame;</span>
+<span class="w">                                          </span><span class="c1">// [NSValue valueWithBytes:&amp;r objCType:@encode(Rect)];</span>
+</pre></div>
+</div>
+<div class="section" id="boxed-enums">
+<h3>Boxed Enums<a class="headerlink" href="#boxed-enums" title="Permalink to this headline">¶</a></h3>
+<p>Cocoa frameworks frequently define constant values using <em>enums.</em>
+Although enum values are integral, they may not be used directly as
+boxed literals (this avoids conflicts with future <code class="docutils literal notranslate"><span class="pre">'&#64;'</span></code>-prefixed
+Objective-C keywords). Instead, an enum value must be placed inside a
+boxed expression. The following example demonstrates configuring an
+<code class="docutils literal notranslate"><span class="pre">AVAudioRecorder</span></code> using a dictionary that contains a boxed enumeration
+value:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="k">enum</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="n">AVAudioQualityMin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"></span>
+<span class="w">  </span><span class="n">AVAudioQualityLow</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0x20</span><span class="p">,</span><span class="w"></span>
+<span class="w">  </span><span class="n">AVAudioQualityMedium</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0x40</span><span class="p">,</span><span class="w"></span>
+<span class="w">  </span><span class="n">AVAudioQualityHigh</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0x60</span><span class="p">,</span><span class="w"></span>
+<span class="w">  </span><span class="n">AVAudioQualityMax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0x7F</span><span class="w"></span>
+<span class="p">};</span><span class="w"></span>
+
+<span class="p">-</span> <span class="p">(</span><span class="n">AVAudioRecorder</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="nf">recordToFile:</span><span class="p">(</span><span class="bp">NSURL</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="nv">fileURL</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="bp">NSDictionary</span><span class="w"> </span><span class="o">*</span><span class="n">settings</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@{</span><span class="w"> </span><span class="nl">AVEncoderAudioQualityKey</span> <span class="p">:</span><span class="w"> </span><span class="l">@(</span><span class="n">AVAudioQualityMax</span><span class="l">)</span><span class="w"> </span><span class="l">}</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">[[</span><span class="n">AVAudioRecorder</span><span class="w"> </span><span class="n">alloc</span><span class="p">]</span><span class="w"> </span><span class="nl">initWithURL</span><span class="p">:</span><span class="n">fileURL</span><span class="w"> </span><span class="nl">settings</span><span class="p">:</span><span class="n">settings</span><span class="w"> </span><span class="nl">error</span><span class="p">:</span><span class="nb">NULL</span><span class="p">];</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+<p>The expression <code class="docutils literal notranslate"><span class="pre">&#64;(AVAudioQualityMax)</span></code> converts <code class="docutils literal notranslate"><span class="pre">AVAudioQualityMax</span></code>
+to an integer type, and boxes the value accordingly. If the enum has a
+<a class="reference internal" href="LanguageExtensions.html#objc-fixed-enum"><span class="std std-ref">fixed underlying type</span></a> as in:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Red</span><span class="p">,</span><span class="w"> </span><span class="n">Green</span><span class="p">,</span><span class="w"> </span><span class="n">Blue</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">Color</span><span class="p">;</span><span class="w"></span>
+<span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">red</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">Red</span><span class="l">)</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">Green</span><span class="l">)</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">blue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">Blue</span><span class="l">)</span><span class="p">;</span><span class="w"> </span><span class="c1">// =&gt; [NSNumber numberWithUnsignedChar:]</span>
+</pre></div>
+</div>
+<p>then the fixed underlying type will be used to select the correct
+<code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> creation method.</p>
+<p>Boxing a value of enum type will result in a <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> pointer with a
+creation method according to the underlying type of the enum, which can
+be a <a class="reference internal" href="LanguageExtensions.html#objc-fixed-enum"><span class="std std-ref">fixed underlying type</span></a>
+or a compiler-defined integer type capable of representing the values of
+all the members of the enumeration:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="k">enum</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Red</span><span class="p">,</span><span class="w"> </span><span class="n">Green</span><span class="p">,</span><span class="w"> </span><span class="n">Blue</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">Color</span><span class="p">;</span><span class="w"></span>
+<span class="n">Color</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Red</span><span class="p">;</span><span class="w"></span>
+<span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">nsCol</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">col</span><span class="l">)</span><span class="p">;</span><span class="w"> </span><span class="c1">// =&gt; [NSNumber numberWithUnsignedChar:]</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="boxed-c-strings">
+<h3>Boxed C Strings<a class="headerlink" href="#boxed-c-strings" title="Permalink to this headline">¶</a></h3>
+<p>A C string literal prefixed by the <code class="docutils literal notranslate"><span class="pre">'&#64;'</span></code> token denotes an <code class="docutils literal notranslate"><span class="pre">NSString</span></code>
+literal in the same way a numeric literal prefixed by the <code class="docutils literal notranslate"><span class="pre">'&#64;'</span></code> token
+denotes an <code class="docutils literal notranslate"><span class="pre">NSNumber</span></code> literal. When the type of the parenthesized
+expression is <code class="docutils literal notranslate"><span class="pre">(char</span> <span class="pre">*)</span></code> or <code class="docutils literal notranslate"><span class="pre">(const</span> <span class="pre">char</span> <span class="pre">*)</span></code>, the result of the
+boxed expression is a pointer to an <code class="docutils literal notranslate"><span class="pre">NSString</span></code> object containing
+equivalent character data, which is assumed to be ‘\0’-terminated and
+UTF-8 encoded. The following example converts C-style command line
+arguments into <code class="docutils literal notranslate"><span class="pre">NSString</span></code> objects.</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="c1">// Partition command line arguments into positional and option arguments.</span>
+<span class="bp">NSMutableArray</span><span class="w"> </span><span class="o">*</span><span class="n">args</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">NSMutableArray</span><span class="w"> </span><span class="n">new</span><span class="p">];</span><span class="w"></span>
+<span class="bp">NSMutableDictionary</span><span class="w"> </span><span class="o">*</span><span class="n">options</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">NSMutableDictionary</span><span class="w"> </span><span class="n">new</span><span class="p">];</span><span class="w"></span>
+<span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="o">--</span><span class="n">argc</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*++</span><span class="n">argv</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;--&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="n">options</span><span class="p">[</span><span class="l">@(</span><span class="n">arg</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span><span class="l">)</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="o">*++</span><span class="n">argv</span><span class="l">)</span><span class="p">;</span><span class="w">   </span><span class="c1">// --key value</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="p">[</span><span class="n">args</span><span class="w"> </span><span class="nl">addObject</span><span class="p">:</span><span class="l">@(</span><span class="n">arg</span><span class="l">)</span><span class="p">];</span><span class="w">            </span><span class="c1">// positional argument</span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+<p>As with all C pointers, character pointer expressions can involve
+arbitrary pointer arithmetic, therefore programmers must ensure that the
+character data is valid. Passing <code class="docutils literal notranslate"><span class="pre">NULL</span></code> as the character pointer will
+raise an exception at runtime. When possible, the compiler will reject
+<code class="docutils literal notranslate"><span class="pre">NULL</span></code> character pointers used in boxed expressions.</p>
+</div>
+<div class="section" id="boxed-c-structures">
+<h3>Boxed C Structures<a class="headerlink" href="#boxed-c-structures" title="Permalink to this headline">¶</a></h3>
+<p>Boxed expressions support construction of NSValue objects.
+It said that C structures can be used, the only requirement is:
+structure should be marked with <code class="docutils literal notranslate"><span class="pre">objc_boxable</span></code> attribute.
+To support older version of frameworks and/or third-party libraries
+you may need to add the attribute via <code class="docutils literal notranslate"><span class="pre">typedef</span></code>.</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span> <span class="bp">__attribute__</span><span class="p">((</span><span class="n">objc_boxable</span><span class="p">))</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">};</span><span class="w"></span>
+
+<span class="k">typedef</span><span class="w"> </span><span class="k">struct</span> <span class="bp">__attribute__</span><span class="p">((</span><span class="n">objc_boxable</span><span class="p">))</span><span class="w"> </span><span class="n">_Size</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span><span class="w"> </span><span class="n">Size</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">typedef</span><span class="w"> </span><span class="k">struct</span> <span class="nc">_Rect</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span><span class="w"> </span><span class="n">Rect</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="n">p</span><span class="p">;</span><span class="w"></span>
+<span class="bp">NSValue</span><span class="w"> </span><span class="o">*</span><span class="n">point</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">p</span><span class="l">)</span><span class="p">;</span><span class="w">          </span><span class="c1">// ok</span>
+<span class="n">Size</span><span class="w"> </span><span class="n">s</span><span class="p">;</span><span class="w"></span>
+<span class="bp">NSValue</span><span class="w"> </span><span class="o">*</span><span class="n">size</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">s</span><span class="l">)</span><span class="p">;</span><span class="w">           </span><span class="c1">// ok</span>
+
+<span class="n">Rect</span><span class="w"> </span><span class="n">r</span><span class="p">;</span><span class="w"></span>
+<span class="bp">NSValue</span><span class="w"> </span><span class="o">*</span><span class="n">bad_rect</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">r</span><span class="l">)</span><span class="p">;</span><span class="w">       </span><span class="c1">// error</span>
+
+<span class="k">typedef</span><span class="w"> </span><span class="k">struct</span> <span class="bp">__attribute__</span><span class="p">((</span><span class="n">objc_boxable</span><span class="p">))</span><span class="w"> </span><span class="n">_Rect</span><span class="w"> </span><span class="n">Rect</span><span class="p">;</span><span class="w"></span>
+
+<span class="bp">NSValue</span><span class="w"> </span><span class="o">*</span><span class="n">good_rect</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">r</span><span class="l">)</span><span class="p">;</span><span class="w">      </span><span class="c1">// ok</span>
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="container-literals">
+<h2>Container Literals<a class="headerlink" href="#container-literals" title="Permalink to this headline">¶</a></h2>
+<p>Objective-C now supports a new expression syntax for creating immutable
+array and dictionary container objects.</p>
+<div class="section" id="id1">
+<h3>Examples<a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h3>
+<p>Immutable array expression:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="bp">NSArray</span><span class="w"> </span><span class="o">*</span><span class="n">array</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@[</span><span class="w"> </span><span class="s">@&quot;Hello&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">NSApp</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="bp">NSNumber</span><span class="w"> </span><span class="nl">numberWithInt</span><span class="p">:</span><span class="mi">42</span><span class="p">]</span><span class="w"> </span><span class="l">]</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>This creates an <code class="docutils literal notranslate"><span class="pre">NSArray</span></code> with 3 elements. The comma-separated
+sub-expressions of an array literal can be any Objective-C object
+pointer typed expression.</p>
+<p>Immutable dictionary expression:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="bp">NSDictionary</span><span class="w"> </span><span class="o">*</span><span class="n">dictionary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@{</span><span class="w"></span>
+<span class="w">    </span><span class="s">@&quot;name&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">NSUserName</span><span class="p">(),</span><span class="w"></span>
+<span class="w">    </span><span class="s">@&quot;date&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="bp">NSDate</span><span class="w"> </span><span class="n">date</span><span class="p">],</span><span class="w"></span>
+<span class="w">    </span><span class="s">@&quot;processInfo&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="bp">NSProcessInfo</span><span class="w"> </span><span class="n">processInfo</span><span class="p">]</span><span class="w"></span>
+<span class="l">}</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>This creates an <code class="docutils literal notranslate"><span class="pre">NSDictionary</span></code> with 3 key/value pairs. Value
+sub-expressions of a dictionary literal must be Objective-C object
+pointer typed, as in array literals. Key sub-expressions must be of an
+Objective-C object pointer type that implements the
+<code class="docutils literal notranslate"><span class="pre">&lt;NSCopying&gt;</span></code> protocol.</p>
+</div>
+<div class="section" id="id2">
+<h3>Discussion<a class="headerlink" href="#id2" title="Permalink to this headline">¶</a></h3>
+<p>Neither keys nor values can have the value <code class="docutils literal notranslate"><span class="pre">nil</span></code> in containers. If the
+compiler can prove that a key or value is <code class="docutils literal notranslate"><span class="pre">nil</span></code> at compile time, then
+a warning will be emitted. Otherwise, a runtime error will occur.</p>
+<p>Using array and dictionary literals is safer than the variadic creation
+forms commonly in use today. Array literal expressions expand to calls
+to <code class="docutils literal notranslate"><span class="pre">+[NSArray</span> <span class="pre">arrayWithObjects:count:]</span></code>, which validates that all
+objects are non-<code class="docutils literal notranslate"><span class="pre">nil</span></code>. The variadic form,
+<code class="docutils literal notranslate"><span class="pre">+[NSArray</span> <span class="pre">arrayWithObjects:]</span></code> uses <code class="docutils literal notranslate"><span class="pre">nil</span></code> as an argument list
+terminator, which can lead to malformed array objects. Dictionary
+literals are similarly created with
+<code class="docutils literal notranslate"><span class="pre">+[NSDictionary</span> <span class="pre">dictionaryWithObjects:forKeys:count:]</span></code> which validates
+all objects and keys, unlike
+<code class="docutils literal notranslate"><span class="pre">+[NSDictionary</span> <span class="pre">dictionaryWithObjectsAndKeys:]</span></code> which also uses a
+<code class="docutils literal notranslate"><span class="pre">nil</span></code> parameter as an argument list terminator.</p>
+</div>
+</div>
+<div class="section" id="object-subscripting">
+<h2>Object Subscripting<a class="headerlink" href="#object-subscripting" title="Permalink to this headline">¶</a></h2>
+<p>Objective-C object pointer values can now be used with C’s subscripting
+operator.</p>
+<div class="section" id="id3">
+<h3>Examples<a class="headerlink" href="#id3" title="Permalink to this headline">¶</a></h3>
+<p>The following code demonstrates the use of object subscripting syntax
+with <code class="docutils literal notranslate"><span class="pre">NSMutableArray</span></code> and <code class="docutils literal notranslate"><span class="pre">NSMutableDictionary</span></code> objects:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="bp">NSMutableArray</span><span class="w"> </span><span class="o">*</span><span class="n">array</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="n">NSUInteger</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="kt">id</span><span class="w"> </span><span class="n">newObject</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="kt">id</span><span class="w"> </span><span class="n">oldObject</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">array</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span><span class="w"></span>
+<span class="n">array</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">newObject</span><span class="p">;</span><span class="w">         </span><span class="c1">// replace oldObject with newObject</span>
+
+<span class="bp">NSMutableDictionary</span><span class="w"> </span><span class="o">*</span><span class="n">dictionary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="n">oldObject</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dictionary</span><span class="p">[</span><span class="n">key</span><span class="p">];</span><span class="w"></span>
+<span class="n">dictionary</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">newObject</span><span class="p">;</span><span class="w">    </span><span class="c1">// replace oldObject with newObject</span>
+</pre></div>
+</div>
+<p>The next section explains how subscripting expressions map to accessor
+methods.</p>
+</div>
+<div class="section" id="subscripting-methods">
+<h3>Subscripting Methods<a class="headerlink" href="#subscripting-methods" title="Permalink to this headline">¶</a></h3>
+<p>Objective-C supports two kinds of subscript expressions: <em>array-style</em>
+subscript expressions use integer typed subscripts; <em>dictionary-style</em>
+subscript expressions use Objective-C object pointer typed subscripts.
+Each type of subscript expression is mapped to a message send using a
+predefined selector. The advantage of this design is flexibility: class
+designers are free to introduce subscripting by declaring methods or by
+adopting protocols. Moreover, because the method names are selected by
+the type of the subscript, an object can be subscripted using both array
+and dictionary styles.</p>
+<div class="section" id="array-style-subscripting">
+<h4>Array-Style Subscripting<a class="headerlink" href="#array-style-subscripting" title="Permalink to this headline">¶</a></h4>
+<p>When the subscript operand has an integral type, the expression is
+rewritten to use one of two different selectors, depending on whether
+the element is being read or written. When an expression reads an
+element using an integral index, as in the following example:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="n">NSUInteger</span><span class="w"> </span><span class="n">idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="kt">id</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">object</span><span class="p">[</span><span class="n">idx</span><span class="p">];</span><span class="w"></span>
+</pre></div>
+</div>
+<p>it is translated into a call to <code class="docutils literal notranslate"><span class="pre">objectAtIndexedSubscript:</span></code></p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="kt">id</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">object</span><span class="w"> </span><span class="nl">objectAtIndexedSubscript</span><span class="p">:</span><span class="n">idx</span><span class="p">];</span><span class="w"></span>
+</pre></div>
+</div>
+<p>When an expression writes an element using an integral index:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="n">object</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">newValue</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>it is translated to a call to <code class="docutils literal notranslate"><span class="pre">setObject:atIndexedSubscript:</span></code></p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="p">[</span><span class="n">object</span><span class="w"> </span><span class="nl">setObject</span><span class="p">:</span><span class="n">newValue</span><span class="w"> </span><span class="nl">atIndexedSubscript</span><span class="p">:</span><span class="n">idx</span><span class="p">];</span><span class="w"></span>
+</pre></div>
+</div>
+<p>These message sends are then type-checked and performed just like
+explicit message sends. The method used for objectAtIndexedSubscript:
+must be declared with an argument of integral type and a return value of
+some Objective-C object pointer type. The method used for
+setObject:atIndexedSubscript: must be declared with its first argument
+having some Objective-C pointer type and its second argument having
+integral type.</p>
+<p>The meaning of indexes is left up to the declaring class. The compiler
+will coerce the index to the appropriate argument type of the method it
+uses for type-checking. For an instance of <code class="docutils literal notranslate"><span class="pre">NSArray</span></code>, reading an
+element using an index outside the range <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">array.count)</span></code> will raise
+an exception. For an instance of <code class="docutils literal notranslate"><span class="pre">NSMutableArray</span></code>, assigning to an
+element using an index within this range will replace that element, but
+assigning to an element using an index outside this range will raise an
+exception; no syntax is provided for inserting, appending, or removing
+elements for mutable arrays.</p>
+<p>A class need not declare both methods in order to take advantage of this
+language feature. For example, the class <code class="docutils literal notranslate"><span class="pre">NSArray</span></code> declares only
+<code class="docutils literal notranslate"><span class="pre">objectAtIndexedSubscript:</span></code>, so that assignments to elements will fail
+to type-check; moreover, its subclass <code class="docutils literal notranslate"><span class="pre">NSMutableArray</span></code> declares
+<code class="docutils literal notranslate"><span class="pre">setObject:atIndexedSubscript:</span></code>.</p>
+</div>
+<div class="section" id="dictionary-style-subscripting">
+<h4>Dictionary-Style Subscripting<a class="headerlink" href="#dictionary-style-subscripting" title="Permalink to this headline">¶</a></h4>
+<p>When the subscript operand has an Objective-C object pointer type, the
+expression is rewritten to use one of two different selectors, depending
+on whether the element is being read from or written to. When an
+expression reads an element using an Objective-C object pointer
+subscript operand, as in the following example:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="kt">id</span><span class="w"> </span><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"></span>
+<span class="kt">id</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">object</span><span class="p">[</span><span class="n">key</span><span class="p">];</span><span class="w"></span>
+</pre></div>
+</div>
+<p>it is translated into a call to the <code class="docutils literal notranslate"><span class="pre">objectForKeyedSubscript:</span></code> method:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="kt">id</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">object</span><span class="w"> </span><span class="nl">objectForKeyedSubscript</span><span class="p">:</span><span class="n">key</span><span class="p">];</span><span class="w"></span>
+</pre></div>
+</div>
+<p>When an expression writes an element using an Objective-C object pointer
+subscript:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="n">object</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">newValue</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>it is translated to a call to <code class="docutils literal notranslate"><span class="pre">setObject:forKeyedSubscript:</span></code></p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="p">[</span><span class="n">object</span><span class="w"> </span><span class="nl">setObject</span><span class="p">:</span><span class="n">newValue</span><span class="w"> </span><span class="nl">forKeyedSubscript</span><span class="p">:</span><span class="n">key</span><span class="p">];</span><span class="w"></span>
+</pre></div>
+</div>
+<p>The behavior of <code class="docutils literal notranslate"><span class="pre">setObject:forKeyedSubscript:</span></code> is class-specific; but
+in general it should replace an existing value if one is already
+associated with a key, otherwise it should add a new value for the key.
+No syntax is provided for removing elements from mutable dictionaries.</p>
+</div>
+</div>
+<div class="section" id="id4">
+<h3>Discussion<a class="headerlink" href="#id4" title="Permalink to this headline">¶</a></h3>
+<p>An Objective-C subscript expression occurs when the base operand of the
+C subscript operator has an Objective-C object pointer type. Since this
+potentially collides with pointer arithmetic on the value, these
+expressions are only supported under the modern Objective-C runtime,
+which categorically forbids such arithmetic.</p>
+<p>Currently, only subscripts of integral or Objective-C object pointer
+type are supported. In C++, a class type can be used if it has a single
+conversion function to an integral or Objective-C pointer type, in which
+case that conversion is applied and analysis continues as appropriate.
+Otherwise, the expression is ill-formed.</p>
+<p>An Objective-C object subscript expression is always an l-value. If the
+expression appears on the left-hand side of a simple assignment operator
+(=), the element is written as described below. If the expression
+appears on the left-hand side of a compound assignment operator (e.g.
++=), the program is ill-formed, because the result of reading an element
+is always an Objective-C object pointer and no binary operators are
+legal on such pointers. If the expression appears in any other position,
+the element is read as described below. It is an error to take the
+address of a subscript expression, or (in C++) to bind a reference to
+it.</p>
+<p>Programs can use object subscripting with Objective-C object pointers of
+type <code class="docutils literal notranslate"><span class="pre">id</span></code>. Normal dynamic message send rules apply; the compiler must
+see <em>some</em> declaration of the subscripting methods, and will pick the
+declaration seen first.</p>
+</div>
+</div>
+<div class="section" id="caveats">
+<h2>Caveats<a class="headerlink" href="#caveats" title="Permalink to this headline">¶</a></h2>
+<p>Objects created using the literal or boxed expression syntax are not
+guaranteed to be uniqued by the runtime, but nor are they guaranteed to
+be newly-allocated. As such, the result of performing direct comparisons
+against the location of an object literal (using <code class="docutils literal notranslate"><span class="pre">==</span></code>, <code class="docutils literal notranslate"><span class="pre">!=</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&lt;=</span></code>, <code class="docutils literal notranslate"><span class="pre">&gt;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&gt;=</span></code>) is not well-defined. This is usually a simple
+mistake in code that intended to call the <code class="docutils literal notranslate"><span class="pre">isEqual:</span></code> method (or the
+<code class="docutils literal notranslate"><span class="pre">compare:</span></code> method).</p>
+<p>This caveat applies to compile-time string literals as well.
+Historically, string literals (using the <code class="docutils literal notranslate"><span class="pre">&#64;&quot;...&quot;</span></code> syntax) have been
+uniqued across translation units during linking. This is an
+implementation detail of the compiler and should not be relied upon. If
+you are using such code, please use global string constants instead
+(<code class="docutils literal notranslate"><span class="pre">NSString</span> <span class="pre">*</span> <span class="pre">const</span> <span class="pre">MyConst</span> <span class="pre">=</span> <span class="pre">&#64;&quot;...&quot;</span></code>) or use <code class="docutils literal notranslate"><span class="pre">isEqual:</span></code>.</p>
+</div>
+<div class="section" id="grammar-additions">
+<h2>Grammar Additions<a class="headerlink" href="#grammar-additions" title="Permalink to this headline">¶</a></h2>
+<p>To support the new syntax described above, the Objective-C
+<code class="docutils literal notranslate"><span class="pre">&#64;</span></code>-expression grammar has the following new productions:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>objc-at-expression : &#39;@&#39; (string-literal | encode-literal | selector-literal | protocol-literal | object-literal)
+                   ;
+
+object-literal : (&#39;+&#39; | &#39;-&#39;)? numeric-constant
+               | character-constant
+               | boolean-constant
+               | array-literal
+               | dictionary-literal
+               ;
+
+boolean-constant : &#39;__objc_yes&#39; | &#39;__objc_no&#39; | &#39;true&#39; | &#39;false&#39;  /* boolean keywords. */
+                 ;
+
+array-literal : &#39;[&#39; assignment-expression-list &#39;]&#39;
+              ;
+
+assignment-expression-list : assignment-expression (&#39;,&#39; assignment-expression-list)?
+                           | /* empty */
+                           ;
+
+dictionary-literal : &#39;{&#39; key-value-list &#39;}&#39;
+                   ;
+
+key-value-list : key-value-pair (&#39;,&#39; key-value-list)?
+               | /* empty */
+               ;
+
+key-value-pair : assignment-expression &#39;:&#39; assignment-expression
+               ;
+</pre></div>
+</div>
+<p>Note: <code class="docutils literal notranslate"><span class="pre">&#64;true</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;false</span></code> are only supported in Objective-C++.</p>
+</div>
+<div class="section" id="availability-checks">
+<h2>Availability Checks<a class="headerlink" href="#availability-checks" title="Permalink to this headline">¶</a></h2>
+<p>Programs test for the new features by using clang’s __has_feature
+checks. Here are examples of their use:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="cp">#if __has_feature(objc_array_literals)</span>
+<span class="w">    </span><span class="c1">// new way.</span>
+<span class="w">    </span><span class="bp">NSArray</span><span class="w"> </span><span class="o">*</span><span class="n">elements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@[</span><span class="w"> </span><span class="s">@&quot;H&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;He&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;O&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;C&quot;</span><span class="w"> </span><span class="l">]</span><span class="p">;</span><span class="w"></span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="c1">// old way (equivalent).</span>
+<span class="w">    </span><span class="kt">id</span><span class="w"> </span><span class="n">objects</span><span class="p">[]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">@&quot;H&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;He&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;O&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;C&quot;</span><span class="w"> </span><span class="p">};</span><span class="w"></span>
+<span class="w">    </span><span class="bp">NSArray</span><span class="w"> </span><span class="o">*</span><span class="n">elements</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">NSArray</span><span class="w"> </span><span class="nl">arrayWithObjects</span><span class="p">:</span><span class="n">objects</span><span class="w"> </span><span class="nl">count</span><span class="p">:</span><span class="mi">4</span><span class="p">];</span><span class="w"></span>
+<span class="cp">#endif</span>
+
+<span class="cp">#if __has_feature(objc_dictionary_literals)</span>
+<span class="w">    </span><span class="c1">// new way.</span>
+<span class="w">    </span><span class="bp">NSDictionary</span><span class="w"> </span><span class="o">*</span><span class="n">masses</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@{</span><span class="w"> </span><span class="s">@&quot;H&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">@1.0078</span><span class="p">,</span><span class="w">  </span><span class="s">@&quot;He&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">@4.0026</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;O&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">@15.9990</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;C&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">@12.0096</span><span class="w"> </span><span class="l">}</span><span class="p">;</span><span class="w"></span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="c1">// old way (equivalent).</span>
+<span class="w">    </span><span class="kt">id</span><span class="w"> </span><span class="n">keys</span><span class="p">[]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">@&quot;H&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;He&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;O&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;C&quot;</span><span class="w"> </span><span class="p">};</span><span class="w"></span>
+<span class="w">    </span><span class="kt">id</span><span class="w"> </span><span class="n">values</span><span class="p">[]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">[</span><span class="bp">NSNumber</span><span class="w"> </span><span class="nl">numberWithDouble</span><span class="p">:</span><span class="mf">1.0078</span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="bp">NSNumber</span><span class="w"> </span><span class="nl">numberWithDouble</span><span class="p">:</span><span class="mf">4.0026</span><span class="p">],</span><span class="w"></span>
+<span class="w">                    </span><span class="p">[</span><span class="bp">NSNumber</span><span class="w"> </span><span class="nl">numberWithDouble</span><span class="p">:</span><span class="mf">15.9990</span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="bp">NSNumber</span><span class="w"> </span><span class="nl">numberWithDouble</span><span class="p">:</span><span class="mf">12.0096</span><span class="p">]</span><span class="w"> </span><span class="p">};</span><span class="w"></span>
+<span class="w">    </span><span class="bp">NSDictionary</span><span class="w"> </span><span class="o">*</span><span class="n">masses</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">NSDictionary</span><span class="w"> </span><span class="nl">dictionaryWithObjects</span><span class="p">:</span><span class="n">objects</span><span class="w"> </span><span class="nl">forKeys</span><span class="p">:</span><span class="n">keys</span><span class="w"> </span><span class="nl">count</span><span class="p">:</span><span class="mi">4</span><span class="p">];</span><span class="w"></span>
+<span class="cp">#endif</span>
+
+<span class="cp">#if __has_feature(objc_subscripting)</span>
+<span class="w">    </span><span class="n">NSUInteger</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">elements</span><span class="p">.</span><span class="n">count</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">element</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">elements</span><span class="p">[</span><span class="n">i</span><span class="p">];</span><span class="w"></span>
+<span class="w">        </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">mass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">masses</span><span class="p">[</span><span class="n">element</span><span class="p">];</span><span class="w"></span>
+<span class="w">        </span><span class="n">NSLog</span><span class="p">(</span><span class="s">@&quot;the mass of %@ is %@&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">element</span><span class="p">,</span><span class="w"> </span><span class="n">mass</span><span class="p">);</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="n">NSUInteger</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">elements</span><span class="w"> </span><span class="n">count</span><span class="p">];</span><span class="w"></span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">element</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">elements</span><span class="w"> </span><span class="nl">objectAtIndex</span><span class="p">:</span><span class="n">i</span><span class="p">];</span><span class="w"></span>
+<span class="w">        </span><span class="bp">NSNumber</span><span class="w"> </span><span class="o">*</span><span class="n">mass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">masses</span><span class="w"> </span><span class="nl">objectForKey</span><span class="p">:</span><span class="n">element</span><span class="p">];</span><span class="w"></span>
+<span class="w">        </span><span class="n">NSLog</span><span class="p">(</span><span class="s">@&quot;the mass of %@ is %@&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">element</span><span class="p">,</span><span class="w"> </span><span class="n">mass</span><span class="p">);</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="cp">#endif</span>
+
+<span class="cp">#if __has_attribute(objc_boxable)</span>
+<span class="w">    </span><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span> <span class="bp">__attribute__</span><span class="p">((</span><span class="n">objc_boxable</span><span class="p">))</span><span class="w"> </span><span class="n">_Rect</span><span class="w"> </span><span class="n">Rect</span><span class="p">;</span><span class="w"></span>
+<span class="cp">#endif</span>
+
+<span class="cp">#if __has_feature(objc_boxed_nsvalue_expressions)</span>
+<span class="w">    </span><span class="bp">CABasicAnimation</span><span class="w"> </span><span class="n">animation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">CABasicAnimation</span><span class="w"> </span><span class="nl">animationWithKeyPath</span><span class="p">:</span><span class="s">@&quot;position&quot;</span><span class="p">];</span><span class="w"></span>
+<span class="w">    </span><span class="n">animation</span><span class="p">.</span><span class="n">fromValue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">layer</span><span class="p">.</span><span class="n">position</span><span class="l">)</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="n">animation</span><span class="p">.</span><span class="n">toValue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="l">@(</span><span class="n">newPosition</span><span class="l">)</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="p">[</span><span class="n">layer</span><span class="w"> </span><span class="nl">addAnimation</span><span class="p">:</span><span class="n">animation</span><span class="w"> </span><span class="nl">forKey</span><span class="p">:</span><span class="s">@&quot;move&quot;</span><span class="p">];</span><span class="w"></span>
+<span class="cp">#else</span>
+<span class="w">    </span><span class="bp">CABasicAnimation</span><span class="w"> </span><span class="n">animation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">CABasicAnimation</span><span class="w"> </span><span class="nl">animationWithKeyPath</span><span class="p">:</span><span class="s">@&quot;position&quot;</span><span class="p">];</span><span class="w"></span>
+<span class="w">    </span><span class="n">animation</span><span class="p">.</span><span class="n">fromValue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">NSValue</span><span class="w"> </span><span class="nl">valueWithCGPoint</span><span class="p">:</span><span class="n">layer</span><span class="p">.</span><span class="n">position</span><span class="p">];</span><span class="w"></span>
+<span class="w">    </span><span class="n">animation</span><span class="p">.</span><span class="n">toValue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="bp">NSValue</span><span class="w"> </span><span class="nl">valueWithCGPoint</span><span class="p">:</span><span class="n">newPosition</span><span class="p">];</span><span class="w"></span>
+<span class="w">    </span><span class="p">[</span><span class="n">layer</span><span class="w"> </span><span class="nl">addAnimation</span><span class="p">:</span><span class="n">animation</span><span class="w"> </span><span class="nl">forKey</span><span class="p">:</span><span class="s">@&quot;move&quot;</span><span class="p">];</span><span class="w"></span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+<p>Code can use also <code class="docutils literal notranslate"><span class="pre">__has_feature(objc_bool)</span></code> to check for the
+availability of numeric literals support. This checks for the new
+<code class="docutils literal notranslate"><span class="pre">__objc_yes</span> <span class="pre">/</span> <span class="pre">__objc_no</span></code> keywords, which enable the use of
+<code class="docutils literal notranslate"><span class="pre">&#64;YES</span> <span class="pre">/</span> <span class="pre">&#64;NO</span></code> literals.</p>
+<p>To check whether boxed expressions are supported, use
+<code class="docutils literal notranslate"><span class="pre">__has_feature(objc_boxed_expressions)</span></code> feature macro.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LanguageExtensions.html">Clang Language Extensions</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BlockLanguageSpec.html">Language Specification for Blocks</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.5.0.
+    </div>
+  </body>
+</html>
