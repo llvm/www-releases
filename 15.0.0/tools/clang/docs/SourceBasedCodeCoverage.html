@@ -1,0 +1,488 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Source-based Code Coverage &#8212; Clang 15.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Standard C++ Modules" href="StandardCPlusPlusModules.html" />
+    <link rel="prev" title="ShadowCallStack" href="ShadowCallStack.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 15.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Source-based Code Coverage</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ShadowCallStack.html">ShadowCallStack</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="StandardCPlusPlusModules.html">Standard C++ Modules</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="source-based-code-coverage">
+<h1>Source-based Code Coverage<a class="headerlink" href="#source-based-code-coverage" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#the-code-coverage-workflow" id="id2">The code coverage workflow</a></p></li>
+<li><p><a class="reference internal" href="#compiling-with-coverage-enabled" id="id3">Compiling with coverage enabled</a></p></li>
+<li><p><a class="reference internal" href="#running-the-instrumented-program" id="id4">Running the instrumented program</a></p></li>
+<li><p><a class="reference internal" href="#creating-coverage-reports" id="id5">Creating coverage reports</a></p></li>
+<li><p><a class="reference internal" href="#exporting-coverage-data" id="id6">Exporting coverage data</a></p></li>
+<li><p><a class="reference internal" href="#interpreting-reports" id="id7">Interpreting reports</a></p></li>
+<li><p><a class="reference internal" href="#format-compatibility-guarantees" id="id8">Format compatibility guarantees</a></p></li>
+<li><p><a class="reference internal" href="#impact-of-llvm-optimizations-on-coverage-reports" id="id9">Impact of llvm optimizations on coverage reports</a></p></li>
+<li><p><a class="reference internal" href="#using-the-profiling-runtime-without-static-initializers" id="id10">Using the profiling runtime without static initializers</a></p>
+<ul>
+<li><p><a class="reference internal" href="#using-the-profiling-runtime-without-a-filesystem" id="id11">Using the profiling runtime without a filesystem</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#collecting-coverage-reports-for-the-llvm-project" id="id12">Collecting coverage reports for the llvm project</a></p></li>
+<li><p><a class="reference internal" href="#drawbacks-and-limitations" id="id13">Drawbacks and limitations</a></p></li>
+<li><p><a class="reference internal" href="#clang-implementation-details" id="id14">Clang implementation details</a></p>
+<ul>
+<li><p><a class="reference internal" href="#gap-regions" id="id15">Gap regions</a></p></li>
+<li><p><a class="reference internal" href="#branch-regions" id="id16">Branch regions</a></p></li>
+<li><p><a class="reference internal" href="#switch-statements" id="id17">Switch statements</a></p></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id1">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>This document explains how to use clang’s source-based code coverage feature.
+It’s called “source-based” because it operates on AST and preprocessor
+information directly. This allows it to generate very precise coverage data.</p>
+<p>Clang ships two other code coverage implementations:</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="SanitizerCoverage.html"><span class="doc">SanitizerCoverage</span></a> - A low-overhead tool meant for use alongside the
+various sanitizers. It can provide up to edge-level coverage.</p></li>
+<li><p>gcov - A GCC-compatible coverage implementation which operates on DebugInfo.
+This is enabled by <code class="docutils literal notranslate"><span class="pre">-ftest-coverage</span></code> or <code class="docutils literal notranslate"><span class="pre">--coverage</span></code>.</p></li>
+</ul>
+<p>From this point onwards “code coverage” will refer to the source-based kind.</p>
+</div>
+<div class="section" id="the-code-coverage-workflow">
+<h2><a class="toc-backref" href="#id2">The code coverage workflow</a><a class="headerlink" href="#the-code-coverage-workflow" title="Permalink to this headline">¶</a></h2>
+<p>The code coverage workflow consists of three main steps:</p>
+<ul class="simple">
+<li><p>Compiling with coverage enabled.</p></li>
+<li><p>Running the instrumented program.</p></li>
+<li><p>Creating coverage reports.</p></li>
+</ul>
+<p>The next few sections work through a complete, copy-‘n-paste friendly example
+based on this program:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="w"> </span><span class="n">cat</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="n">EOF</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">foo</span><span class="p">.</span><span class="n">cc</span><span class="w"></span>
+<span class="cp">#define BAR(x) ((x) || (x))</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span> <span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">foo</span><span class="p">(</span><span class="n">T</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">I</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">I</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">I</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">BAR</span><span class="p">(</span><span class="n">I</span><span class="p">);</span><span class="w"> </span><span class="p">}</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+<span class="kt">int</span><span class="w"> </span><span class="n">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="n">foo</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span><span class="w"></span>
+<span class="w">  </span><span class="n">foo</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span><span class="w"></span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+<span class="n">EOF</span><span class="w"></span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="compiling-with-coverage-enabled">
+<h2><a class="toc-backref" href="#id3">Compiling with coverage enabled</a><a class="headerlink" href="#compiling-with-coverage-enabled" title="Permalink to this headline">¶</a></h2>
+<p>To compile code with coverage enabled, pass <code class="docutils literal notranslate"><span class="pre">-fprofile-instr-generate</span>
+<span class="pre">-fcoverage-mapping</span></code> to the compiler:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Step <span class="m">1</span>: Compile with coverage enabled.
+<span class="gp">% </span>clang++ -fprofile-instr-generate -fcoverage-mapping foo.cc -o foo
+</pre></div>
+</div>
+<p>Note that linking together code with and without coverage instrumentation is
+supported. Uninstrumented code simply won’t be accounted for in reports.</p>
+</div>
+<div class="section" id="running-the-instrumented-program">
+<h2><a class="toc-backref" href="#id4">Running the instrumented program</a><a class="headerlink" href="#running-the-instrumented-program" title="Permalink to this headline">¶</a></h2>
+<p>The next step is to run the instrumented program. When the program exits it
+will write a <strong>raw profile</strong> to the path specified by the <code class="docutils literal notranslate"><span class="pre">LLVM_PROFILE_FILE</span></code>
+environment variable. If that variable does not exist, the profile is written
+to <code class="docutils literal notranslate"><span class="pre">default.profraw</span></code> in the current directory of the program. If
+<code class="docutils literal notranslate"><span class="pre">LLVM_PROFILE_FILE</span></code> contains a path to a non-existent directory, the missing
+directory structure will be created.  Additionally, the following special
+<strong>pattern strings</strong> are rewritten:</p>
+<ul class="simple">
+<li><p>“%p” expands out to the process ID.</p></li>
+<li><p>“%h” expands out to the hostname of the machine running the program.</p></li>
+<li><p>“%t” expands out to the value of the <code class="docutils literal notranslate"><span class="pre">TMPDIR</span></code> environment variable. On
+Darwin, this is typically set to a temporary scratch directory.</p></li>
+<li><p>“%Nm” expands out to the instrumented binary’s signature. When this pattern
+is specified, the runtime creates a pool of N raw profiles which are used for
+on-line profile merging. The runtime takes care of selecting a raw profile
+from the pool, locking it, and updating it before the program exits.  If N is
+not specified (i.e the pattern is “%m”), it’s assumed that <code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">=</span> <span class="pre">1</span></code>. N must
+be between 1 and 9. The merge pool specifier can only occur once per filename
+pattern.</p></li>
+<li><p>“%c” expands out to nothing, but enables a mode in which profile counter
+updates are continuously synced to a file. This means that if the
+instrumented program crashes, or is killed by a signal, perfect coverage
+information can still be recovered. Continuous mode does not support value
+profiling for PGO, and is only supported on Darwin at the moment. Support for
+Linux may be mostly complete but requires testing, and support for Windows
+may require more extensive changes: please get involved if you are interested
+in porting this feature.</p></li>
+</ul>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Step <span class="m">2</span>: Run the program.
+<span class="gp">% </span><span class="nv">LLVM_PROFILE_FILE</span><span class="o">=</span><span class="s2">&quot;foo.profraw&quot;</span> ./foo
+</pre></div>
+</div>
+<p>Note that continuous mode is also used on Fuchsia where it’s the only supported
+mode, but the implementation is different. The Darwin and Linux implementation
+relies on padding and the ability to map a file over the existing memory
+mapping which is generally only available on POSIX systems and isn’t suitable
+for other platforms.</p>
+<p>On Fuchsia, we rely on the ability to relocate counters at runtime using a
+level of indirection. On every counter access, we add a bias to the counter
+address. This bias is stored in <code class="docutils literal notranslate"><span class="pre">__llvm_profile_counter_bias</span></code> symbol that’s
+provided by the profile runtime and is initially set to zero, meaning no
+relocation. The runtime can map the profile into memory at arbitrary locations,
+and set bias to the offset between the original and the new counter location,
+at which point every subsequent counter access will be to the new location,
+which allows updating profile directly akin to the continuous mode.</p>
+<p>The advantage of this approach is that doesn’t require any special OS support.
+The disadvantage is the extra overhead due to additional instructions required
+for each counter access (overhead both in terms of binary size and performance)
+plus duplication of counters (i.e. one copy in the binary itself and another
+copy that’s mapped into memory). This implementation can be also enabled for
+other platforms by passing the <code class="docutils literal notranslate"><span class="pre">-runtime-counter-relocation</span></code> option to the
+backend during compilation.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>clang++ -fprofile-instr-generate -fcoverage-mapping -mllvm -runtime-counter-relocation foo.cc -o foo
+</pre></div>
+</div>
+</div>
+<div class="section" id="creating-coverage-reports">
+<h2><a class="toc-backref" href="#id5">Creating coverage reports</a><a class="headerlink" href="#creating-coverage-reports" title="Permalink to this headline">¶</a></h2>
+<p>Raw profiles have to be <strong>indexed</strong> before they can be used to generate
+coverage reports. This is done using the “merge” tool in <code class="docutils literal notranslate"><span class="pre">llvm-profdata</span></code>
+(which can combine multiple raw profiles and index them at the same time):</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Step <span class="m">3</span><span class="o">(</span>a<span class="o">)</span>: Index the raw profile.
+<span class="gp">% </span>llvm-profdata merge -sparse foo.profraw -o foo.profdata
+</pre></div>
+</div>
+<p>There are multiple different ways to render coverage reports. The simplest
+option is to generate a line-oriented report:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Step <span class="m">3</span><span class="o">(</span>b<span class="o">)</span>: Create a line-oriented coverage report.
+<span class="gp">% </span>llvm-cov show ./foo -instr-profile<span class="o">=</span>foo.profdata
+</pre></div>
+</div>
+<p>This report includes a summary view as well as dedicated sub-views for
+templated functions and their instantiations. For our example program, we get
+distinct views for <code class="docutils literal notranslate"><span class="pre">foo&lt;int&gt;(...)</span></code> and <code class="docutils literal notranslate"><span class="pre">foo&lt;float&gt;(...)</span></code>.  If
+<code class="docutils literal notranslate"><span class="pre">-show-line-counts-or-regions</span></code> is enabled, <code class="docutils literal notranslate"><span class="pre">llvm-cov</span></code> displays sub-line
+region counts (even in macro expansions):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>    1|   20|#define BAR(x) ((x) || (x))
+                           ^20     ^2
+    2|    2|template &lt;typename T&gt; void foo(T x) {
+    3|   22|  for (unsigned I = 0; I &lt; 10; ++I) { BAR(I); }
+                                   ^22     ^20  ^20^20
+    4|    2|}
+------------------
+| void foo&lt;int&gt;(int):
+|      2|    1|template &lt;typename T&gt; void foo(T x) {
+|      3|   11|  for (unsigned I = 0; I &lt; 10; ++I) { BAR(I); }
+|                                     ^11     ^10  ^10^10
+|      4|    1|}
+------------------
+| void foo&lt;float&gt;(int):
+|      2|    1|template &lt;typename T&gt; void foo(T x) {
+|      3|   11|  for (unsigned I = 0; I &lt; 10; ++I) { BAR(I); }
+|                                     ^11     ^10  ^10^10
+|      4|    1|}
+------------------
+</pre></div>
+</div>
+<p>If <code class="docutils literal notranslate"><span class="pre">--show-branches=count</span></code> and <code class="docutils literal notranslate"><span class="pre">--show-expansions</span></code> are also enabled, the
+sub-views will show detailed branch coverage information in addition to the
+region counts:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>------------------
+| void foo&lt;float&gt;(int):
+|      2|    1|template &lt;typename T&gt; void foo(T x) {
+|      3|   11|  for (unsigned I = 0; I &lt; 10; ++I) { BAR(I); }
+|                                     ^11     ^10  ^10^10
+|  ------------------
+|  |  |    1|     10|#define BAR(x) ((x) || (x))
+|  |  |                             ^10     ^1
+|  |  |  ------------------
+|  |  |  |  Branch (1:17): [True: 9, False: 1]
+|  |  |  |  Branch (1:24): [True: 0, False: 1]
+|  |  |  ------------------
+|  ------------------
+|  |  Branch (3:23): [True: 10, False: 1]
+|  ------------------
+|      4|    1|}
+------------------
+</pre></div>
+</div>
+<p>To generate a file-level summary of coverage statistics instead of a
+line-oriented report, try:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Step <span class="m">3</span><span class="o">(</span>c<span class="o">)</span>: Create a coverage summary.
+<span class="gp">% </span>llvm-cov report ./foo -instr-profile<span class="o">=</span>foo.profdata
+<span class="go">Filename           Regions    Missed Regions     Cover   Functions  Missed Functions  Executed       Lines      Missed Lines     Cover     Branches    Missed Branches     Cover</span>
+<span class="go">--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------</span>
+<span class="go">/tmp/foo.cc             13                 0   100.00%           3                 0   100.00%          13                 0   100.00%           12                  2    83.33%</span>
+<span class="go">--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------</span>
+<span class="go">TOTAL                   13                 0   100.00%           3                 0   100.00%          13                 0   100.00%           12                  2    83.33%</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">llvm-cov</span></code> tool supports specifying a custom demangler, writing out
+reports in a directory structure, and generating html reports. For the full
+list of options, please refer to the <a class="reference external" href="https://llvm.org/docs/CommandGuide/llvm-cov.html">command guide</a>.</p>
+<p>A few final notes:</p>
+<ul>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">-sparse</span></code> flag is optional but can result in dramatically smaller
+indexed profiles. This option should not be used if the indexed profile will
+be reused for PGO.</p></li>
+<li><p>Raw profiles can be discarded after they are indexed. Advanced use of the
+profile runtime library allows an instrumented program to merge profiling
+information directly into an existing raw profile on disk. The details are
+out of scope.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">llvm-profdata</span></code> tool can be used to merge together multiple raw or
+indexed profiles. To combine profiling data from multiple runs of a program,
+try e.g:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>llvm-profdata merge -sparse foo1.profraw foo2.profdata -o foo3.profdata
+</pre></div>
+</div>
+</li>
+</ul>
+</div>
+<div class="section" id="exporting-coverage-data">
+<h2><a class="toc-backref" href="#id6">Exporting coverage data</a><a class="headerlink" href="#exporting-coverage-data" title="Permalink to this headline">¶</a></h2>
+<p>Coverage data can be exported into JSON using the <code class="docutils literal notranslate"><span class="pre">llvm-cov</span> <span class="pre">export</span></code>
+sub-command. There is a comprehensive reference which defines the structure of
+the exported data at a high level in the llvm-cov source code.</p>
+</div>
+<div class="section" id="interpreting-reports">
+<h2><a class="toc-backref" href="#id7">Interpreting reports</a><a class="headerlink" href="#interpreting-reports" title="Permalink to this headline">¶</a></h2>
+<p>There are five statistics tracked in a coverage summary:</p>
+<ul class="simple">
+<li><p>Function coverage is the percentage of functions which have been executed at
+least once. A function is considered to be executed if any of its
+instantiations are executed.</p></li>
+<li><p>Instantiation coverage is the percentage of function instantiations which
+have been executed at least once. Template functions and static inline
+functions from headers are two kinds of functions which may have multiple
+instantiations. This statistic is hidden by default in reports, but can be
+enabled via the <code class="docutils literal notranslate"><span class="pre">-show-instantiation-summary</span></code> option.</p></li>
+<li><p>Line coverage is the percentage of code lines which have been executed at
+least once. Only executable lines within function bodies are considered to be
+code lines.</p></li>
+<li><p>Region coverage is the percentage of code regions which have been executed at
+least once. A code region may span multiple lines (e.g in a large function
+body with no control flow). However, it’s also possible for a single line to
+contain multiple code regions (e.g in “return x || y &amp;&amp; z”).</p></li>
+<li><p>Branch coverage is the percentage of “true” and “false” branches that have
+been taken at least once. Each branch is tied to individual conditions in the
+source code that may each evaluate to either “true” or “false”.  These
+conditions may comprise larger boolean expressions linked by boolean logical
+operators. For example, “x = (y == 2) || (z &lt; 10)” is a boolean expression
+that is comprised of two individual conditions, each of which evaluates to
+either true or false, producing four total branch outcomes.</p></li>
+</ul>
+<p>Of these five statistics, function coverage is usually the least granular while
+branch coverage is the most granular. 100% branch coverage for a function
+implies 100% region coverage for a function. The project-wide totals for each
+statistic are listed in the summary.</p>
+</div>
+<div class="section" id="format-compatibility-guarantees">
+<h2><a class="toc-backref" href="#id8">Format compatibility guarantees</a><a class="headerlink" href="#format-compatibility-guarantees" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>There are no backwards or forwards compatibility guarantees for the raw
+profile format. Raw profiles may be dependent on the specific compiler
+revision used to generate them. It’s inadvisable to store raw profiles for
+long periods of time.</p></li>
+<li><p>Tools must retain <strong>backwards</strong> compatibility with indexed profile formats.
+These formats are not forwards-compatible: i.e, a tool which uses format
+version X will not be able to understand format version (X+k).</p></li>
+<li><p>Tools must also retain <strong>backwards</strong> compatibility with the format of the
+coverage mappings emitted into instrumented binaries. These formats are not
+forwards-compatible.</p></li>
+<li><p>The JSON coverage export format has a (major, minor, patch) version triple.
+Only a major version increment indicates a backwards-incompatible change. A
+minor version increment is for added functionality, and patch version
+increments are for bugfixes.</p></li>
+</ul>
+</div>
+<div class="section" id="impact-of-llvm-optimizations-on-coverage-reports">
+<h2><a class="toc-backref" href="#id9">Impact of llvm optimizations on coverage reports</a><a class="headerlink" href="#impact-of-llvm-optimizations-on-coverage-reports" title="Permalink to this headline">¶</a></h2>
+<p>llvm optimizations (such as inlining or CFG simplification) should have no
+impact on coverage report quality. This is due to the fact that the mapping
+from source regions to profile counters is immutable, and is generated before
+the llvm optimizer kicks in. The optimizer can’t prove that profile counter
+instrumentation is safe to delete (because it’s not: it affects the profile the
+program emits), and so leaves it alone.</p>
+<p>Note that this coverage feature does not rely on information that can degrade
+during the course of optimization, such as debug info line tables.</p>
+</div>
+<div class="section" id="using-the-profiling-runtime-without-static-initializers">
+<h2><a class="toc-backref" href="#id10">Using the profiling runtime without static initializers</a><a class="headerlink" href="#using-the-profiling-runtime-without-static-initializers" title="Permalink to this headline">¶</a></h2>
+<p>By default the compiler runtime uses a static initializer to determine the
+profile output path and to register a writer function. To collect profiles
+without using static initializers, do this manually:</p>
+<ul class="simple">
+<li><p>Export a <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">__llvm_profile_runtime</span></code> symbol from each instrumented shared
+library and executable. When the linker finds a definition of this symbol, it
+knows to skip loading the object which contains the profiling runtime’s
+static initializer.</p></li>
+<li><p>Forward-declare <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">__llvm_profile_initialize_file(void)</span></code> and call it
+once from each instrumented executable. This function parses
+<code class="docutils literal notranslate"><span class="pre">LLVM_PROFILE_FILE</span></code>, sets the output path, and truncates any existing files
+at that path. To get the same behavior without truncating existing files,
+pass a filename pattern string to <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">__llvm_profile_set_filename(char</span>
+<span class="pre">*)</span></code>.  These calls can be placed anywhere so long as they precede all calls
+to <code class="docutils literal notranslate"><span class="pre">__llvm_profile_write_file</span></code>.</p></li>
+<li><p>Forward-declare <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">__llvm_profile_write_file(void)</span></code> and call it to write
+out a profile. This function returns 0 when it succeeds, and a non-zero value
+otherwise. Calling this function multiple times appends profile data to an
+existing on-disk raw profile.</p></li>
+</ul>
+<p>In C++ files, declare these as <code class="docutils literal notranslate"><span class="pre">extern</span> <span class="pre">&quot;C&quot;</span></code>.</p>
+<div class="section" id="using-the-profiling-runtime-without-a-filesystem">
+<h3><a class="toc-backref" href="#id11">Using the profiling runtime without a filesystem</a><a class="headerlink" href="#using-the-profiling-runtime-without-a-filesystem" title="Permalink to this headline">¶</a></h3>
+<p>The profiling runtime also supports freestanding environments that lack a
+filesystem. The runtime ships as a static archive that’s structured to make
+dependencies on a hosted environment optional, depending on what features
+the client application uses.</p>
+<p>The first step is to export <code class="docutils literal notranslate"><span class="pre">__llvm_profile_runtime</span></code>, as above, to disable
+the default static initializers. Instead of calling the <code class="docutils literal notranslate"><span class="pre">*_file()</span></code> APIs
+described above, use the following to save the profile directly to a buffer
+under your control:</p>
+<ul class="simple">
+<li><p>Forward-declare <code class="docutils literal notranslate"><span class="pre">uint64_t</span> <span class="pre">__llvm_profile_get_size_for_buffer(void)</span></code> and
+call it to determine the size of the profile. You’ll need to allocate a
+buffer of this size.</p></li>
+<li><p>Forward-declare <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">__llvm_profile_write_buffer(char</span> <span class="pre">*Buffer)</span></code> and call it
+to copy the current counters to <code class="docutils literal notranslate"><span class="pre">Buffer</span></code>, which is expected to already be
+allocated and big enough for the profile.</p></li>
+<li><p>Optionally, forward-declare <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">__llvm_profile_reset_counters(void)</span></code> and
+call it to reset the counters before entering a specific section to be
+profiled. This is only useful if there is some setup that should be excluded
+from the profile.</p></li>
+</ul>
+<p>In C++ files, declare these as <code class="docutils literal notranslate"><span class="pre">extern</span> <span class="pre">&quot;C&quot;</span></code>.</p>
+</div>
+</div>
+<div class="section" id="collecting-coverage-reports-for-the-llvm-project">
+<h2><a class="toc-backref" href="#id12">Collecting coverage reports for the llvm project</a><a class="headerlink" href="#collecting-coverage-reports-for-the-llvm-project" title="Permalink to this headline">¶</a></h2>
+<p>To prepare a coverage report for llvm (and any of its sub-projects), add
+<code class="docutils literal notranslate"><span class="pre">-DLLVM_BUILD_INSTRUMENTED_COVERAGE=On</span></code> to the cmake configuration. Raw
+profiles will be written to <code class="docutils literal notranslate"><span class="pre">$BUILD_DIR/profiles/</span></code>. To prepare an html
+report, run <code class="docutils literal notranslate"><span class="pre">llvm/utils/prepare-code-coverage-artifact.py</span></code>.</p>
+<p>To specify an alternate directory for raw profiles, use
+<code class="docutils literal notranslate"><span class="pre">-DLLVM_PROFILE_DATA_DIR</span></code>. To change the size of the profile merge pool, use
+<code class="docutils literal notranslate"><span class="pre">-DLLVM_PROFILE_MERGE_POOL_SIZE</span></code>.</p>
+</div>
+<div class="section" id="drawbacks-and-limitations">
+<h2><a class="toc-backref" href="#id13">Drawbacks and limitations</a><a class="headerlink" href="#drawbacks-and-limitations" title="Permalink to this headline">¶</a></h2>
+<ul>
+<li><p>Prior to version 2.26, the GNU binutils BFD linker is not able link programs
+compiled with <code class="docutils literal notranslate"><span class="pre">-fcoverage-mapping</span></code> in its <code class="docutils literal notranslate"><span class="pre">--gc-sections</span></code> mode.  Possible
+workarounds include disabling <code class="docutils literal notranslate"><span class="pre">--gc-sections</span></code>, upgrading to a newer version
+of BFD, or using the Gold linker.</p></li>
+<li><p>Code coverage does not handle unpredictable changes in control flow or stack
+unwinding in the presence of exceptions precisely. Consider the following
+function:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="n">may_throw</span><span class="p">();</span><span class="w"></span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+<p>If the call to <code class="docutils literal notranslate"><span class="pre">may_throw()</span></code> propagates an exception into <code class="docutils literal notranslate"><span class="pre">f</span></code>, the code
+coverage tool may mark the <code class="docutils literal notranslate"><span class="pre">return</span></code> statement as executed even though it is
+not. A call to <code class="docutils literal notranslate"><span class="pre">longjmp()</span></code> can have similar effects.</p>
+</li>
+</ul>
+</div>
+<div class="section" id="clang-implementation-details">
+<h2><a class="toc-backref" href="#id14">Clang implementation details</a><a class="headerlink" href="#clang-implementation-details" title="Permalink to this headline">¶</a></h2>
+<p>This section may be of interest to those wishing to understand or improve
+the clang code coverage implementation.</p>
+<div class="section" id="gap-regions">
+<h3><a class="toc-backref" href="#id15">Gap regions</a><a class="headerlink" href="#gap-regions" title="Permalink to this headline">¶</a></h3>
+<p>Gap regions are source regions with counts. A reporting tool cannot set a line
+execution count to the count from a gap region unless that region is the only
+one on a line.</p>
+<p>Gap regions are used to eliminate unnatural artifacts in coverage reports, such
+as red “unexecuted” highlights present at the end of an otherwise covered line,
+or blue “executed” highlights present at the start of a line that is otherwise
+not executed.</p>
+</div>
+<div class="section" id="branch-regions">
+<h3><a class="toc-backref" href="#id16">Branch regions</a><a class="headerlink" href="#branch-regions" title="Permalink to this headline">¶</a></h3>
+<p>When viewing branch coverage details in source-based file-level sub-views using
+<code class="docutils literal notranslate"><span class="pre">--show-branches</span></code>, it is recommended that users show all macro expansions
+(using option <code class="docutils literal notranslate"><span class="pre">--show-expansions</span></code>) since macros may contain hidden branch
+conditions.  The coverage summary report will always include these macro-based
+boolean expressions in the overall branch coverage count for a function or
+source file.</p>
+<p>Branch coverage is not tracked for constant folded branch conditions since
+branches are not generated for these cases.  In the source-based file-level
+sub-view, these branches will simply be shown as <code class="docutils literal notranslate"><span class="pre">[Folded</span> <span class="pre">-</span> <span class="pre">Ignored]</span></code> so that
+users are informed about what happened.</p>
+<p>Branch coverage is tied directly to branch-generating conditions in the source
+code.  Users should not see hidden branches that aren’t actually tied to the
+source code.</p>
+</div>
+<div class="section" id="switch-statements">
+<h3><a class="toc-backref" href="#id17">Switch statements</a><a class="headerlink" href="#switch-statements" title="Permalink to this headline">¶</a></h3>
+<p>The region mapping for a switch body consists of a gap region that covers the
+entire body (starting from the ‘{‘ in ‘switch (…) {‘, and terminating where the
+last case ends). This gap region has a zero count: this causes “gap” areas in
+between case statements, which contain no executable code, to appear uncovered.</p>
+<p>When a switch case is visited, the parent region is extended: if the parent
+region has no start location, its start location becomes the start of the case.
+This is used to support switch statements without a <code class="docutils literal notranslate"><span class="pre">CompoundStmt</span></code> body, in
+which the switch body and the single case share a count.</p>
+<p>For switches with <code class="docutils literal notranslate"><span class="pre">CompoundStmt</span></code> bodies, a new region is created at the start
+of each switch case.</p>
+<p>Branch regions are also generated for each switch case, including the default
+case. If there is no explicitly defined default case in the source code, a
+branch region is generated to correspond to the implicit default case that is
+generated by the compiler.  The implicit branch region is tied to the line and
+column number of the switch statement condition since no source code for the
+implicit case exists.</p>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ShadowCallStack.html">ShadowCallStack</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="StandardCPlusPlusModules.html">Standard C++ Modules</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.5.0.
+    </div>
+  </body>
+</html>
