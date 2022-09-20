@@ -1,0 +1,300 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>ThinLTO &#8212; Clang 13 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API Notes: Annotations Without Modifying Headers" href="APINotes.html" />
+    <link rel="prev" title="SYCL Compiler and Runtime architecture design" href="SYCLSupport.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 13 documentation</span></a></h1>
+        <h2 class="heading"><span>ThinLTO</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SYCLSupport.html">SYCL Compiler and Runtime architecture design</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="APINotes.html">API Notes: Annotations Without Modifying Headers</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="thinlto">
+<h1>ThinLTO<a class="headerlink" href="#thinlto" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id4">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#current-status" id="id5">Current Status</a></p>
+<ul>
+<li><p><a class="reference internal" href="#clang-llvm" id="id6">Clang/LLVM</a></p></li>
+<li><p><a class="reference internal" href="#linkers" id="id7">Linkers</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#usage" id="id8">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#basic" id="id9">Basic</a></p></li>
+<li><p><a class="reference internal" href="#controlling-backend-parallelism" id="id10">Controlling Backend Parallelism</a></p></li>
+<li><p><a class="reference internal" href="#incremental" id="id11">Incremental</a></p></li>
+<li><p><a class="reference internal" href="#cache-pruning" id="id12">Cache Pruning</a></p></li>
+<li><p><a class="reference internal" href="#clang-bootstrap" id="id13">Clang Bootstrap</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#more-information" id="id14">More Information</a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id4">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p><em>ThinLTO</em> compilation is a new type of LTO that is both scalable and
+incremental. <em>LTO</em> (Link Time Optimization) achieves better
+runtime performance through whole-program analysis and cross-module
+optimization. However, monolithic LTO implements this by merging all
+input into a single module, which is not scalable
+in time or memory, and also prevents fast incremental compiles.</p>
+<p>In ThinLTO mode, as with regular LTO, clang emits LLVM bitcode after the
+compile phase. The ThinLTO bitcode is augmented with a compact summary
+of the module. During the link step, only the summaries are read and
+merged into a combined summary index, which includes an index of function
+locations for later cross-module function importing. Fast and efficient
+whole-program analysis is then performed on the combined summary index.</p>
+<p>However, all transformations, including function importing, occur
+later when the modules are optimized in fully parallel backends.
+By default, <a class="reference internal" href="#id1">linkers</a> that support ThinLTO are set up to launch
+the ThinLTO backends in threads. So the usage model is not affected
+as the distinction between the fast serial thin link step and the backends
+is transparent to the user.</p>
+<p>For more information on the ThinLTO design and current performance,
+see the LLVM blog post <a class="reference external" href="http://blog.llvm.org/2016/06/thinlto-scalable-and-incremental-lto.html">ThinLTO: Scalable and Incremental LTO</a>.
+While tuning is still in progress, results in the blog post show that
+ThinLTO already performs well compared to LTO, in many cases matching
+the performance improvement.</p>
+</div>
+<div class="section" id="current-status">
+<h2><a class="toc-backref" href="#id5">Current Status</a><a class="headerlink" href="#current-status" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="clang-llvm">
+<h3><a class="toc-backref" href="#id6">Clang/LLVM</a><a class="headerlink" href="#clang-llvm" title="Permalink to this headline">¶</a></h3>
+<p id="compiler">The 3.9 release of clang includes ThinLTO support. However, ThinLTO
+is under active development, and new features, improvements and bugfixes
+are being added for the next release. For the latest ThinLTO support,
+<a class="reference external" href="https://llvm.org/docs/CMake.html">build a recent version of clang and LLVM</a>.</p>
+</div>
+<div class="section" id="linkers">
+<h3><a class="toc-backref" href="#id7">Linkers</a><a class="headerlink" href="#linkers" title="Permalink to this headline">¶</a></h3>
+<p id="linker"><span id="id1"></span>ThinLTO is currently supported for the following linkers:</p>
+<ul class="simple">
+<li><p><strong>gold (via the gold-plugin)</strong>:
+Similar to monolithic LTO, this requires using
+a <a class="reference external" href="https://llvm.org/docs/GoldPlugin.html">gold linker configured with plugins enabled</a>.</p></li>
+<li><p><strong>ld64</strong>:
+Starting with <a class="reference external" href="https://developer.apple.com/xcode/">Xcode 8</a>.</p></li>
+<li><p><strong>lld</strong>:
+Starting with r284050 for ELF, r298942 for COFF.</p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="usage">
+<h2><a class="toc-backref" href="#id8">Usage</a><a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="basic">
+<h3><a class="toc-backref" href="#id9">Basic</a><a class="headerlink" href="#basic" title="Permalink to this headline">¶</a></h3>
+<p>To utilize ThinLTO, simply add the -flto=thin option to compile and link. E.g.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">%</span> clang -flto<span class="o">=</span>thin -O2 file1.c file2.c -c
+<span class="gp">%</span> clang -flto<span class="o">=</span>thin -O2 file1.o file2.o -o a.out
+</pre></div>
+</div>
+<p>When using lld-link, the -flto option need only be added to the compile step:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">%</span> clang-cl -flto<span class="o">=</span>thin -O2 -c file1.c file2.c
+<span class="gp">%</span> lld-link /out:a.exe file1.obj file2.obj
+</pre></div>
+</div>
+<p>As mentioned earlier, by default the linkers will launch the ThinLTO backend
+threads in parallel, passing the resulting native object files back to the
+linker for the final native link.  As such, the usage model the same as
+non-LTO.</p>
+<p>With gold, if you see an error during the link of the form:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">/usr/bin/ld: error: /path/to/clang/bin/../lib/LLVMgold.so: could not load plugin library: /path/to/clang/bin/../lib/LLVMgold.so: cannot open shared object file: No such file or directory</span>
+</pre></div>
+</div>
+<p>Then either gold was not configured with plugins enabled, or clang
+was not built with <code class="docutils literal notranslate"><span class="pre">-DLLVM_BINUTILS_INCDIR</span></code> set properly. See
+the instructions for the
+<a class="reference external" href="https://llvm.org/docs/GoldPlugin.html#how-to-build-it">LLVM gold plugin</a>.</p>
+</div>
+<div class="section" id="controlling-backend-parallelism">
+<h3><a class="toc-backref" href="#id10">Controlling Backend Parallelism</a><a class="headerlink" href="#controlling-backend-parallelism" title="Permalink to this headline">¶</a></h3>
+<p id="parallelism">By default, the ThinLTO link step will launch as many
+threads in parallel as there are cores. If the number of
+cores can’t be computed for the architecture, then it will launch
+<code class="docutils literal notranslate"><span class="pre">std::thread::hardware_concurrency</span></code> number of threads in parallel.
+For machines with hyper-threading, this is the total number of
+virtual cores. For some applications and machine configurations this
+may be too aggressive, in which case the amount of parallelism can
+be reduced to <code class="docutils literal notranslate"><span class="pre">N</span></code> via:</p>
+<ul class="simple">
+<li><p>gold:
+<code class="docutils literal notranslate"><span class="pre">-Wl,-plugin-opt,jobs=N</span></code></p></li>
+<li><p>ld64:
+<code class="docutils literal notranslate"><span class="pre">-Wl,-mllvm,-threads=N</span></code></p></li>
+<li><p>lld:
+<code class="docutils literal notranslate"><span class="pre">-Wl,--thinlto-jobs=N</span></code></p></li>
+<li><p>lld-link:
+<code class="docutils literal notranslate"><span class="pre">/opt:lldltojobs=N</span></code></p></li>
+</ul>
+<p>Other possible values for <code class="docutils literal notranslate"><span class="pre">N</span></code> are:</p>
+<ul class="simple">
+<li><p>0:
+Use one thread per physical core (default)</p></li>
+<li><p>1:
+Use a single thread only (disable multi-threading)</p></li>
+<li><p>all:
+Use one thread per logical core (uses all hyper-threads)</p></li>
+</ul>
+</div>
+<div class="section" id="incremental">
+<h3><a class="toc-backref" href="#id11">Incremental</a><a class="headerlink" href="#incremental" title="Permalink to this headline">¶</a></h3>
+<p id="id2">ThinLTO supports fast incremental builds through the use of a cache,
+which currently must be enabled through a linker option.</p>
+<ul class="simple">
+<li><p>gold (as of LLVM 4.0):
+<code class="docutils literal notranslate"><span class="pre">-Wl,-plugin-opt,cache-dir=/path/to/cache</span></code></p></li>
+<li><p>ld64 (support in clang 3.9 and Xcode 8):
+<code class="docutils literal notranslate"><span class="pre">-Wl,-cache_path_lto,/path/to/cache</span></code></p></li>
+<li><p>ELF lld (as of LLVM 5.0):
+<code class="docutils literal notranslate"><span class="pre">-Wl,--thinlto-cache-dir=/path/to/cache</span></code></p></li>
+<li><p>COFF lld-link (as of LLVM 6.0):
+<code class="docutils literal notranslate"><span class="pre">/lldltocache:/path/to/cache</span></code></p></li>
+</ul>
+</div>
+<div class="section" id="cache-pruning">
+<h3><a class="toc-backref" href="#id12">Cache Pruning</a><a class="headerlink" href="#cache-pruning" title="Permalink to this headline">¶</a></h3>
+<p>To help keep the size of the cache under control, ThinLTO supports cache
+pruning. Cache pruning is supported with gold, ld64 and ELF and COFF lld, but
+currently only gold, ELF and COFF lld allow you to control the policy with a
+policy string. The cache policy must be specified with a linker option.</p>
+<ul class="simple">
+<li><p>gold (as of LLVM 6.0):
+<code class="docutils literal notranslate"><span class="pre">-Wl,-plugin-opt,cache-policy=POLICY</span></code></p></li>
+<li><p>ELF lld (as of LLVM 5.0):
+<code class="docutils literal notranslate"><span class="pre">-Wl,--thinlto-cache-policy,POLICY</span></code></p></li>
+<li><p>COFF lld-link (as of LLVM 6.0):
+<code class="docutils literal notranslate"><span class="pre">/lldltocachepolicy:POLICY</span></code></p></li>
+</ul>
+<p>A policy string is a series of key-value pairs separated by <code class="docutils literal notranslate"><span class="pre">:</span></code> characters.
+Possible key-value pairs are:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">cache_size=X%</span></code>: The maximum size for the cache directory is <code class="docutils literal notranslate"><span class="pre">X</span></code> percent
+of the available space on the disk. Set to 100 to indicate no limit,
+50 to indicate that the cache size will not be left over half the available
+disk space. A value over 100 is invalid. A value of 0 disables the percentage
+size-based pruning. The default is 75%.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cache_size_bytes=X</span></code>, <code class="docutils literal notranslate"><span class="pre">cache_size_bytes=Xk</span></code>, <code class="docutils literal notranslate"><span class="pre">cache_size_bytes=Xm</span></code>,
+<code class="docutils literal notranslate"><span class="pre">cache_size_bytes=Xg</span></code>:
+Sets the maximum size for the cache directory to <code class="docutils literal notranslate"><span class="pre">X</span></code> bytes (or KB, MB,
+GB respectively). A value over the amount of available space on the disk
+will be reduced to the amount of available space. A value of 0 disables
+the byte size-based pruning. The default is no byte size-based pruning.</p>
+<p>Note that ThinLTO will apply both size-based pruning policies simultaneously,
+and changing one does not affect the other. For example, a policy of
+<code class="docutils literal notranslate"><span class="pre">cache_size_bytes=1g</span></code> on its own will cause both the 1GB and default 75%
+policies to be applied unless the default <code class="docutils literal notranslate"><span class="pre">cache_size</span></code> is overridden.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cache_size_files=X</span></code>:
+Set the maximum number of files in the cache directory. Set to 0 to indicate
+no limit. The default is 1000000 files.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">prune_after=Xs</span></code>, <code class="docutils literal notranslate"><span class="pre">prune_after=Xm</span></code>, <code class="docutils literal notranslate"><span class="pre">prune_after=Xh</span></code>: Sets the
+expiration time for cache files to <code class="docutils literal notranslate"><span class="pre">X</span></code> seconds (or minutes, hours
+respectively).  When a file hasn’t been accessed for <code class="docutils literal notranslate"><span class="pre">prune_after</span></code> seconds,
+it is removed from the cache. A value of 0 disables the expiration-based
+pruning. The default is 1 week.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">prune_interval=Xs</span></code>, <code class="docutils literal notranslate"><span class="pre">prune_interval=Xm</span></code>, <code class="docutils literal notranslate"><span class="pre">prune_interval=Xh</span></code>:
+Sets the pruning interval to <code class="docutils literal notranslate"><span class="pre">X</span></code> seconds (or minutes, hours
+respectively). This is intended to be used to avoid scanning the directory
+too often. It does not impact the decision of which files to prune. A
+value of 0 forces the scan to occur. The default is every 20 minutes.</p></li>
+</ul>
+</div>
+<div class="section" id="clang-bootstrap">
+<h3><a class="toc-backref" href="#id13">Clang Bootstrap</a><a class="headerlink" href="#clang-bootstrap" title="Permalink to this headline">¶</a></h3>
+<p>To <a class="reference external" href="https://llvm.org/docs/AdvancedBuilds.html#bootstrap-builds">bootstrap clang/LLVM</a>
+with ThinLTO, follow these steps:</p>
+<ol class="arabic simple">
+<li><p>The host <a class="reference internal" href="#compiler">compiler</a> must be a version of clang that supports ThinLTO.</p></li>
+<li><p>The host <a class="reference internal" href="#linker">linker</a> must support ThinLTO (and in the case of gold, must be
+<a class="reference external" href="https://llvm.org/docs/GoldPlugin.html">configured with plugins enabled</a>).</p></li>
+<li><p>Use the following additional <a class="reference external" href="https://llvm.org/docs/CMake.html#options-and-variables">CMake variables</a>
+when configuring the bootstrap compiler build:</p></li>
+</ol>
+<blockquote>
+<div><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-DLLVM_ENABLE_LTO=Thin</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_C_COMPILER=/path/to/host/clang</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_CXX_COMPILER=/path/to/host/clang++</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_RANLIB=/path/to/host/llvm-ranlib</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_AR=/path/to/host/llvm-ar</span></code></p></li>
+</ul>
+<p>Or, on Windows:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-DLLVM_ENABLE_LTO=Thin</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_C_COMPILER=/path/to/host/clang-cl.exe</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_CXX_COMPILER=/path/to/host/clang-cl.exe</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_LINKER=/path/to/host/lld-link.exe</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_RANLIB=/path/to/host/llvm-ranlib.exe</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-DCMAKE_AR=/path/to/host/llvm-ar.exe</span></code></p></li>
+</ul>
+</div></blockquote>
+<ol class="arabic simple">
+<li><p>To use additional linker arguments for controlling the backend
+<a class="reference internal" href="#parallelism">parallelism</a> or enabling <a class="reference internal" href="#id2">incremental</a> builds of the bootstrap compiler,
+after configuring the build, modify the resulting CMakeCache.txt file in the
+build directory. Specify any additional linker options after
+<code class="docutils literal notranslate"><span class="pre">CMAKE_EXE_LINKER_FLAGS:STRING=</span></code>. Note the configure may fail if
+linker plugin options are instead specified directly in the previous step.</p></li>
+</ol>
+<p>The <code class="docutils literal notranslate"><span class="pre">BOOTSTRAP_LLVM_ENABLE_LTO=Thin</span></code> will enable ThinLTO for stage 2 and
+stage 3 in case the compiler used for stage 1 does not support the ThinLTO
+option.</p>
+</div>
+</div>
+<div class="section" id="more-information">
+<h2><a class="toc-backref" href="#id14">More Information</a><a class="headerlink" href="#more-information" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>From LLVM project blog:
+<a class="reference external" href="http://blog.llvm.org/2016/06/thinlto-scalable-and-incremental-lto.html">ThinLTO: Scalable and Incremental LTO</a></p></li>
+</ul>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SYCLSupport.html">SYCL Compiler and Runtime architecture design</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="APINotes.html">API Notes: Annotations Without Modifying Headers</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

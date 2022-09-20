@@ -1,0 +1,274 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Implementation of CHARACTER types in f18 &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Array Composition" href="ArrayComposition.html" />
+    <link rel="prev" title="Representation of Fortran function calls" href="Calls.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="ArrayComposition.html" title="Array Composition"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Calls.html" title="Representation of Fortran function calls"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/Character.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+--><div class="section" id="implementation-of-character-types-in-f18">
+<h1>Implementation of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> types in f18<a class="headerlink" href="#implementation-of-character-types-in-f18" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#kinds-and-character-sets" id="id1">Kinds and Character Sets</a></p></li>
+<li><p><a class="reference internal" href="#lengths" id="id2">Lengths</a></p></li>
+<li><p><a class="reference internal" href="#concatenation" id="id3">Concatenation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#general-concatenation" id="id4">General concatenation</a></p></li>
+<li><p><a class="reference internal" href="#optimized-concatenation" id="id5">Optimized concatenation</a></p></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="kinds-and-character-sets">
+<h2><a class="toc-backref" href="#id1">Kinds and Character Sets</a><a class="headerlink" href="#kinds-and-character-sets" title="Permalink to this headline">¶</a></h2>
+<p>The f18 compiler and runtime support three kinds of the intrinsic
+<code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> type of Fortran 2018.
+The default (<code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=1)</span></code>) holds 8-bit character codes;
+<code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=2)</span></code> holds 16-bit character codes;
+and <code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=4)</span></code> holds 32-bit character codes.</p>
+<p>We assume that code values 0 through 127 correspond to
+the 7-bit ASCII character set (ISO-646) in every kind of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code>.
+This is a valid assumption for Unicode (UCS == ISO/IEC-10646),
+ISO-8859, and many legacy character sets and interchange formats.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> data in memory and unformatted files are not in an
+interchange representation (like UTF-8, Shift-JIS, EUC-JP, or a JIS X).
+Each character’s code in memory occupies a 1-, 2-, or 4- byte
+word and substrings can be indexed with simple arithmetic.
+In formatted I/O, however, <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> data may be assumed to use
+the UTF-8 variable-length encoding when it is selected with
+<code class="docutils literal notranslate"><span class="pre">OPEN(ENCODING='UTF-8')</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=1)</span></code> literal constants in Fortran source files,
+Hollerith constants, and formatted I/O with <code class="docutils literal notranslate"><span class="pre">ENCODING='DEFAULT'</span></code>
+are not translated.</p>
+<p>For the purposes of non-default-kind <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> constants in Fortran
+source files, formatted I/O with <code class="docutils literal notranslate"><span class="pre">ENCODING='UTF-8'</span></code> or non-default-kind
+<code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> value, and conversions between kinds of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code>,
+by default:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=1)</span></code> is assumed to be ISO-8859-1 (Latin-1),</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=2)</span></code> is assumed to be UCS-2 (16-bit Unicode), and</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=4)</span></code> is assumed to be UCS-4 (full Unicode in a 32-bit word).</p></li>
+</ul>
+<p>In particular, conversions between kinds are assumed to be
+simple zero-extensions or truncation, not table look-ups.</p>
+<p>We might want to support one or more environment variables to change these
+assumptions, especially for <code class="docutils literal notranslate"><span class="pre">KIND=1</span></code> users of ISO-8859 character sets
+besides Latin-1.</p>
+</div>
+<div class="section" id="lengths">
+<h2><a class="toc-backref" href="#id2">Lengths</a><a class="headerlink" href="#lengths" title="Permalink to this headline">¶</a></h2>
+<p>Allocatable <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> objects in Fortran may defer the specification
+of their lengths until the time of their allocation or whole (non-substring)
+assignment.
+Non-allocatable objects (and non-deferred-length allocatables) have
+lengths that are fixed or assumed from an actual argument, or,
+in the case of assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> functions, their local
+declaration in the calling scope.</p>
+<p>The elements of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> arrays have the same length.</p>
+<p>Assignments to targets that are not deferred-length allocatables will
+truncate or pad the assigned value to the length of the left-hand side
+of the assignment.</p>
+<p>Lengths and offsets that are used by or exposed to Fortran programs via
+declarations, substring bounds, and the <code class="docutils literal notranslate"><span class="pre">LEN()</span></code> intrinsic function are always
+represented in units of characters, not bytes.
+In generated code, assumed-length arguments, the runtime support library,
+and in the <code class="docutils literal notranslate"><span class="pre">elem_len</span></code> field of the interoperable descriptor <code class="docutils literal notranslate"><span class="pre">cdesc_t</span></code>,
+lengths are always in units of bytes.
+The distinction matters only for kinds other than the default.</p>
+<p>Fortran substrings are rather like subscript triplets into a hidden
+“zero” dimension of a scalar <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> value, but they cannot have
+strides.</p>
+</div>
+<div class="section" id="concatenation">
+<h2><a class="toc-backref" href="#id3">Concatenation</a><a class="headerlink" href="#concatenation" title="Permalink to this headline">¶</a></h2>
+<p>Fortran has one <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code>-valued intrinsic operator, <code class="docutils literal notranslate"><span class="pre">//</span></code>, which
+concatenates its operands (10.1.5.3).
+The operands must have the same kind type parameter.
+One or both of the operands may be arrays; if both are arrays, their
+shapes must be identical.
+The effective length of the result is the sum of the lengths of the
+operands.
+Parentheses may be ignored, so any <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code>-valued expression
+may be “flattened” into a single sequence of concatenations.</p>
+<p>The result of <code class="docutils literal notranslate"><span class="pre">//</span></code> may be used</p>
+<ul class="simple">
+<li><p>as an operand to another concatenation,</p></li>
+<li><p>as an operand of a <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> relation,</p></li>
+<li><p>as an actual argument,</p></li>
+<li><p>as the right-hand side of an assignment,</p></li>
+<li><p>as the <code class="docutils literal notranslate"><span class="pre">SOURCE=</span></code> or <code class="docutils literal notranslate"><span class="pre">MOLD=</span></code> of an <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code> statemnt,</p></li>
+<li><p>as the selector or case-expr of an <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code> or <code class="docutils literal notranslate"><span class="pre">SELECT</span></code> construct,</p></li>
+<li><p>as a component of a structure or array constructor,</p></li>
+<li><p>as the value of a named constant or initializer,</p></li>
+<li><p>as the <code class="docutils literal notranslate"><span class="pre">NAME=</span></code> of a <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code> attribute,</p></li>
+<li><p>as the stop-code of a <code class="docutils literal notranslate"><span class="pre">STOP</span></code> statement,</p></li>
+<li><p>as the value of a specifier of an I/O statement,</p></li>
+<li><p>or as the value of a statement function.</p></li>
+</ul>
+<p>The f18 compiler has a general (but slow) means of implementing concatenation
+and a specialized (fast) option to optimize the most common case.</p>
+<div class="section" id="general-concatenation">
+<h3><a class="toc-backref" href="#id4">General concatenation</a><a class="headerlink" href="#general-concatenation" title="Permalink to this headline">¶</a></h3>
+<p>In the most general case, the f18 compiler’s generated code and
+runtime support library represent the result as a deferred-length allocatable
+<code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> temporary scalar or array variable that is initialized
+as a zero-length array by <code class="docutils literal notranslate"><span class="pre">AllocatableInitCharacter()</span></code>
+and then progressively augmented in place by the values of each of the
+operands of the concatenation sequence in turn with calls to
+<code class="docutils literal notranslate"><span class="pre">CharacterConcatenate()</span></code>.
+Conformability errors are fatal – Fortran has no means by which a program
+may recover from them.
+The result is then used as any other deferred-length allocatable
+array or scalar would be, and finally deallocated like any other
+allocatable.</p>
+<p>The runtime routine <code class="docutils literal notranslate"><span class="pre">CharacterAssign()</span></code> takes care of
+truncating, padding, or replicating the value(s) assigned to the left-hand
+side, as well as reallocating an nonconforming or deferred-length allocatable
+left-hand side.  It takes the descriptors of the left- and right-hand sides of
+a <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> assignemnt as its arguments.</p>
+<p>When the left-hand side of a <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> assignment is a deferred-length
+allocatable and the right-hand side is a temporary, use of the runtime’s
+<code class="docutils literal notranslate"><span class="pre">MoveAlloc()</span></code> subroutine instead can save an allocation and a copy.</p>
+</div>
+<div class="section" id="optimized-concatenation">
+<h3><a class="toc-backref" href="#id5">Optimized concatenation</a><a class="headerlink" href="#optimized-concatenation" title="Permalink to this headline">¶</a></h3>
+<p>Scalar <code class="docutils literal notranslate"><span class="pre">CHARACTER(KIND=1)</span></code> expressions evaluated as the right-hand sides of
+assignments to independent substrings or whole variables that are not
+deferred-length allocatables can be optimized into a sequence of
+calls to the runtime support library that do not allocate temporary
+memory.</p>
+<p>The routine <code class="docutils literal notranslate"><span class="pre">CharacterAppend()</span></code> copies data from the right-hand side value
+to the remaining space, if any, in the left-hand side object, and returns
+the new offset of the reduced remaining space.
+It is essentially <code class="docutils literal notranslate"><span class="pre">memcpy(lhs</span> <span class="pre">+</span> <span class="pre">offset,</span> <span class="pre">rhs,</span> <span class="pre">min(lhsLength</span> <span class="pre">-</span> <span class="pre">offset,</span> <span class="pre">rhsLength))</span></code>.
+It does nothing when <code class="docutils literal notranslate"><span class="pre">offset</span> <span class="pre">&gt;</span> <span class="pre">lhsLength</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">CharacterPad()</span></code>adds any necessary trailing blank characters.</p>
+</div>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="ArrayComposition.html" title="Array Composition"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Calls.html" title="Representation of Fortran function calls"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2021, The Flang Team.
+      Last updated on Oct 19, 2021.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

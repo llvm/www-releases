@@ -1,0 +1,364 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>3.1. Debug Checks &#8212; Clang 13 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="3.2. Inlining" href="IPA.html" />
+    <link rel="prev" title="3. Developer Docs" href="../developer-docs.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 13 documentation</span></a></h1>
+        <h2 class="heading"><span>3.1. Debug Checks</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="../developer-docs.html">3. Developer Docs</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="IPA.html">3.2. Inlining</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="debug-checks">
+<h1>3.1. Debug Checks<a class="headerlink" href="#debug-checks" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#general-analysis-dumpers" id="id1">General Analysis Dumpers</a></p></li>
+<li><p><a class="reference internal" href="#path-tracking" id="id2">Path Tracking</a></p></li>
+<li><p><a class="reference internal" href="#state-checking" id="id3">State Checking</a></p>
+<ul>
+<li><p><a class="reference internal" href="#exprinspection-checks" id="id4">ExprInspection checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#statistics" id="id5">Statistics</a></p></li>
+<li><p><a class="reference internal" href="#output-testing-checkers" id="id6">Output testing checkers</a></p></li>
+</ul>
+</div>
+<p>The analyzer contains a number of checkers which can aid in debugging. Enable
+them by using the “-analyzer-checker=” flag, followed by the name of the
+checker.</p>
+<div class="section" id="general-analysis-dumpers">
+<h2><a class="toc-backref" href="#id1">3.1.1. General Analysis Dumpers</a><a class="headerlink" href="#general-analysis-dumpers" title="Permalink to this headline">¶</a></h2>
+<p>These checkers are used to dump the results of various infrastructural analyses
+to stderr. Some checkers also have “view” variants, which will display a graph
+using a ‘dot’ format viewer (such as Graphviz on macOS) instead.</p>
+<ul class="simple">
+<li><p>debug.DumpCallGraph, debug.ViewCallGraph: Show the call graph generated for
+the current translation unit. This is used to determine the order in which to
+analyze functions when inlining is enabled.</p></li>
+<li><p>debug.DumpCFG, debug.ViewCFG: Show the CFG generated for each top-level
+function being analyzed.</p></li>
+<li><p>debug.DumpDominators: Shows the dominance tree for the CFG of each top-level
+function.</p></li>
+<li><p>debug.DumpLiveVars: Show the results of live variable analysis for each
+top-level function being analyzed.</p></li>
+<li><p>debug.DumpLiveExprs: Show the results of live expression analysis for each
+top-level function being analyzed.</p></li>
+<li><p>debug.ViewExplodedGraph: Show the Exploded Graphs generated for the
+analysis of different functions in the input translation unit. When there
+are several functions analyzed, display one graph per function. Beware
+that these graphs may grow very large, even for small functions.</p></li>
+</ul>
+</div>
+<div class="section" id="path-tracking">
+<h2><a class="toc-backref" href="#id2">3.1.2. Path Tracking</a><a class="headerlink" href="#path-tracking" title="Permalink to this headline">¶</a></h2>
+<p>These checkers print information about the path taken by the analyzer engine.</p>
+<ul class="simple">
+<li><p>debug.DumpCalls: Prints out every function or method call encountered during a
+path traversal. This is indented to show the call stack, but does NOT do any
+special handling of branches, meaning different paths could end up
+interleaved.</p></li>
+<li><p>debug.DumpTraversal: Prints the name of each branch statement encountered
+during a path traversal (“IfStmt”, “WhileStmt”, etc). Currently used to check
+whether the analysis engine is doing BFS or DFS.</p></li>
+</ul>
+</div>
+<div class="section" id="state-checking">
+<h2><a class="toc-backref" href="#id3">3.1.3. State Checking</a><a class="headerlink" href="#state-checking" title="Permalink to this headline">¶</a></h2>
+<p>These checkers will print out information about the analyzer state in the form
+of analysis warnings. They are intended for use with the -verify functionality
+in regression tests.</p>
+<ul class="simple">
+<li><p>debug.TaintTest: Prints out the word “tainted” for every expression that
+carries taint. At the time of this writing, taint was only introduced by the
+checks under experimental.security.taint.TaintPropagation; this checker may
+eventually move to the security.taint package.</p></li>
+<li><p>debug.ExprInspection: Responds to certain function calls, which are modeled
+after builtins. These function calls should affect the program state other
+than the evaluation of their arguments; to use them, you will need to declare
+them within your test file. The available functions are described below.</p></li>
+</ul>
+<p>(FIXME: debug.ExprInspection should probably be renamed, since it no longer only
+inspects expressions.)</p>
+<div class="section" id="exprinspection-checks">
+<h3><a class="toc-backref" href="#id4">3.1.3.1. ExprInspection checks</a><a class="headerlink" href="#exprinspection-checks" title="Permalink to this headline">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_eval(bool);</span></code></p>
+<p>Prints TRUE if the argument is known to have a non-zero value, FALSE if the
+argument is known to have a zero or null value, and UNKNOWN if the argument
+isn’t sufficiently constrained on this path.  You can use this to test other
+values by using expressions like “x == 5”.  Note that this functionality is
+currently DISABLED in inlined functions, since different calls to the same
+inlined function could provide different information, making it difficult to
+write proper -verify directives.</p>
+<p>In C, the argument can be typed as ‘int’ or as ‘_Bool’.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>clang_analyzer_eval(x); // expected-warning{{UNKNOWN}}
+if (!x) return;
+clang_analyzer_eval(x); // expected-warning{{TRUE}}
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_checkInlined(bool);</span></code></p>
+<p>If a call occurs within an inlined function, prints TRUE or FALSE according to
+the value of its argument. If a call occurs outside an inlined function,
+nothing is printed.</p>
+<p>The intended use of this checker is to assert that a function is inlined at
+least once (by passing ‘true’ and expecting a warning), or to assert that a
+function is never inlined (by passing ‘false’ and expecting no warning). The
+argument is technically unnecessary but is intended to clarify intent.</p>
+<p>You might wonder why we can’t print TRUE if a function is ever inlined and
+FALSE if it is not. The problem is that any inlined function could conceivably
+also be analyzed as a top-level function (in which case both TRUE and FALSE
+would be printed), depending on the value of the -analyzer-inlining option.</p>
+<p>In C, the argument can be typed as ‘int’ or as ‘_Bool’.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">inlined</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">clang_analyzer_checkInlined</span><span class="p">(</span><span class="n">true</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">TRUE</span><span class="p">}}</span>
+  <span class="k">return</span> <span class="mi">42</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="n">void</span> <span class="n">topLevel</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">clang_analyzer_checkInlined</span><span class="p">(</span><span class="n">false</span><span class="p">);</span> <span class="o">//</span> <span class="n">no</span><span class="o">-</span><span class="n">warning</span> <span class="p">(</span><span class="ow">not</span> <span class="n">inlined</span><span class="p">)</span>
+  <span class="nb">int</span> <span class="n">value</span> <span class="o">=</span> <span class="n">inlined</span><span class="p">();</span>
+  <span class="o">//</span> <span class="n">This</span> <span class="n">assertion</span> <span class="n">will</span> <span class="ow">not</span> <span class="n">be</span> <span class="n">valid</span> <span class="k">if</span> <span class="n">the</span> <span class="n">previous</span> <span class="n">call</span> <span class="n">was</span> <span class="ow">not</span> <span class="n">inlined</span><span class="o">.</span>
+  <span class="n">clang_analyzer_eval</span><span class="p">(</span><span class="n">value</span> <span class="o">==</span> <span class="mi">42</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">TRUE</span><span class="p">}}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_warnIfReached();</span></code></p>
+<p>Generate a warning if this line of code gets reached by the analyzer.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="p">(</span><span class="n">true</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">clang_analyzer_warnIfReached</span><span class="p">();</span>  <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">REACHABLE</span><span class="p">}}</span>
+<span class="p">}</span>
+<span class="k">else</span> <span class="p">{</span>
+  <span class="n">clang_analyzer_warnIfReached</span><span class="p">();</span>  <span class="o">//</span> <span class="n">no</span><span class="o">-</span><span class="n">warning</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_numTimesReached();</span></code></p>
+<p>Same as above, but include the number of times this call expression
+gets reached by the analyzer during the current analysis.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="p">(</span><span class="nb">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">;</span> <span class="o">++</span><span class="n">x</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">clang_analyzer_numTimesReached</span><span class="p">();</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="mi">3</span><span class="p">}}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_warnOnDeadSymbol(int);</span></code></p>
+<p>Subscribe for a delayed warning when the symbol that represents the value of
+the argument is garbage-collected by the analyzer.</p>
+<p>When calling ‘clang_analyzer_warnOnDeadSymbol(x)’, if value of ‘x’ is a
+symbol, then this symbol is marked by the ExprInspection checker. Then,
+during each garbage collection run, the checker sees if the marked symbol is
+being collected and issues the ‘SYMBOL DEAD’ warning if it does.
+This way you know where exactly, up to the line of code, the symbol dies.</p>
+<p>It is unlikely that you call this function after the symbol is already dead,
+because the very reference to it as the function argument prevents it from
+dying. However, if the argument is not a symbol but a concrete value,
+no warning would be issued.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">do</span> <span class="p">{</span>
+  <span class="nb">int</span> <span class="n">x</span> <span class="o">=</span> <span class="n">generate_some_integer</span><span class="p">();</span>
+  <span class="n">clang_analyzer_warnOnDeadSymbol</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span> <span class="k">while</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>  <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">SYMBOL</span> <span class="n">DEAD</span><span class="p">}}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_explain(a</span> <span class="pre">single</span> <span class="pre">argument</span> <span class="pre">of</span> <span class="pre">any</span> <span class="pre">type);</span></code></p>
+<p>This function explains the value of its argument in a human-readable manner
+in the warning message. You can make as many overrides of its prototype
+in the test code as necessary to explain various integral, pointer,
+or even record-type values. To simplify usage in C code (where overloading
+the function declaration is not allowed), you may append an arbitrary suffix
+to the function name, without affecting functionality.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>void clang_analyzer_explain(int);
+void clang_analyzer_explain(void *);
+
+// Useful in C code
+void clang_analyzer_explain_int(int);
+
+void foo(int param, void *ptr) {
+  clang_analyzer_explain(param); // expected-warning{{argument &#39;param&#39;}}
+  clang_analyzer_explain_int(param); // expected-warning{{argument &#39;param&#39;}}
+  if (!ptr)
+    clang_analyzer_explain(ptr); // expected-warning{{memory address &#39;0&#39;}}
+}
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_dump(</span> <span class="pre">/*</span> <span class="pre">a</span> <span class="pre">single</span> <span class="pre">argument</span> <span class="pre">of</span> <span class="pre">any</span> <span class="pre">type</span> <span class="pre">*/);</span></code></p>
+<p>Similar to clang_analyzer_explain, but produces a raw dump of the value,
+same as SVal::dump().</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>void clang_analyzer_dump(int);
+void foo(int x) {
+  clang_analyzer_dump(x); // expected-warning{{reg_$0&lt;x&gt;}}
+}
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">size_t</span> <span class="pre">clang_analyzer_getExtent(void</span> <span class="pre">*);</span></code></p>
+<p>This function returns the value that represents the extent of a memory region
+pointed to by the argument. This value is often difficult to obtain otherwise,
+because no valid code that produces this value. However, it may be useful
+for testing purposes, to see how well does the analyzer model region extents.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">foo</span><span class="p">()</span> <span class="p">{</span>
+  <span class="nb">int</span> <span class="n">x</span><span class="p">,</span> <span class="o">*</span><span class="n">y</span><span class="p">;</span>
+  <span class="n">size_t</span> <span class="n">xs</span> <span class="o">=</span> <span class="n">clang_analyzer_getExtent</span><span class="p">(</span><span class="o">&amp;</span><span class="n">x</span><span class="p">);</span>
+  <span class="n">clang_analyzer_explain</span><span class="p">(</span><span class="n">xs</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="s1">&#39;4&#39;</span><span class="p">}}</span>
+  <span class="n">size_t</span> <span class="n">ys</span> <span class="o">=</span> <span class="n">clang_analyzer_getExtent</span><span class="p">(</span><span class="o">&amp;</span><span class="n">y</span><span class="p">);</span>
+  <span class="n">clang_analyzer_explain</span><span class="p">(</span><span class="n">ys</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="s1">&#39;8&#39;</span><span class="p">}}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_printState();</span></code></p>
+<p>Dumps the current ProgramState to the stderr. Quickly lookup the program state
+at any execution point without ViewExplodedGraph or re-compiling the program.
+This is not very useful for writing tests (apart from testing how ProgramState
+gets printed), but useful for debugging tests. Also, this method doesn’t
+produce a warning, so it gets printed on the console before all other
+ExprInspection warnings.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>void foo() {
+  int x = 1;
+  clang_analyzer_printState(); // Read the stderr!
+}
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_hashDump(int);</span></code></p>
+<p>The analyzer can generate a hash to identify reports. To debug what information
+is used to calculate this hash it is possible to dump the hashed string as a
+warning of an arbitrary expression using the function above.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">foo</span><span class="p">()</span> <span class="p">{</span>
+  <span class="nb">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+  <span class="n">clang_analyzer_hashDump</span><span class="p">(</span><span class="n">x</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">hashed</span> <span class="n">string</span> <span class="k">for</span> <span class="n">x</span><span class="p">}}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_denote(int,</span> <span class="pre">const</span> <span class="pre">char</span> <span class="pre">*);</span></code></p>
+<p>Denotes symbols with strings. A subsequent call to clang_analyzer_express()
+will expresses another symbol in terms of these string. Useful for testing
+relationships between different symbols.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>void foo(int x) {
+  clang_analyzer_denote(x, &quot;$x&quot;);
+  clang_analyzer_express(x + 1); // expected-warning{{$x + 1}}
+}
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_express(int);</span></code></p>
+<p>See clang_analyzer_denote().</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">clang_analyzer_isTainted(a</span> <span class="pre">single</span> <span class="pre">argument</span> <span class="pre">of</span> <span class="pre">any</span> <span class="pre">type);</span></code></p>
+<p>Queries the analyzer whether the expression used as argument is tainted or not.
+This is useful in tests, where we don’t want to issue warning for all tainted
+expressions but only check for certain expressions.
+This would help to reduce the <em>noise</em> that the <cite>TaintTest</cite> debug checker would
+introduce and let you focus on the <cite>expected-warning</cite>’s that you really care
+about.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">read_integer</span><span class="p">()</span> <span class="p">{</span>
+  <span class="nb">int</span> <span class="n">n</span><span class="p">;</span>
+  <span class="n">clang_analyzer_isTainted</span><span class="p">(</span><span class="n">n</span><span class="p">);</span>     <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">NO</span><span class="p">}}</span>
+  <span class="n">scanf</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">n</span><span class="p">);</span>
+  <span class="n">clang_analyzer_isTainted</span><span class="p">(</span><span class="n">n</span><span class="p">);</span>     <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">YES</span><span class="p">}}</span>
+  <span class="n">clang_analyzer_isTainted</span><span class="p">(</span><span class="n">n</span> <span class="o">+</span> <span class="mi">2</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">YES</span><span class="p">}}</span>
+  <span class="n">clang_analyzer_isTainted</span><span class="p">(</span><span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span><span class="p">{{</span><span class="n">YES</span><span class="p">}}</span>
+  <span class="nb">int</span> <span class="n">next_tainted_value</span> <span class="o">=</span> <span class="n">n</span><span class="p">;</span> <span class="o">//</span> <span class="n">no</span><span class="o">-</span><span class="n">warning</span>
+  <span class="k">return</span> <span class="n">n</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">clang_analyzer_dumpExtent(a</span> <span class="pre">single</span> <span class="pre">argument</span> <span class="pre">of</span> <span class="pre">any</span> <span class="pre">type)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">clang_analyzer_dumpElementCount(a</span> <span class="pre">single</span> <span class="pre">argument</span> <span class="pre">of</span> <span class="pre">any</span> <span class="pre">type)</span></code></p>
+<p>Dumps out the extent and the element count of the argument.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">array</span><span class="p">()</span> <span class="p">{</span>
+  <span class="nb">int</span> <span class="n">a</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">};</span>
+  <span class="n">clang_analyzer_dumpExtent</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>       <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span> <span class="p">{{</span><span class="mi">8</span> <span class="n">S64b</span><span class="p">}}</span>
+  <span class="n">clang_analyzer_dumpElementCount</span><span class="p">(</span><span class="n">a</span><span class="p">);</span> <span class="o">//</span> <span class="n">expected</span><span class="o">-</span><span class="n">warning</span> <span class="p">{{</span><span class="mi">2</span> <span class="n">S64b</span><span class="p">}}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="statistics">
+<h2><a class="toc-backref" href="#id5">3.1.4. Statistics</a><a class="headerlink" href="#statistics" title="Permalink to this headline">¶</a></h2>
+<p>The debug.Stats checker collects various information about the analysis of each
+function, such as how many blocks were reached and if the analyzer timed out.</p>
+<p>There is also an additional -analyzer-stats flag, which enables various
+statistics within the analyzer engine. Note the Stats checker (which produces at
+least one bug report per function) may actually change the values reported by
+-analyzer-stats.</p>
+</div>
+<div class="section" id="output-testing-checkers">
+<h2><a class="toc-backref" href="#id6">3.1.5. Output testing checkers</a><a class="headerlink" href="#output-testing-checkers" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>debug.ReportStmts reports a warning at <strong>every</strong> statement, making it a very
+useful tool for testing thoroughly bug report construction and output
+emission.</p></li>
+</ul>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="../developer-docs.html">3. Developer Docs</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="IPA.html">3.2. Inlining</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

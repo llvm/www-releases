@@ -1,0 +1,253 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Hardware-assisted AddressSanitizer Design Documentation &#8212; Clang 10 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Constant Interpreter" href="ConstantInterpreter.html" />
+    <link rel="prev" title="ABI tags" href="ItaniumMangleAbiTags.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 10 documentation</span></a></h1>
+        <h2 class="heading"><span>Hardware-assisted AddressSanitizer Design Documentation</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ItaniumMangleAbiTags.html">ABI tags</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ConstantInterpreter.html">Constant Interpreter</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content">
+        
+        
+  <div class="section" id="hardware-assisted-addresssanitizer-design-documentation">
+<h1>Hardware-assisted AddressSanitizer Design Documentation<a class="headerlink" href="#hardware-assisted-addresssanitizer-design-documentation" title="Permalink to this headline">¶</a></h1>
+<p>This page is a design document for
+<strong>hardware-assisted AddressSanitizer</strong> (or <strong>HWASAN</strong>)
+a tool similar to <a class="reference internal" href="AddressSanitizer.html"><span class="doc">AddressSanitizer</span></a>,
+but based on partial hardware assistance.</p>
+<div class="section" id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p><a class="reference internal" href="AddressSanitizer.html"><span class="doc">AddressSanitizer</span></a>
+tags every 8 bytes of the application memory with a 1 byte tag (using <em>shadow memory</em>),
+uses <em>redzones</em> to find buffer-overflows and
+<em>quarantine</em> to find use-after-free.
+The redzones, the quarantine, and, to a less extent, the shadow, are the
+sources of AddressSanitizer’s memory overhead.
+See the <a class="reference external" href="https://www.usenix.org/system/files/conference/atc12/atc12-final39.pdf">AddressSanitizer paper</a> for details.</p>
+<p>AArch64 has the <a class="reference external" href="http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.den0024a/ch12s05s01.html">Address Tagging</a> (or top-byte-ignore, TBI), a hardware feature that allows
+software to use 8 most significant bits of a 64-bit pointer as
+a tag. HWASAN uses <a class="reference external" href="http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.den0024a/ch12s05s01.html">Address Tagging</a>
+to implement a memory safety tool, similar to <a class="reference internal" href="AddressSanitizer.html"><span class="doc">AddressSanitizer</span></a>,
+but with smaller memory overhead and slightly different (mostly better)
+accuracy guarantees.</p>
+</div>
+<div class="section" id="algorithm">
+<h2>Algorithm<a class="headerlink" href="#algorithm" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li>Every heap/stack/global memory object is forcibly aligned by <cite>TG</cite> bytes
+(<cite>TG</cite> is e.g. 16 or 64). We call <cite>TG</cite> the <strong>tagging granularity</strong>.</li>
+<li>For every such object a random <cite>TS</cite>-bit tag <cite>T</cite> is chosen (<cite>TS</cite>, or tag size, is e.g. 4 or 8)</li>
+<li>The pointer to the object is tagged with <cite>T</cite>.</li>
+<li>The memory for the object is also tagged with <cite>T</cite> (using a <cite>TG=&gt;1</cite> shadow memory)</li>
+<li>Every load and store is instrumented to read the memory tag and compare it
+with the pointer tag, exception is raised on tag mismatch.</li>
+</ul>
+<p>For a more detailed discussion of this approach see <a class="reference external" href="https://arxiv.org/pdf/1802.09517.pdf">https://arxiv.org/pdf/1802.09517.pdf</a></p>
+<div class="section" id="short-granules">
+<h3>Short granules<a class="headerlink" href="#short-granules" title="Permalink to this headline">¶</a></h3>
+<p>A short granule is a granule of size between 1 and <cite>TG-1</cite> bytes. The size
+of a short granule is stored at the location in shadow memory where the
+granule’s tag is normally stored, while the granule’s actual tag is stored
+in the last byte of the granule. This means that in order to verify that a
+pointer tag matches a memory tag, HWASAN must check for two possibilities:</p>
+<ul class="simple">
+<li>the pointer tag is equal to the memory tag in shadow memory, or</li>
+<li>the shadow memory tag is actually a short granule size, the value being loaded
+is in bounds of the granule and the pointer tag is equal to the last byte of
+the granule.</li>
+</ul>
+<p>Pointer tags between 1 to <cite>TG-1</cite> are possible and are as likely as any other
+tag. This means that these tags in memory have two interpretations: the full
+tag interpretation (where the pointer tag is between 1 and <cite>TG-1</cite> and the
+last byte of the granule is ordinary data) and the short tag interpretation
+(where the pointer tag is stored in the granule).</p>
+<p>When HWASAN detects an error near a memory tag between 1 and <cite>TG-1</cite>, it
+will show both the memory tag and the last byte of the granule. Currently,
+it is up to the user to disambiguate the two possibilities.</p>
+</div>
+</div>
+<div class="section" id="instrumentation">
+<h2>Instrumentation<a class="headerlink" href="#instrumentation" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="memory-accesses">
+<h3>Memory Accesses<a class="headerlink" href="#memory-accesses" title="Permalink to this headline">¶</a></h3>
+<p>All memory accesses are prefixed with an inline instruction sequence that
+verifies the tags. Currently, the following sequence is used:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>// int foo(int *a) { return *a; }
+// clang -O2 --target=aarch64-linux -fsanitize=hwaddress -fsanitize-recover=hwaddress -c load.c
+foo:
+     0:       90000008        adrp    x8, 0 &lt;__hwasan_shadow&gt;
+     4:       f9400108        ldr     x8, [x8]         // shadow base (to be resolved by the loader)
+     8:       d344dc09        ubfx    x9, x0, #4, #52  // shadow offset
+     c:       38696909        ldrb    w9, [x8, x9]     // load shadow tag
+    10:       d378fc08        lsr     x8, x0, #56      // extract address tag
+    14:       6b09011f        cmp     w8, w9           // compare tags
+    18:       54000061        b.ne    24 &lt;foo+0x24&gt;    // jump to short tag handler on mismatch
+    1c:       b9400000        ldr     w0, [x0]         // original load
+    20:       d65f03c0        ret
+    24:       7100413f        cmp     w9, #0x10        // is this a short tag?
+    28:       54000142        b.cs    50 &lt;foo+0x50&gt;    // if not, trap
+    2c:       12000c0a        and     w10, w0, #0xf    // find the address&#39;s position in the short granule
+    30:       11000d4a        add     w10, w10, #0x3   // adjust to the position of the last byte loaded
+    34:       6b09015f        cmp     w10, w9          // check that position is in bounds
+    38:       540000c2        b.cs    50 &lt;foo+0x50&gt;    // if not, trap
+    3c:       9240dc09        and     x9, x0, #0xffffffffffffff
+    40:       b2400d29        orr     x9, x9, #0xf     // compute address of last byte of granule
+    44:       39400129        ldrb    w9, [x9]         // load tag from it
+    48:       6b09011f        cmp     w8, w9           // compare with pointer tag
+    4c:       54fffe80        b.eq    1c &lt;foo+0x1c&gt;    // if so, continue
+    50:       d4212440        brk     #0x922           // otherwise trap
+    54:       b9400000        ldr     w0, [x0]         // tail duplicated original load (to handle recovery)
+    58:       d65f03c0        ret
+</pre></div>
+</div>
+<p>Alternatively, memory accesses are prefixed with a function call.
+On AArch64, a function call is used by default in trapping mode. The code size
+and performance overhead of the call is reduced by using a custom calling
+convention that preserves most registers and is specialized to the register
+containing the address and the type and size of the memory access.</p>
+</div>
+<div class="section" id="heap">
+<h3>Heap<a class="headerlink" href="#heap" title="Permalink to this headline">¶</a></h3>
+<p>Tagging the heap memory/pointers is done by <cite>malloc</cite>.
+This can be based on any malloc that forces all objects to be TG-aligned.
+<cite>free</cite> tags the memory with a different tag.</p>
+</div>
+<div class="section" id="stack">
+<h3>Stack<a class="headerlink" href="#stack" title="Permalink to this headline">¶</a></h3>
+<p>Stack frames are instrumented by aligning all non-promotable allocas
+by <cite>TG</cite> and tagging stack memory in function prologue and epilogue.</p>
+<p>Tags for different allocas in one function are <strong>not</strong> generated
+independently; doing that in a function with <cite>M</cite> allocas would require
+maintaining <cite>M</cite> live stack pointers, significantly increasing register
+pressure. Instead we generate a single base tag value in the prologue,
+and build the tag for alloca number <cite>M</cite> as <cite>ReTag(BaseTag, M)</cite>, where
+ReTag can be as simple as exclusive-or with constant <cite>M</cite>.</p>
+<p>Stack instrumentation is expected to be a major source of overhead,
+but could be optional.</p>
+</div>
+<div class="section" id="globals">
+<h3>Globals<a class="headerlink" href="#globals" title="Permalink to this headline">¶</a></h3>
+<p>TODO: details.</p>
+</div>
+<div class="section" id="error-reporting">
+<h3>Error reporting<a class="headerlink" href="#error-reporting" title="Permalink to this headline">¶</a></h3>
+<p>Errors are generated by the <cite>HLT</cite> instruction and are handled by a signal handler.</p>
+</div>
+<div class="section" id="attribute">
+<h3>Attribute<a class="headerlink" href="#attribute" title="Permalink to this headline">¶</a></h3>
+<p>HWASAN uses its own LLVM IR Attribute <cite>sanitize_hwaddress</cite> and a matching
+C function attribute. An alternative would be to re-use ASAN’s attribute
+<cite>sanitize_address</cite>. The reasons to use a separate attribute are:</p>
+<blockquote>
+<div><ul class="simple">
+<li>Users may need to disable ASAN but not HWASAN, or vise versa,
+because the tools have different trade-offs and compatibility issues.</li>
+<li>LLVM (ideally) does not use flags to decide which pass is being used,
+ASAN or HWASAN are being applied, based on the function attributes.</li>
+</ul>
+</div></blockquote>
+<p>This does mean that users of HWASAN may need to add the new attribute
+to the code that already uses the old attribute.</p>
+</div>
+</div>
+<div class="section" id="comparison-with-addresssanitizer">
+<h2>Comparison with AddressSanitizer<a class="headerlink" href="#comparison-with-addresssanitizer" title="Permalink to this headline">¶</a></h2>
+<dl class="docutils">
+<dt>HWASAN:</dt>
+<dd><ul class="first last simple">
+<li>Is less portable than <a class="reference internal" href="AddressSanitizer.html"><span class="doc">AddressSanitizer</span></a>
+as it relies on hardware <a class="reference external" href="http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.den0024a/ch12s05s01.html">Address Tagging</a> (AArch64).
+Address Tagging can be emulated with compiler instrumentation,
+but it will require the instrumentation to remove the tags before
+any load or store, which is infeasible in any realistic environment
+that contains non-instrumented code.</li>
+<li>May have compatibility problems if the target code uses higher
+pointer bits for other purposes.</li>
+<li>May require changes in the OS kernels (e.g. Linux seems to dislike
+tagged pointers passed from address space:
+<a class="reference external" href="https://www.kernel.org/doc/Documentation/arm64/tagged-pointers.txt">https://www.kernel.org/doc/Documentation/arm64/tagged-pointers.txt</a>).</li>
+<li><strong>Does not require redzones to detect buffer overflows</strong>,
+but the buffer overflow detection is probabilistic, with roughly
+<cite>1/(2**TS)</cite> chance of missing a bug (6.25% or 0.39% with 4 and 8-bit TS
+respectively).</li>
+<li><strong>Does not require quarantine to detect heap-use-after-free,
+or stack-use-after-return</strong>.
+The detection is similarly probabilistic.</li>
+</ul>
+</dd>
+</dl>
+<p>The memory overhead of HWASAN is expected to be much smaller
+than that of AddressSanitizer:
+<cite>1/TG</cite> extra memory for the shadow
+and some overhead due to <cite>TG</cite>-aligning all objects.</p>
+</div>
+<div class="section" id="supported-architectures">
+<h2>Supported architectures<a class="headerlink" href="#supported-architectures" title="Permalink to this headline">¶</a></h2>
+<p>HWASAN relies on <a class="reference external" href="http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.den0024a/ch12s05s01.html">Address Tagging</a> which is only available on AArch64.
+For other 64-bit architectures it is possible to remove the address tags
+before every load and store by compiler instrumentation, but this variant
+will have limited deployability since not all of the code is
+typically instrumented.</p>
+<p>The HWASAN’s approach is not applicable to 32-bit architectures.</p>
+</div>
+<div class="section" id="related-work">
+<h2>Related Work<a class="headerlink" href="#related-work" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><a class="reference external" href="https://lazytyped.blogspot.com/2017/09/getting-started-with-adi.html">SPARC ADI</a> implements a similar tool mostly in hardware.</li>
+<li><a class="reference external" href="https://www.cc.gatech.edu/~orso/papers/clause.doudalis.orso.prvulovic.pdf">Effective and Efficient Memory Protection Using Dynamic Tainting</a> discusses
+similar approaches (“lock &amp; key”).</li>
+<li><a class="reference external" href="https://www.cis.upenn.edu/acg/papers/isca12_watchdog.pdf">Watchdog</a> discussed a heavier, but still somewhat similar
+“lock &amp; key” approach.</li>
+<li><em>TODO: add more “related work” links. Suggestions are welcome.</em></li>
+</ul>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ItaniumMangleAbiTags.html">ABI tags</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ConstantInterpreter.html">Constant Interpreter</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2020, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.8.5.
+    </div>
+  </body>
+</html>

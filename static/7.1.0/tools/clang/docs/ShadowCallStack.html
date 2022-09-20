@@ -1,0 +1,240 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>ShadowCallStack &#8212; Clang 7 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Source-based Code Coverage" href="SourceBasedCodeCoverage.html" />
+    <link rel="prev" title="SafeStack" href="SafeStack.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 7 documentation</span></a></h1>
+        <h2 class="heading"><span>ShadowCallStack</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SafeStack.html">SafeStack</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SourceBasedCodeCoverage.html">Source-based Code Coverage</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="shadowcallstack">
+<h1>ShadowCallStack<a class="headerlink" href="#shadowcallstack" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id4">Introduction</a></p>
+<ul>
+<li><p><a class="reference internal" href="#comparison" id="id5">Comparison</a></p></li>
+<li><p><a class="reference internal" href="#compatibility" id="id6">Compatibility</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#security" id="id7">Security</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id8">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#low-level-api" id="id9">Low-level API</a></p>
+<ul>
+<li><p><a class="reference internal" href="#has-feature-shadow-call-stack" id="id10"><code class="docutils literal notranslate"><span class="pre">__has_feature(shadow_call_stack)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#attribute-no-sanitize-shadow-call-stack" id="id11"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;shadow-call-stack&quot;)))</span></code></a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#example" id="id12">Example</a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id4">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>ShadowCallStack is an <strong>experimental</strong> instrumentation pass, currently only
+implemented for x86_64 and aarch64, that protects programs against return
+address overwrites (e.g. stack buffer overflows.) It works by saving a
+function’s return address to a separately allocated ‘shadow call stack’
+in the function prolog and checking the return address on the stack against
+the shadow call stack in the function epilog.</p>
+<div class="section" id="comparison">
+<h3><a class="toc-backref" href="#id5">Comparison</a><a class="headerlink" href="#comparison" title="Permalink to this headline">¶</a></h3>
+<p>To optimize for memory consumption and cache locality, the shadow call stack
+stores an index followed by an array of return addresses. This is in contrast
+to other schemes, like <a class="reference internal" href="SafeStack.html"><span class="doc">SafeStack</span></a>, that mirror the entire stack and
+trade-off consuming more memory for shorter function prologs and epilogs with
+fewer memory accesses. Similarly, <a class="reference external" href="https://xlab.tencent.com/en/2016/11/02/return-flow-guard/">Return Flow Guard</a> consumes more memory with
+shorter function prologs and epilogs than ShadowCallStack but suffers from the
+same race conditions (see <a class="reference internal" href="#security">Security</a>). Intel <a class="reference external" href="https://software.intel.com/sites/default/files/managed/4d/2a/control-flow-enforcement-technology-preview.pdf">Control-flow Enforcement Technology</a>
+(CET) is a proposed hardware extension that would add native support to
+use a shadow stack to store/check return addresses at call/return time. It
+would not suffer from race conditions at calls and returns and not incur the
+overhead of function instrumentation, but it does require operating system
+support.</p>
+</div>
+<div class="section" id="compatibility">
+<h3><a class="toc-backref" href="#id6">Compatibility</a><a class="headerlink" href="#compatibility" title="Permalink to this headline">¶</a></h3>
+<p>ShadowCallStack currently only supports x86_64 and aarch64. A runtime is not
+currently provided in compiler-rt so one must be provided by the compiled
+application.</p>
+<p>On aarch64, the instrumentation makes use of the platform register <code class="docutils literal notranslate"><span class="pre">x18</span></code>.
+On some platforms, <code class="docutils literal notranslate"><span class="pre">x18</span></code> is reserved, and on others, it is designated as
+a scratch register.  This generally means that any code that may run on the
+same thread as code compiled with ShadowCallStack must either target one
+of the platforms whose ABI reserves <code class="docutils literal notranslate"><span class="pre">x18</span></code> (currently Darwin, Fuchsia and
+Windows) or be compiled with the flag <code class="docutils literal notranslate"><span class="pre">-ffixed-x18</span></code>.</p>
+</div>
+</div>
+<div class="section" id="security">
+<h2><a class="toc-backref" href="#id7">Security</a><a class="headerlink" href="#security" title="Permalink to this headline">¶</a></h2>
+<p>ShadowCallStack is intended to be a stronger alternative to
+<code class="docutils literal notranslate"><span class="pre">-fstack-protector</span></code>. It protects from non-linear overflows and arbitrary
+memory writes to the return address slot; however, similarly to
+<code class="docutils literal notranslate"><span class="pre">-fstack-protector</span></code> this protection suffers from race conditions because of
+the call-return semantics on x86_64. There is a short race between the call
+instruction and the first instruction in the function that reads the return
+address where an attacker could overwrite the return address and bypass
+ShadowCallStack. Similarly, there is a time-of-check-to-time-of-use race in the
+function epilog where an attacker could overwrite the return address after it
+has been checked and before it has been returned to. Modifying the call-return
+semantics to fix this on x86_64 would incur an unacceptable performance overhead
+due to return branch prediction.</p>
+<p>The instrumentation makes use of the <code class="docutils literal notranslate"><span class="pre">gs</span></code> segment register on x86_64,
+or the <code class="docutils literal notranslate"><span class="pre">x18</span></code> register on aarch64, to reference the shadow call stack
+meaning that references to the shadow call stack do not have to be stored in
+memory. This makes it possible to implement a runtime that avoids exposing
+the address of the shadow call stack to attackers that can read arbitrary
+memory. However, attackers could still try to exploit side channels exposed
+by the operating system <a class="reference external" href="https://eyalitkin.wordpress.com/2017/09/01/cartography-lighting-up-the-shadows/">[1]</a> <a class="reference external" href="https://www.blackhat.com/docs/eu-16/materials/eu-16-Goktas-Bypassing-Clangs-SafeStack.pdf">[2]</a> or processor <a class="reference external" href="https://www.vusec.net/projects/anc/">[3]</a> to discover the
+address of the shadow call stack.</p>
+<p>On x86_64, leaf functions are optimized to store the return address in a
+free register and avoid writing to the shadow call stack if a register is
+available. Very short leaf functions are uninstrumented if their execution
+is judged to be shorter than the race condition window intrinsic to the
+instrumentation.</p>
+<p>On aarch64, the architecture’s call and return instructions (<code class="docutils literal notranslate"><span class="pre">bl</span></code> and
+<code class="docutils literal notranslate"><span class="pre">ret</span></code>) operate on a register rather than the stack, which means that
+leaf functions are generally protected from return address overwrites even
+without ShadowCallStack. It also means that ShadowCallStack on aarch64 is not
+vulnerable to the same types of time-of-check-to-time-of-use races as x86_64.</p>
+</div>
+<div class="section" id="usage">
+<h2><a class="toc-backref" href="#id8">Usage</a><a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<p>To enable ShadowCallStack, just pass the <code class="docutils literal notranslate"><span class="pre">-fsanitize=shadow-call-stack</span></code>
+flag to both compile and link command lines. On aarch64, you also need to pass
+<code class="docutils literal notranslate"><span class="pre">-ffixed-x18</span></code> unless your target already reserves <code class="docutils literal notranslate"><span class="pre">x18</span></code>.</p>
+<div class="section" id="low-level-api">
+<h3><a class="toc-backref" href="#id9">Low-level API</a><a class="headerlink" href="#low-level-api" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="has-feature-shadow-call-stack">
+<h4><a class="toc-backref" href="#id10"><code class="docutils literal notranslate"><span class="pre">__has_feature(shadow_call_stack)</span></code></a><a class="headerlink" href="#has-feature-shadow-call-stack" title="Permalink to this headline">¶</a></h4>
+<p>In some cases one may need to execute different code depending on whether
+ShadowCallStack is enabled. The macro <code class="docutils literal notranslate"><span class="pre">__has_feature(shadow_call_stack)</span></code> can
+be used for this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature)</span>
+<span class="cp">#  if __has_feature(shadow_call_stack)</span>
+<span class="c1">// code that builds only under ShadowCallStack</span>
+<span class="cp">#  endif</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="attribute-no-sanitize-shadow-call-stack">
+<h4><a class="toc-backref" href="#id11"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;shadow-call-stack&quot;)))</span></code></a><a class="headerlink" href="#attribute-no-sanitize-shadow-call-stack" title="Permalink to this headline">¶</a></h4>
+<p>Use <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;shadow-call-stack&quot;)))</span></code> on a function
+declaration to specify that the shadow call stack instrumentation should not be
+applied to that function, even if enabled globally.</p>
+</div>
+</div>
+</div>
+<div class="section" id="example">
+<h2><a class="toc-backref" href="#id12">Example</a><a class="headerlink" href="#example" title="Permalink to this headline">¶</a></h2>
+<p>The following example code:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="nf">foo</span><span class="p">()</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">bar</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Generates the following x86_64 assembly when compiled with <code class="docutils literal notranslate"><span class="pre">-O2</span></code>:</p>
+<div class="highlight-gas notranslate"><div class="highlight"><pre><span></span><span class="nf">push</span>   <span class="nv">%rax</span>
+<span class="nf">callq</span>  <span class="no">bar</span>
+<span class="nf">add</span>    <span class="no">$0x1</span><span class="p">,</span><span class="nv">%eax</span>
+<span class="nf">pop</span>    <span class="nv">%rcx</span>
+<span class="nf">retq</span>
+</pre></div>
+</div>
+<p>or the following aarch64 assembly:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>stp     x29, x30, [sp, #-16]!
+mov     x29, sp
+bl      bar
+add     w0, w0, #1
+ldp     x29, x30, [sp], #16
+ret
+</pre></div>
+</div>
+<p>Adding <code class="docutils literal notranslate"><span class="pre">-fsanitize=shadow-call-stack</span></code> would output the following x86_64
+assembly:</p>
+<div class="highlight-gas notranslate"><div class="highlight"><pre><span></span><span class="nf">mov</span>    <span class="p">(</span><span class="nv">%rsp</span><span class="p">),</span><span class="nv">%r10</span>
+<span class="nf">xor</span>    <span class="nv">%r11</span><span class="p">,</span><span class="nv">%r11</span>
+<span class="nf">addq</span>   <span class="no">$0x8</span><span class="p">,</span><span class="nv">%gs</span><span class="p">:(</span><span class="nv">%r11</span><span class="p">)</span>
+<span class="nf">mov</span>    <span class="nv">%gs</span><span class="p">:(</span><span class="nv">%r11</span><span class="p">),</span><span class="nv">%r11</span>
+<span class="nf">mov</span>    <span class="nv">%r10</span><span class="p">,</span><span class="nv">%gs</span><span class="p">:(</span><span class="nv">%r11</span><span class="p">)</span>
+<span class="nf">push</span>   <span class="nv">%rax</span>
+<span class="nf">callq</span>  <span class="no">bar</span>
+<span class="nf">add</span>    <span class="no">$0x1</span><span class="p">,</span><span class="nv">%eax</span>
+<span class="nf">pop</span>    <span class="nv">%rcx</span>
+<span class="nf">xor</span>    <span class="nv">%r11</span><span class="p">,</span><span class="nv">%r11</span>
+<span class="nf">mov</span>    <span class="nv">%gs</span><span class="p">:(</span><span class="nv">%r11</span><span class="p">),</span><span class="nv">%r10</span>
+<span class="nf">mov</span>    <span class="nv">%gs</span><span class="p">:(</span><span class="nv">%r10</span><span class="p">),</span><span class="nv">%r10</span>
+<span class="nf">subq</span>   <span class="no">$0x8</span><span class="p">,</span><span class="nv">%gs</span><span class="p">:(</span><span class="nv">%r11</span><span class="p">)</span>
+<span class="nf">cmp</span>    <span class="nv">%r10</span><span class="p">,(</span><span class="nv">%rsp</span><span class="p">)</span>
+<span class="nf">jne</span>    <span class="no">trap</span>
+<span class="nf">retq</span>
+
+<span class="nl">trap:</span>
+<span class="nf">ud2</span>
+</pre></div>
+</div>
+<p>or the following aarch64 assembly:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>str     x30, [x18], #8
+stp     x29, x30, [sp, #-16]!
+mov     x29, sp
+bl      bar
+add     w0, w0, #1
+ldp     x29, x30, [sp], #16
+ldr     x30, [x18, #-8]!
+ret
+</pre></div>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SafeStack.html">SafeStack</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SourceBasedCodeCoverage.html">Source-based Code Coverage</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

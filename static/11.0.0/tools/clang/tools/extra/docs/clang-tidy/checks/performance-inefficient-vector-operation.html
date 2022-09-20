@@ -1,0 +1,124 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>clang-tidy - performance-inefficient-vector-operation &#8212; Extra Clang Tools 11 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/jquery.js"></script>
+    <script src="../../_static/underscore.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="performance-move-const-arg" href="performance-move-const-arg.html" />
+    <link rel="prev" title="performance-inefficient-string-concatenation" href="performance-inefficient-string-concatenation.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 11 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - performance-inefficient-vector-operation</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="performance-inefficient-string-concatenation.html">performance-inefficient-string-concatenation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="performance-move-const-arg.html">performance-move-const-arg</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="performance-inefficient-vector-operation">
+<h1>performance-inefficient-vector-operation<a class="headerlink" href="#performance-inefficient-vector-operation" title="Permalink to this headline">¶</a></h1>
+<p>Finds possible inefficient <code class="docutils literal notranslate"><span class="pre">std::vector</span></code> operations (e.g. <code class="docutils literal notranslate"><span class="pre">push_back</span></code>,
+<code class="docutils literal notranslate"><span class="pre">emplace_back</span></code>) that may cause unnecessary memory reallocations.</p>
+<p>It can also find calls that add element to protobuf repeated field in a loop
+without calling Reserve() before the loop. Calling Reserve() first can avoid
+unnecessary memory reallocations.</p>
+<p>Currently, the check only detects following kinds of loops with a single
+statement body:</p>
+<ul class="simple">
+<li><p>Counter-based for loops start with 0:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">v</span><span class="p">;</span>
+<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="o">++</span><span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">v</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">n</span><span class="p">);</span>
+  <span class="c1">// This will trigger the warning since the push_back may cause multiple</span>
+  <span class="c1">// memory reallocations in v. This can be avoid by inserting a &#39;reserve(n)&#39;</span>
+  <span class="c1">// statement before the for statement.</span>
+<span class="p">}</span>
+
+<span class="n">SomeProto</span> <span class="n">p</span><span class="p">;</span>
+<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">;</span> <span class="o">++</span><span class="n">i</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">p</span><span class="p">.</span><span class="n">add_xxx</span><span class="p">(</span><span class="n">n</span><span class="p">);</span>
+  <span class="c1">// This will trigger the warning since the add_xxx may cause multiple memory</span>
+  <span class="c1">// reallocations. This can be avoid by inserting a</span>
+  <span class="c1">// &#39;p.mutable_xxx().Reserve(n)&#39; statement before the for statement.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>For-range loops like <code class="docutils literal notranslate"><span class="pre">for</span> <span class="pre">(range-declaration</span> <span class="pre">:</span> <span class="pre">range_expression)</span></code>, the type
+of <code class="docutils literal notranslate"><span class="pre">range_expression</span></code> can be <code class="docutils literal notranslate"><span class="pre">std::vector</span></code>, <code class="docutils literal notranslate"><span class="pre">std::array</span></code>,
+<code class="docutils literal notranslate"><span class="pre">std::deque</span></code>, <code class="docutils literal notranslate"><span class="pre">std::set</span></code>, <code class="docutils literal notranslate"><span class="pre">std::unordered_set</span></code>, <code class="docutils literal notranslate"><span class="pre">std::map</span></code>,
+<code class="docutils literal notranslate"><span class="pre">std::unordered_set</span></code>:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">data</span><span class="p">;</span>
+<span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">v</span><span class="p">;</span>
+
+<span class="k">for</span> <span class="p">(</span><span class="k">auto</span> <span class="nl">element</span> <span class="p">:</span> <span class="n">data</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">v</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">element</span><span class="p">);</span>
+  <span class="c1">// This will trigger the warning since the &#39;push_back&#39; may cause multiple</span>
+  <span class="c1">// memory reallocations in v. This can be avoid by inserting a</span>
+  <span class="c1">// &#39;reserve(data.size())&#39; statement before the for statement.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="section" id="options">
+<h2>Options<a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h2>
+<dl class="option">
+<dt id="cmdoption-arg-vectorlikeclasses">
+<code class="sig-name descname">VectorLikeClasses</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-vectorlikeclasses" title="Permalink to this definition">¶</a></dt>
+<dd><p>Semicolon-separated list of names of vector-like classes. By default only
+<code class="docutils literal notranslate"><span class="pre">::std::vector</span></code> is considered.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-arg-enableproto">
+<code class="sig-name descname">EnableProto</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-enableproto" title="Permalink to this definition">¶</a></dt>
+<dd><p>When non-zero, the check will also warn on inefficient operations for proto
+repeated fields. Otherwise, the check only warns on inefficient vector
+operations. Default is <cite>0</cite>.</p>
+</dd></dl>
+
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="performance-inefficient-string-concatenation.html">performance-inefficient-string-concatenation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="performance-move-const-arg.html">performance-move-const-arg</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2020, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.4.3.
+    </div>
+  </body>
+</html>

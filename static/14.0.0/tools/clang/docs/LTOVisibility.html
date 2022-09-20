@@ -1,0 +1,167 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LTO Visibility &#8212; Clang 14.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="SafeStack" href="SafeStack.html" />
+    <link rel="prev" title="Control Flow Integrity Design Documentation" href="ControlFlowIntegrityDesign.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 14.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>LTO Visibility</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ControlFlowIntegrityDesign.html">Control Flow Integrity Design Documentation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SafeStack.html">SafeStack</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="lto-visibility">
+<h1>LTO Visibility<a class="headerlink" href="#lto-visibility" title="Permalink to this headline">¶</a></h1>
+<p><em>LTO visibility</em> is a property of an entity that specifies whether it can be
+referenced from outside the current LTO unit. A <em>linkage unit</em> is a set of
+translation units linked together into an executable or DSO, and a linkage
+unit’s <em>LTO unit</em> is the subset of the linkage unit that is linked together
+using link-time optimization; in the case where LTO is not being used, the
+linkage unit’s LTO unit is empty. Each linkage unit has only a single LTO unit.</p>
+<p>The LTO visibility of a class is used by the compiler to determine which
+classes the whole-program devirtualization (<code class="docutils literal notranslate"><span class="pre">-fwhole-program-vtables</span></code>) and
+control flow integrity (<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-vcall</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-mfcall</span></code>)
+features apply to. These features use whole-program information, so they
+require the entire class hierarchy to be visible in order to work correctly.</p>
+<p>If any translation unit in the program uses either of the whole-program
+devirtualization or control flow integrity features, it is effectively an ODR
+violation to define a class with hidden LTO visibility in multiple linkage
+units. A class with public LTO visibility may be defined in multiple linkage
+units, but the tradeoff is that the whole-program devirtualization and
+control flow integrity features can only be applied to classes with hidden LTO
+visibility. A class’s LTO visibility is treated as an ODR-relevant property
+of its definition, so it must be consistent between translation units.</p>
+<p>In translation units built with LTO, LTO visibility is based on the
+class’s symbol visibility as expressed at the source level (i.e. the
+<code class="docutils literal notranslate"><span class="pre">__attribute__((visibility(&quot;...&quot;)))</span></code> attribute, or the <code class="docutils literal notranslate"><span class="pre">-fvisibility=</span></code>
+flag) or, on the Windows platform, the dllimport and dllexport attributes. When
+targeting non-Windows platforms, classes with a visibility other than hidden
+visibility receive public LTO visibility. When targeting Windows, classes
+with dllimport or dllexport attributes receive public LTO visibility. All
+other classes receive hidden LTO visibility. Classes with internal linkage
+(e.g. classes declared in unnamed namespaces) also receive hidden LTO
+visibility.</p>
+<p>During the LTO link, all classes with public LTO visibility will be refined
+to hidden LTO visibility when the <code class="docutils literal notranslate"><span class="pre">--lto-whole-program-visibility</span></code> lld linker
+option is applied (<code class="docutils literal notranslate"><span class="pre">-plugin-opt=whole-program-visibility</span></code> for gold). This flag
+can be used to defer specifying whether classes have hidden LTO visibility until
+link time, to allow bitcode objects to be shared by different LTO links.
+Due to an implementation limitation, symbols associated with classes with hidden
+LTO visibility may still be exported from the binary when using this flag. It is
+unsafe to refer to these symbols, and their visibility may be relaxed to hidden
+in a future compiler release.</p>
+<p>A class defined in a translation unit built without LTO receives public
+LTO visibility regardless of its object file visibility, linkage or other
+attributes.</p>
+<p>This mechanism will produce the correct result in most cases, but there are
+two cases where it may wrongly infer hidden LTO visibility.</p>
+<ol class="arabic simple">
+<li><p>As a corollary of the above rules, if a linkage unit is produced from a
+combination of LTO object files and non-LTO object files, any hidden
+visibility class defined in both a translation unit built with LTO and
+a translation unit built without LTO must be defined with public LTO
+visibility in order to avoid an ODR violation.</p></li>
+<li><p>Some ABIs provide the ability to define an abstract base class without
+visibility attributes in multiple linkage units and have virtual calls
+to derived classes in other linkage units work correctly. One example of
+this is COM on Windows platforms. If the ABI allows this, any base class
+used in this way must be defined with public LTO visibility.</p></li>
+</ol>
+<p>Classes that fall into either of these categories can be marked up with the
+<code class="docutils literal notranslate"><span class="pre">[[clang::lto_visibility_public]]</span></code> attribute. To specifically handle the
+COM case, classes with the <code class="docutils literal notranslate"><span class="pre">__declspec(uuid())</span></code> attribute receive public
+LTO visibility. On Windows platforms, clang-cl’s <code class="docutils literal notranslate"><span class="pre">/MT</span></code> and <code class="docutils literal notranslate"><span class="pre">/MTd</span></code>
+flags statically link the program against a prebuilt standard library;
+these flags imply public LTO visibility for every class declared in the
+<code class="docutils literal notranslate"><span class="pre">std</span></code> and <code class="docutils literal notranslate"><span class="pre">stdext</span></code> namespaces.</p>
+<div class="section" id="example">
+<h2>Example<a class="headerlink" href="#example" title="Permalink to this headline">¶</a></h2>
+<p>The following example shows how LTO visibility works in practice in several
+cases involving two linkage units, <code class="docutils literal notranslate"><span class="pre">main</span></code> and <code class="docutils literal notranslate"><span class="pre">dso.so</span></code>.</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>+-----------------------------------------------------------+  +----------------------------------------------------+
+| main (clang++ -fvisibility=hidden):                       |  | dso.so (clang++ -fvisibility=hidden):              |
+|                                                           |  |                                                    |
+|  +-----------------------------------------------------+  |  |  struct __attribute__((visibility(&quot;default&quot;))) C { |
+|  | LTO unit (clang++ -fvisibility=hidden -flto):       |  |  |    virtual void f();                               |
+|  |                                                     |  |  |  }                                                 |
+|  |  struct A { ... };                                  |  |  |  void C::f() {}                                    |
+|  |  struct [[clang::lto_visibility_public]] B { ... }; |  |  |  struct D {                                        |
+|  |  struct __attribute__((visibility(&quot;default&quot;))) C {  |  |  |    virtual void g() = 0;                           |
+|  |    virtual void f();                                |  |  |  };                                                |
+|  |  };                                                 |  |  |  struct E : D {                                    |
+|  |  struct [[clang::lto_visibility_public]] D {        |  |  |    virtual void g() { ... }                        |
+|  |    virtual void g() = 0;                            |  |  |  };                                                |
+|  |  };                                                 |  |  |  __attribute__((visibility(&quot;default&quot;))) D *mkE() { |
+|  |                                                     |  |  |    return new E;                                   |
+|  +-----------------------------------------------------+  |  |  }                                                 |
+|                                                           |  |                                                    |
+|  struct B { ... };                                        |  +----------------------------------------------------+
+|                                                           |
++-----------------------------------------------------------+
+</pre></div>
+</div>
+<p>We will now describe the LTO visibility of each of the classes defined in
+these linkage units.</p>
+<p>Class <code class="docutils literal notranslate"><span class="pre">A</span></code> is not defined outside of <code class="docutils literal notranslate"><span class="pre">main</span></code>’s LTO unit, so it can have
+hidden LTO visibility. This is inferred from the object file visibility
+specified on the command line.</p>
+<p>Class <code class="docutils literal notranslate"><span class="pre">B</span></code> is defined in <code class="docutils literal notranslate"><span class="pre">main</span></code>, both inside and outside its LTO unit. The
+definition outside the LTO unit has public LTO visibility, so the definition
+inside the LTO unit must also have public LTO visibility in order to avoid
+an ODR violation.</p>
+<p>Class <code class="docutils literal notranslate"><span class="pre">C</span></code> is defined in both <code class="docutils literal notranslate"><span class="pre">main</span></code> and <code class="docutils literal notranslate"><span class="pre">dso.so</span></code> and therefore must
+have public LTO visibility. This is correctly inferred from the <code class="docutils literal notranslate"><span class="pre">visibility</span></code>
+attribute.</p>
+<p>Class <code class="docutils literal notranslate"><span class="pre">D</span></code> is an abstract base class with a derived class <code class="docutils literal notranslate"><span class="pre">E</span></code> defined
+in <code class="docutils literal notranslate"><span class="pre">dso.so</span></code>.  This is an example of the COM scenario; the definition of
+<code class="docutils literal notranslate"><span class="pre">D</span></code> in <code class="docutils literal notranslate"><span class="pre">main</span></code>’s LTO unit must have public LTO visibility in order to be
+compatible with the definition of <code class="docutils literal notranslate"><span class="pre">D</span></code> in <code class="docutils literal notranslate"><span class="pre">dso.so</span></code>, which is observable
+by calling the function <code class="docutils literal notranslate"><span class="pre">mkE</span></code>.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ControlFlowIntegrityDesign.html">Control Flow Integrity Design Documentation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SafeStack.html">SafeStack</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.1.2.
+    </div>
+  </body>
+</html>

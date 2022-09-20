@@ -1,0 +1,314 @@
+
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>WebAssembly lld port &#8212; lld 11 documentation</title>
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <link rel="shortcut icon" href="_static/favicon.ico"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Windows support" href="windows_support.html" />
+    <link rel="prev" title="Sphinx Introduction for LLVM Developers" href="sphinx_intro.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+<a href="index.html"><img src="_static/logo.png" alt="LLVM Documentation"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="windows_support.html" title="Windows support"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="sphinx_intro.html" title="Sphinx Introduction for LLVM Developers"
+             accesskey="P">previous</a> |</li>
+  <li><a href="index.html">lld Home</a>&nbsp;|&nbsp;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="index.html">Table of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">WebAssembly lld port</a><ul>
+<li><a class="reference internal" href="#object-file-format">Object file format</a></li>
+<li><a class="reference internal" href="#usage">Usage</a></li>
+<li><a class="reference internal" href="#behaviour">Behaviour</a><ul>
+<li><a class="reference internal" href="#function-signatures">Function Signatures</a></li>
+<li><a class="reference internal" href="#exports">Exports</a></li>
+<li><a class="reference internal" href="#imports">Imports</a></li>
+<li><a class="reference internal" href="#garbage-collection">Garbage Collection</a></li>
+<li><a class="reference internal" href="#weak-undefined-functions">Weak Undefined Functions</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#missing-features">Missing features</a></li>
+</ul>
+</li>
+</ul>
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="sphinx_intro.html"
+                        title="previous chapter">Sphinx Introduction for LLVM Developers</a></p>
+  <h4>Next topic</h4>
+  <p class="topless"><a href="windows_support.html"
+                        title="next chapter">Windows support</a></p>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/WebAssembly.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="webassembly-lld-port">
+<h1>WebAssembly lld port<a class="headerlink" href="#webassembly-lld-port" title="Permalink to this headline">¶</a></h1>
+<p>The WebAssembly version of lld takes WebAssembly binaries as inputs and produces
+a WebAssembly binary as its output.  For the most part it tries to mimic the
+behaviour of traditional ELF linkers and specifically the ELF lld port.  Where
+possible the command line flags and the semantics should be the same.</p>
+<div class="section" id="object-file-format">
+<h2>Object file format<a class="headerlink" href="#object-file-format" title="Permalink to this headline">¶</a></h2>
+<p>The WebAssembly object file format used by LLVM and LLD is specified as part of
+the WebAssembly tool conventions on <a class="reference external" href="https://github.com/WebAssembly/tool-conventions/blob/master/Linking.md">linking</a>.</p>
+<p>This is the object format that the llvm will produce when run with the
+<code class="docutils literal notranslate"><span class="pre">wasm32-unknown-unknown</span></code> target.</p>
+</div>
+<div class="section" id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<p>The WebAssembly version of lld is installed as <strong>wasm-ld</strong>.  It shared many
+common linker flags with <strong>ld.lld</strong> but also includes several
+WebAssembly-specific options:</p>
+<dl class="option">
+<dt id="cmdoption-no-entry">
+<code class="sig-name descname">--no-entry</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-no-entry" title="Permalink to this definition">¶</a></dt>
+<dd><p>Don’t search for the entry point symbol (by default <code class="docutils literal notranslate"><span class="pre">_start</span></code>).</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-export-table">
+<code class="sig-name descname">--export-table</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-export-table" title="Permalink to this definition">¶</a></dt>
+<dd><p>Export the function table to the environment.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-import-table">
+<code class="sig-name descname">--import-table</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-import-table" title="Permalink to this definition">¶</a></dt>
+<dd><p>Import the function table from the environment.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-export-all">
+<code class="sig-name descname">--export-all</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-export-all" title="Permalink to this definition">¶</a></dt>
+<dd><p>Export all symbols (normally combined with –no-gc-sections)</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-export-dynamic">
+<code class="sig-name descname">--export-dynamic</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-export-dynamic" title="Permalink to this definition">¶</a></dt>
+<dd><p>When building an executable, export any non-hidden symbols.  By default only
+the entry point and any symbols marked as exports (either via the command line
+or via the <cite>export-name</cite> source attribute) are exported.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-global-base">
+<code class="sig-name descname">--global-base</code><code class="sig-prename descclassname">=&lt;value&gt;</code><a class="headerlink" href="#cmdoption-global-base" title="Permalink to this definition">¶</a></dt>
+<dd><p>Address at which to place global data.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-no-merge-data-segments">
+<code class="sig-name descname">--no-merge-data-segments</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-no-merge-data-segments" title="Permalink to this definition">¶</a></dt>
+<dd><p>Disable merging of data segments.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-stack-first">
+<code class="sig-name descname">--stack-first</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-stack-first" title="Permalink to this definition">¶</a></dt>
+<dd><p>Place stack at start of linear memory rather than after data.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-compress-relocations">
+<code class="sig-name descname">--compress-relocations</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-compress-relocations" title="Permalink to this definition">¶</a></dt>
+<dd><p>Relocation targets in the code section are 5-bytes wide in order to
+potentially accommodate the largest LEB128 value.  This option will cause the
+linker to shrink the code section to remove any padding from the final
+output.  However because it affects code offset, this option is not
+compatible with outputting debug information.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-allow-undefined">
+<code class="sig-name descname">--allow-undefined</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-allow-undefined" title="Permalink to this definition">¶</a></dt>
+<dd><p>Allow undefined symbols in linked binary.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-import-memory">
+<code class="sig-name descname">--import-memory</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-import-memory" title="Permalink to this definition">¶</a></dt>
+<dd><p>Import memory from the environment.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-initial-memory">
+<code class="sig-name descname">--initial-memory</code><code class="sig-prename descclassname">=&lt;value&gt;</code><a class="headerlink" href="#cmdoption-initial-memory" title="Permalink to this definition">¶</a></dt>
+<dd><p>Initial size of the linear memory. Default: static data size.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-max-memory">
+<code class="sig-name descname">--max-memory</code><code class="sig-prename descclassname">=&lt;value&gt;</code><a class="headerlink" href="#cmdoption-max-memory" title="Permalink to this definition">¶</a></dt>
+<dd><p>Maximum size of the linear memory. Default: unlimited.</p>
+</dd></dl>
+
+<p>By default the function table is neither imported nor exported, but defined
+for internal use only.</p>
+</div>
+<div class="section" id="behaviour">
+<h2>Behaviour<a class="headerlink" href="#behaviour" title="Permalink to this headline">¶</a></h2>
+<p>In general, where possible, the WebAssembly linker attempts to emulate the
+behaviour of a traditional ELF linker, and in particular the ELF port of lld.
+For more specific details on how this is achieved see the tool conventions on
+<a class="reference external" href="https://github.com/WebAssembly/tool-conventions/blob/master/Linking.md">linking</a>.</p>
+<div class="section" id="function-signatures">
+<h3>Function Signatures<a class="headerlink" href="#function-signatures" title="Permalink to this headline">¶</a></h3>
+<p>One way in which the WebAssembly linker differs from traditional native linkers
+is that function signature checking is strict in WebAssembly.  It is a
+validation error for a module to contain a call site that doesn’t agree with
+the target signature.  Even though this is undefined behaviour in C/C++, it is not
+uncommon to find this in real-world C/C++ programs.  For example, a call site in
+one compilation unit which calls a function defined in another compilation
+unit but with too many arguments.</p>
+<p>In order not to generate such invalid modules, lld has two modes of handling such
+mismatches: it can simply error-out or it can create stub functions that will
+trap at runtime (functions that contain only an <code class="docutils literal notranslate"><span class="pre">unreachable</span></code> instruction)
+and use these stub functions at the otherwise invalid call sites.</p>
+<p>The default behaviour is to generate these stub function and to produce
+a warning.  The <code class="docutils literal notranslate"><span class="pre">--fatal-warnings</span></code> flag can be used to disable this behaviour
+and error out if mismatched are found.</p>
+</div>
+<div class="section" id="exports">
+<h3>Exports<a class="headerlink" href="#exports" title="Permalink to this headline">¶</a></h3>
+<p>When building a shared library any symbols marked as <code class="docutils literal notranslate"><span class="pre">visibility=default</span></code> will
+be exported.</p>
+<p>When building an executable, only the entry point (<code class="docutils literal notranslate"><span class="pre">_start</span></code>) and symbols with
+the <code class="docutils literal notranslate"><span class="pre">WASM_SYMBOL_EXPORTED</span></code> flag are exported by default.  In LLVM the
+<code class="docutils literal notranslate"><span class="pre">WASM_SYMBOL_EXPORTED</span></code> flag is set by the <code class="docutils literal notranslate"><span class="pre">wasm-export-name</span></code> attribute which
+in turn can be set using <code class="docutils literal notranslate"><span class="pre">__attribute__((export_name))</span></code> clang attribute.</p>
+<p>In addition, symbols can be exported via the linker command line using
+<code class="docutils literal notranslate"><span class="pre">--export</span></code>.</p>
+<p>Finally, just like with native ELF linker the <code class="docutils literal notranslate"><span class="pre">--export-dynamic</span></code> flag can be
+used to export symbols in the executable which are marked as
+<code class="docutils literal notranslate"><span class="pre">visibility=default</span></code>.</p>
+</div>
+<div class="section" id="imports">
+<h3>Imports<a class="headerlink" href="#imports" title="Permalink to this headline">¶</a></h3>
+<p>By default no undefined symbols are allowed in the final binary.  The flag
+<code class="docutils literal notranslate"><span class="pre">--allow-undefined</span></code> results in a WebAssembly import being defined for each
+undefined symbol.  It is then up to the runtime to provide such symbols.</p>
+<p>Alternatively symbols can be marked in the source code as with the
+<code class="docutils literal notranslate"><span class="pre">import_name</span></code> and/or <code class="docutils literal notranslate"><span class="pre">import_module</span></code> clang attributes which signals that
+they are expected to be undefined at static link time.</p>
+</div>
+<div class="section" id="garbage-collection">
+<h3>Garbage Collection<a class="headerlink" href="#garbage-collection" title="Permalink to this headline">¶</a></h3>
+<p>Since WebAssembly is designed with size in mind the linker defaults to
+<code class="docutils literal notranslate"><span class="pre">--gc-sections</span></code> which means that all unused functions and data segments will
+be stripped from the binary.</p>
+<p>The symbols which are preserved by default are:</p>
+<ul class="simple">
+<li><p>The entry point (by default <code class="docutils literal notranslate"><span class="pre">_start</span></code>).</p></li>
+<li><p>Any symbol which is to be exported.</p></li>
+<li><p>Any symbol transitively referenced by the above.</p></li>
+</ul>
+</div>
+<div class="section" id="weak-undefined-functions">
+<h3>Weak Undefined Functions<a class="headerlink" href="#weak-undefined-functions" title="Permalink to this headline">¶</a></h3>
+<p>On native platforms, calls to weak undefined functions end up as calls to the
+null function pointer.  With WebAssembly, direct calls must reference a defined
+function (with the correct signature).  In order to handle this case the linker
+will generate function a stub containing only the <code class="docutils literal notranslate"><span class="pre">unreachable</span></code> instruction
+and use this for any direct references to an undefined weak function.</p>
+<p>For example a runtime call to a weak undefined function <code class="docutils literal notranslate"><span class="pre">foo</span></code> will up trapping
+on <code class="docutils literal notranslate"><span class="pre">unreachable</span></code> inside and linker-generated function called
+<code class="docutils literal notranslate"><span class="pre">undefined:foo</span></code>.</p>
+</div>
+</div>
+<div class="section" id="missing-features">
+<h2>Missing features<a class="headerlink" href="#missing-features" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>Merging of data section similar to <code class="docutils literal notranslate"><span class="pre">SHF_MERGE</span></code> in the ELF world is not
+supported.</p></li>
+<li><p>No support for creating shared libraries.  The spec for shared libraries in
+WebAssembly is still in flux:
+<a class="reference external" href="https://github.com/WebAssembly/tool-conventions/blob/master/DynamicLinking.md">https://github.com/WebAssembly/tool-conventions/blob/master/DynamicLinking.md</a></p></li>
+</ul>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="windows_support.html" title="Windows support"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="sphinx_intro.html" title="Sphinx Introduction for LLVM Developers"
+             >previous</a> |</li>
+  <li><a href="index.html">lld Home</a>&nbsp;|&nbsp;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2011-2020, LLVM Project.
+      Last updated on 2020-10-12.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.4.3.
+    </div>
+  </body>
+</html>

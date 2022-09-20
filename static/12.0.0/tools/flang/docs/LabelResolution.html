@@ -1,0 +1,612 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Semantics: Resolving Labels and Construct Names &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Module Files" href="ModFiles.html" />
+    <link rel="prev" title="The F18 Parser" href="Parsing.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="ModFiles.html" title="Module Files"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Parsing.html" title="The F18 Parser"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/master/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/master/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/LabelResolution.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+--><div class="section" id="semantics-resolving-labels-and-construct-names">
+<h1>Semantics: Resolving Labels and Construct Names<a class="headerlink" href="#semantics-resolving-labels-and-construct-names" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id11">Overview</a></p></li>
+<li><p><a class="reference internal" href="#requirements" id="id12">Requirements</a></p>
+<ul>
+<li><p><a class="reference internal" href="#label-generalities-6-2-5" id="id13">Label generalities (6.2.5)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#semantic-checks" id="id14">Semantic Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#labels-used-for-do-loop-ranging" id="id15">Labels Used for <code class="docutils literal notranslate"><span class="pre">DO</span></code> Loop Ranging</a></p>
+<ul>
+<li><p><a class="reference internal" href="#label-do-stmt-r1121" id="id16"><em>label-do-stmt</em> (R1121)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id1" id="id17">Semantic Checks</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#labels-used-in-branching" id="id18">Labels Used in Branching</a></p>
+<ul>
+<li><p><a class="reference internal" href="#goto-stmt-11-2-2-r1157" id="id19"><em>goto-stmt</em> (11.2.2, R1157)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id2" id="id20">Semantic Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#computed-goto-stmt-11-2-3-r1158" id="id21"><em>computed-goto-stmt</em> (11.2.3, R1158)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#semantics-checks" id="id22">Semantics Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#r853-arithmetic-if-stmt-f08-8-2-4" id="id23">R853 <em>arithmetic-if-stmt</em> (F08:8.2.4)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id3" id="id24">Semantics Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#alt-return-spec-15-5-1-r1525" id="id25"><em>alt-return-spec</em> (15.5.1, R1525)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id4" id="id26">Semantics Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#end-eor-err-specifiers-12-11" id="id27"><strong>END</strong>, <strong>EOR</strong>, <strong>ERR</strong> specifiers (12.11)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id5" id="id28">Semantics Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#assigned-goto-stmt-and-assign-stmt-f90-8-2-4" id="id29"><em>assigned-goto-stmt</em> and <em>assign-stmt</em> (F90:8.2.4)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id6" id="id30">Semantic Checks</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#labels-used-in-i-o" id="id31">Labels used in I/O</a></p>
+<ul>
+<li><p><a class="reference internal" href="#data-transfer-statements" id="id32">Data transfer statements</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id7" id="id33">Semantic Checks</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#construct-name-generalities" id="id34">Construct Name generalities</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id8" id="id35">Semantics Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#cycle-statement-11-1-7-4-4" id="id36"><code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> statement (11.1.7.4.4)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id9" id="id37">Semantics Checks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#exit-statement-11-1-12" id="id38"><code class="docutils literal notranslate"><span class="pre">EXIT</span></code> statement (11.1.12)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id10" id="id39">Semantics Checks</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="overview">
+<h2><a class="toc-backref" href="#id11">Overview</a><a class="headerlink" href="#overview" title="Permalink to this headline">¶</a></h2>
+<p>After the Fortran input file(s) has been parsed into a syntax tree, the compiler must check that the program checks semantically.  Target labels must be checked and violations of legal semantics should be reported to the user.</p>
+<p>This is the detailed design document on how these labels will be semantically checked.  Legal semantics may result in rewrite operations on the syntax tree.  Semantics violations will be reported as errors to the user.</p>
+</div>
+<div class="section" id="requirements">
+<h2><a class="toc-backref" href="#id12">Requirements</a><a class="headerlink" href="#requirements" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>Input: a parse tree that decomposes the Fortran program unit</p></li>
+<li><p>Output:</p>
+<ul>
+<li><p><strong>Success</strong> returns true
+(Additionally, the parse tree may be rewritten on success to capture the nested DO loop structure explicitly from any <em>label-do-stmt</em> type loops.)</p></li>
+<li><p><strong>Failure</strong> returns false, instantiates (a container of) error message(s) to indicate the problem(s)</p></li>
+</ul>
+</li>
+</ul>
+<div class="section" id="label-generalities-6-2-5">
+<h3><a class="toc-backref" href="#id13">Label generalities (6.2.5)</a><a class="headerlink" href="#label-generalities-6-2-5" title="Permalink to this headline">¶</a></h3>
+<p>Enforcement of the general label constraints.  There are three sorts of label usage. Labels can serve</p>
+<ol class="simple">
+<li><p>as a <em>label-do-stmt</em> block range marker</p></li>
+<li><p>as branching (control flow) targets</p></li>
+<li><p>as specification annotations (<code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statements) for data transfer statements (I/O constructs)</p></li>
+</ol>
+<p>Labels are related to the standard definition of inclusive scope.  For example, control-flow arcs are not allowed to originate from one inclusive scope and target statements outside of that inclusive scope.</p>
+<p>Inclusive scope is defined as a tree structure of nested scoping constructs. A statement, <em>s</em>, is said to be <em>in</em> the same inclusive scope as another statement, <em>t</em>, if and only if <em>s</em> and <em>t</em> are in the same scope or <em>t</em> is in one of the enclosing scopes of <em>s</em>, otherwise <em>s</em> is <em>not in</em> the same inclusive scope as <em>t</em>. (Inclusive scope is unidirectional and is always from innermost scopes to outermost scopes.)</p>
+<div class="section" id="semantic-checks">
+<h4><a class="toc-backref" href="#id14">Semantic Checks</a><a class="headerlink" href="#semantic-checks" title="Permalink to this headline">¶</a></h4>
+<ul class="simple">
+<li><p>labels range from 1 to 99999, inclusive (6.2.5 note 2)</p>
+<ul>
+<li><p>handled automatically by the parser, but add a range check</p></li>
+</ul>
+</li>
+<li><p>labels must be pairwise distinct within their program unit scope (6.2.5 para 2)</p>
+<ul>
+<li><p>if redundant labels appear → error redundant labels</p></li>
+<li><p>the total number of unique statement labels may have a limit</p></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="labels-used-for-do-loop-ranging">
+<h3><a class="toc-backref" href="#id15">Labels Used for <code class="docutils literal notranslate"><span class="pre">DO</span></code> Loop Ranging</a><a class="headerlink" href="#labels-used-for-do-loop-ranging" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="label-do-stmt-r1121">
+<h4><a class="toc-backref" href="#id16"><em>label-do-stmt</em> (R1121)</a><a class="headerlink" href="#label-do-stmt-r1121" title="Permalink to this headline">¶</a></h4>
+<p>A <em>label-do-stmt</em> is a control construct that results in the iterative execution of a number of statements.  A <em>label-do-stmt</em> has a (possibly shared, <em>nonblock-do-construct</em>) <em>label</em> that will be called the loop target label.  The statements to be executed will be the range from the <em>label-do-stmt</em> to the statement identified by the loop target label, inclusive. This range of statements will be called the loop’s body and logically forms a <em>do-block</em>.</p>
+<p>A <em>label-do-stmt</em> is quite similar to a <em>block-do-construct</em> in semantics, but the parse tree is different in that the parser does not impose a <em>do-block</em> structure on the loop body.</p>
+<p>In F18, the nonblock <code class="docutils literal notranslate"><span class="pre">DO</span></code> construct has been removed.  For legacy support (through F08), we will need to handle nonblock <code class="docutils literal notranslate"><span class="pre">DO</span></code> constructs.  In F18, the following legacy code is an error.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span>  <span class="k">DO </span><span class="mi">100</span> <span class="n">I</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">100</span>
+    <span class="k">DO </span><span class="mi">100</span> <span class="n">J</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">100</span>
+      <span class="p">...</span>
+ <span class="mi">100</span> <span class="k">CONTINUE</span>
+</pre></div>
+</div>
+<div class="section" id="id1">
+<h5><a class="toc-backref" href="#id17">Semantic Checks</a><a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>the loop body target label must exist in the scope (F18:C1133; F08:C815, C817, C819)</p>
+<ul>
+<li><p>if the label does not appear, error of missing label</p></li>
+</ul>
+</li>
+<li><p>the loop body target label must be, lexically, after the <em>label-do-stmt</em> (R1119)</p>
+<ul>
+<li><p>if the label appears lexically preceding the <code class="docutils literal notranslate"><span class="pre">DO</span></code>, error of malformed <code class="docutils literal notranslate"><span class="pre">DO</span></code></p></li>
+</ul>
+</li>
+<li><p>control cannot transfer into the body from outside the <em>do-block</em></p>
+<ul>
+<li><p>Exceptions (errors demoted to warnings)</p>
+<ul>
+<li><p>some implementations relax enforcement of this and allow <code class="docutils literal notranslate"><span class="pre">GOTO</span></code>s from the loop body to “extended ranges” and back again (PGI &amp; gfortan appear to allow, NAG &amp; Intel do not.)</p></li>
+<li><p>should some form of “extended ranges” for <em>do-constructs</em> be supported, it should still be limited and not include parallel loops such as <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> or loops annotated with OpenACC or OpenMP directives.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GOTO</span></code>s into the <code class="docutils literal notranslate"><span class="pre">DO</span></code>s inclusive scope, error/warn of invalid transfer of control</p></li>
+</ul>
+</li>
+<li><p>requires that the loop terminating statement for a <em>label-do-stmt</em> be either an <code class="docutils literal notranslate"><span class="pre">END</span> <span class="pre">DO</span></code> or a <code class="docutils literal notranslate"><span class="pre">CONTINUE</span></code></p>
+<ul>
+<li><p>Exception</p>
+<ul>
+<li><p>earlier standards allowed other statements to be terminators</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>Semantics for F08 and earlier that support sharing the loop terminating statement in a <em>nonblock-do-construct</em> between multiple loops</p>
+<ul class="simple">
+<li><p>some statements cannot be <em>do-term-action-stmt</em> (F08:C816)</p>
+<ul>
+<li><p>a <em>do-term-action-stmt</em> is an <em>action-stmt</em> but does not include <em>arithmetic-if-stmt</em>, <em>continue-stmt</em>, <em>cycle-stmt</em>, <em>end-function-stmt</em>, <em>end-mp-subprogram-stmt</em>, <em>end-program-stmt</em>, <em>end-subroutine-stmt</em>, <em>error-stop-stmt</em>, <em>exit-stmt</em>, <em>goto-stmt</em>, <em>return-stmt</em>, or <em>stop-stmt</em></p>
+<ul>
+<li><p>if the term action statement is forbidden, error invalid statement in <code class="docutils literal notranslate"><span class="pre">DO</span></code> loop term position</p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>some statements cannot be <em>do-term-shared-stmt</em> (F08:C818)</p>
+<ul>
+<li><p>this is the case as in our above example where two different nested loops share the same terminating statement (<code class="docutils literal notranslate"><span class="pre">100</span> <span class="pre">continue</span></code>)</p></li>
+<li><p>a <em>do-term-shared-stmt</em> is an <em>action-stmt</em> with all the same exclusions as a <em>do-term-action-stmt</em> except a <em>continue-stmt</em> <strong>is</strong> allowed</p>
+<ul>
+<li><p>if the term shared action statement is forbidden, error invalid statement in term position</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>If the <code class="docutils literal notranslate"><span class="pre">DO</span></code> loop is a <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct, there are additional constraints (11.1.7.5).</p>
+<ul class="simple">
+<li><p>a <em>return-stmt</em> is not allowed (C1136)</p></li>
+<li><p>image control statements are not allowed (C1137)</p></li>
+<li><p>branches must be from a statement and to a statement that both reside within the <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> (C1138)</p></li>
+<li><p>impure procedures shall not be called (C1139)</p></li>
+<li><p>deallocation of polymorphic objects is not allowed (C1140)</p></li>
+<li><p>references to <code class="docutils literal notranslate"><span class="pre">IEEE_GET_FLAG</span></code>, <code class="docutils literal notranslate"><span class="pre">IEEE_SET_HALTING_MODE</span></code>, and <code class="docutils literal notranslate"><span class="pre">IEEE_GET_HALTING_MODE</span></code> cannot appear in the body of a <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> (C1141)</p></li>
+<li><p>the use of the <code class="docutils literal notranslate"><span class="pre">ADVANCE=</span></code> specifier by an I/O statement in the body of a <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> is not allowed (11.1.7.5, para 5)</p></li>
+</ul>
+</div>
+</div>
+</div>
+<div class="section" id="labels-used-in-branching">
+<h3><a class="toc-backref" href="#id18">Labels Used in Branching</a><a class="headerlink" href="#labels-used-in-branching" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="goto-stmt-11-2-2-r1157">
+<h4><a class="toc-backref" href="#id19"><em>goto-stmt</em> (11.2.2, R1157)</a><a class="headerlink" href="#goto-stmt-11-2-2-r1157" title="Permalink to this headline">¶</a></h4>
+<p>A <code class="docutils literal notranslate"><span class="pre">GOTO</span></code> statement is a simple, direct transfer of control from the <code class="docutils literal notranslate"><span class="pre">GOTO</span></code> to the labelled statement.</p>
+<div class="section" id="id2">
+<h5><a class="toc-backref" href="#id20">Semantic Checks</a><a class="headerlink" href="#id2" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>the labelled statement that is the target of a <code class="docutils literal notranslate"><span class="pre">GOTO</span></code> (11.2.1 constraints)</p>
+<ul>
+<li><p>must refer to a label that is in inclusive scope of the computed <code class="docutils literal notranslate"><span class="pre">GOTO</span></code> statement (C1169)</p>
+<ul>
+<li><p>if a label does not exist, error nonexistent label</p></li>
+<li><p>if a label is out of scope, error out of inclusive scope</p></li>
+</ul>
+</li>
+<li><p>the branch target statement must be valid</p>
+<ul>
+<li><p>if the statement is not allowed as a branch target, error not a valid branch target</p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>the labelled statement must be a branch target statement</p>
+<ul>
+<li><p>a branch target statement is any of <em>action-stmt</em>, <em>associate-stmt</em>, <em>end-associate-stmt</em>, <em>if-then-stmt</em>, <em>end-if-stmt</em>, <em>select-case-stmt</em>, <em>end-select-stmt</em>, <em>select-rank-stmt</em>, <em>end-select-rank-stmt</em>, <em>select-type-stmt</em>, <em>end-select-type-stmt</em>, <em>do-stmt</em>, <em>end-do-stmt</em>, <em>block-stmt</em>, <em>end-block-stmt</em>, <em>critical-stmt</em>, <em>end-critical-stmt</em>, <em>forall-construct-stmt</em>, <em>forall-stmt</em>, <em>where-construct-stmt</em>, <em>end-function-stmt</em>, <em>end-mp-subprogram-stmt</em>, <em>end-program-stmt</em>, or <em>end-subroutine-stmt</em>. (11.2.1)</p></li>
+<li><p>Some deleted features that were <em>action-stmt</em> in older standards include <em>arithmetic-if-stmt</em>, <em>assign-stmt</em>, <em>assigned-goto-stmt</em>, and <em>pause-stmt</em>. For legacy mode support, these statements should be considered <em>action-stmt</em>.</p></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="computed-goto-stmt-11-2-3-r1158">
+<h4><a class="toc-backref" href="#id21"><em>computed-goto-stmt</em> (11.2.3, R1158)</a><a class="headerlink" href="#computed-goto-stmt-11-2-3-r1158" title="Permalink to this headline">¶</a></h4>
+<p>The computed <code class="docutils literal notranslate"><span class="pre">GOTO</span></code> statement is analogous to a <code class="docutils literal notranslate"><span class="pre">switch</span></code> statement in C++.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span>  <span class="k">GOTO</span> <span class="p">(</span> <span class="n">label</span><span class="o">-</span><span class="n">list</span> <span class="p">)</span> <span class="p">[,]</span> <span class="n">scalar</span><span class="o">-</span><span class="nb">int</span><span class="o">-</span><span class="n">expr</span>
+</pre></div>
+</div>
+<div class="section" id="semantics-checks">
+<h5><a class="toc-backref" href="#id22">Semantics Checks</a><a class="headerlink" href="#semantics-checks" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>each label in <em>label-list</em> (11.2.1 constraints, same as <code class="docutils literal notranslate"><span class="pre">GOTO</span></code>)</p>
+<ul>
+<li><p>must refer to a label that is in inclusive scope of the computed <code class="docutils literal notranslate"><span class="pre">GOTO</span></code> statement (C1170)</p>
+<ul>
+<li><p>if a label does not exist, error nonexistent label</p></li>
+<li><p>if a label is out of scope, error out of inclusive scope</p></li>
+</ul>
+</li>
+<li><p>the branch target statement must be valid</p>
+<ul>
+<li><p>if the statement is not allowed as a branch target, error not a valid branch target</p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p>the <em>scalar-int-expr</em> needs to have <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> type</p>
+<ul>
+<li><p>check the type of the expression (type checking done elsewhere)</p></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="r853-arithmetic-if-stmt-f08-8-2-4">
+<h4><a class="toc-backref" href="#id23">R853 <em>arithmetic-if-stmt</em> (F08:8.2.4)</a><a class="headerlink" href="#r853-arithmetic-if-stmt-f08-8-2-4" title="Permalink to this headline">¶</a></h4>
+<p>This control-flow construct is deleted in F18.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span>  <span class="k">IF</span> <span class="p">(</span><span class="n">scalar</span><span class="o">-</span><span class="n">numeric</span><span class="o">-</span><span class="n">expr</span><span class="p">)</span> <span class="n">label1</span><span class="p">,</span><span class="n">label2</span><span class="p">,</span><span class="n">label3</span>
+</pre></div>
+</div>
+<p>The arithmetic if statement is like a three-way branch operator. If the scalar numeric expression is less than zero goto <em>label-1</em>, else if the variable is equal to zero goto <em>label-2</em>, else if the variable is greater than zero goto <em>label-3</em>.</p>
+<div class="section" id="id3">
+<h5><a class="toc-backref" href="#id24">Semantics Checks</a><a class="headerlink" href="#id3" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>the labels in the <em>arithmetic-if-stmt</em> triple must all be present in the inclusive scope (F08:C848)</p>
+<ul>
+<li><p>if a label does not exist, error nonexistent label</p></li>
+<li><p>if a label is out of scope, error out of inclusive scope</p></li>
+</ul>
+</li>
+<li><p>the <em>scalar-numeric-expr</em> must not be <code class="docutils literal notranslate"><span class="pre">COMPLEX</span></code> (F08:C849)</p>
+<ul>
+<li><p>check the type of the expression (type checking done elsewhere)</p></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="alt-return-spec-15-5-1-r1525">
+<h4><a class="toc-backref" href="#id25"><em>alt-return-spec</em> (15.5.1, R1525)</a><a class="headerlink" href="#alt-return-spec-15-5-1-r1525" title="Permalink to this headline">¶</a></h4>
+<p>These are a Fortran control-flow construct for combining a return from a subroutine with a branch to a labelled statement in the calling routine all in one operation. A typical implementation is for the subroutine to return a hidden integer, which is used as a key in the calling code to then, possibly, branch to a labelled statement in inclusive scope.</p>
+<p>The labels are passed by the calling routine. We want to check those labels at the call-site, that is instances of <em>alt-return-spec</em>.</p>
+<div class="section" id="id4">
+<h5><a class="toc-backref" href="#id26">Semantics Checks</a><a class="headerlink" href="#id4" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>each <em>alt-return-spec</em> (11.2.1 constraints, same as <code class="docutils literal notranslate"><span class="pre">GOTO</span></code>)</p>
+<ul>
+<li><p>must refer to a label that is in inclusive scope of the <code class="docutils literal notranslate"><span class="pre">CALL</span></code> statement</p>
+<ul>
+<li><p>if a label does not exist, error nonexistent label</p></li>
+<li><p>if a label is out of scope, error out of inclusive scope</p></li>
+</ul>
+</li>
+<li><p>the branch target statement must be valid</p>
+<ul>
+<li><p>if the statement is not allowed as a branch target, error not a valid branch target</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="end-eor-err-specifiers-12-11">
+<h4><a class="toc-backref" href="#id27"><strong>END</strong>, <strong>EOR</strong>, <strong>ERR</strong> specifiers (12.11)</a><a class="headerlink" href="#end-eor-err-specifiers-12-11" title="Permalink to this headline">¶</a></h4>
+<p>These specifiers can appear in I/O statements and can transfer control to specific labelled statements under exceptional conditions like end-of-file, end-of-record, and other error conditions.  (The PGI compiler adds code to test the results from the runtime routines to determine if these branches should take place.)</p>
+<div class="section" id="id5">
+<h5><a class="toc-backref" href="#id28">Semantics Checks</a><a class="headerlink" href="#id5" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>each END, EOR, and ERR specifier (11.2.1 constraints, same as <code class="docutils literal notranslate"><span class="pre">GOTO</span></code>)</p>
+<ul>
+<li><p>must refer to a label that is in inclusive scope of the I/O statement</p>
+<ul>
+<li><p>if a label does not exist, error nonexistent label</p></li>
+<li><p>if a label is out of scope, error out of inclusive scope</p></li>
+</ul>
+</li>
+<li><p>the branch target statement must be valid</p>
+<ul>
+<li><p>if the statement is not allowed as a branch target, error not a valid branch target</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div class="section" id="assigned-goto-stmt-and-assign-stmt-f90-8-2-4">
+<h4><a class="toc-backref" href="#id29"><em>assigned-goto-stmt</em> and <em>assign-stmt</em> (F90:8.2.4)</a><a class="headerlink" href="#assigned-goto-stmt-and-assign-stmt-f90-8-2-4" title="Permalink to this headline">¶</a></h4>
+<p>Deleted feature since Fortran 95.</p>
+<p>The <em>assigned-goto-stmt</em> and <em>assign-stmt</em> were <em>action-stmt</em> in the Fortran 90 standard. They are included here for completeness. This pair of obsolete statements can (will) be enabled as part of the compiler’s legacy Fortran support.</p>
+<p>The <em>assign-stmt</em> stores a <em>label</em> in an integer variable.  The <em>assigned-goto-stmt</em> will then transfer control to the <em>label</em> stored in that integer variable.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span>  <span class="k">ASSIGN </span><span class="mi">10</span> <span class="n">TO</span> <span class="n">i</span>
+  <span class="p">...</span>
+  <span class="k">GOTO </span><span class="n">i</span> <span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="mi">20</span><span class="p">,</span><span class="mi">30</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="section" id="id6">
+<h5><a class="toc-backref" href="#id30">Semantic Checks</a><a class="headerlink" href="#id6" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>an <em>assigned-goto-stmt</em> cannot be a <em>do-term-action-stmt</em> (F90:R829)</p></li>
+<li><p>an <em>assigned-goto-stmt</em> cannot be a <em>do-term-shared-stmt</em> (F90:R833)</p></li>
+<li><p>constraints from (F90:R839)</p>
+<ul>
+<li><p>each <em>label</em> in an optional <em>label-list</em> must be the statement label of a branch target statement that appears in the same scoping unit as the <em>assigned-goto-stmt</em></p></li>
+<li><p><em>scalar-int-variable</em> (<code class="docutils literal notranslate"><span class="pre">i</span></code> in the example above) must be named and of type default integer</p></li>
+<li><p>an integer variable that has been assigned a label may only be referenced in an <em>assigned-goto</em> or as a format specifier in an I/O statement</p></li>
+<li><p>when an I/O statement with a <em>format-specifier</em> that is an integer variable is executed or when an <em>assigned-goto</em> is executed, the variable must have been assigned a <em>label</em></p></li>
+<li><p>an integer variable can only be assigned a label via the <code class="docutils literal notranslate"><span class="pre">ASSIGN</span></code> statement</p></li>
+<li><p>the label assigned to the variable must be in the same scoping unit as the <em>assigned-goto</em> that branches to the <em>label</em> value</p></li>
+<li><p>if the parameterized list of labels is present, the label value assigned to the integer variable must appear in that <em>label-list</em></p></li>
+<li><p>a distinct <em>label</em> can appear more than once in the <em>label-list</em></p></li>
+</ul>
+</li>
+</ul>
+<p>Some interpretation is needed as the terms of the older standard are different.</p>
+<p>A “scoping unit” is defined as</p>
+<ul class="simple">
+<li><p>a derived-type definition</p></li>
+<li><p>a procedure interface body, excluding derived-types and interfaces contained within it</p></li>
+<li><p>a program unit or subprogram, excluding derived-types, interfaces, and subprograms contained within it</p></li>
+</ul>
+<p>This is a more lax definition of scope than inclusive scope.</p>
+<p>A <em>named variable</em> distinguishes a variable such as, <code class="docutils literal notranslate"><span class="pre">i</span></code>, from an element of an array, <code class="docutils literal notranslate"><span class="pre">a(i)</span></code>, for example.</p>
+</div>
+</div>
+</div>
+<div class="section" id="labels-used-in-i-o">
+<h3><a class="toc-backref" href="#id31">Labels used in I/O</a><a class="headerlink" href="#labels-used-in-i-o" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="data-transfer-statements">
+<h4><a class="toc-backref" href="#id32">Data transfer statements</a><a class="headerlink" href="#data-transfer-statements" title="Permalink to this headline">¶</a></h4>
+<p>In data transfer (I/O) statements (e.g., <code class="docutils literal notranslate"><span class="pre">READ</span></code>), the user can specify a <code class="docutils literal notranslate"><span class="pre">FMT=</span></code> specifier that can take a label as its argument. (R1215)</p>
+<div class="section" id="id7">
+<h5><a class="toc-backref" href="#id33">Semantic Checks</a><a class="headerlink" href="#id7" title="Permalink to this headline">¶</a></h5>
+<ul class="simple">
+<li><p>if the <code class="docutils literal notranslate"><span class="pre">FMT=</span></code> specifier has a label as its argument (C1230)</p>
+<ul>
+<li><p>the label must correspond to a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statement</p>
+<ul>
+<li><p>if the statement is not a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code>, error statement must be a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code></p></li>
+</ul>
+</li>
+<li><p>the labelled <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statement must be in the same inclusive scope as the originating data transfer statement (also in 2008)</p>
+<ul>
+<li><p>if the label statement does not exist, error label does not exist</p></li>
+<li><p>if the label statement is not in scope, error label is not in inclusive scope</p></li>
+</ul>
+</li>
+<li><p>Exceptions (errors demoted to warnings)</p>
+<ul>
+<li><p>PGI extension: referenced <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statements may appear in a host procedure</p></li>
+<li><p>Possible relaxation: the scope of the referenced <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statement may be ignored, allowing a <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> to be referenced from any scope in the compilation.</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="section" id="construct-name-generalities">
+<h3><a class="toc-backref" href="#id34">Construct Name generalities</a><a class="headerlink" href="#construct-name-generalities" title="Permalink to this headline">¶</a></h3>
+<p>Various Fortran constructs can have names. These include</p>
+<ul class="simple">
+<li><p>the <code class="docutils literal notranslate"><span class="pre">WHERE</span></code> construct (10.2.3)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">FORALL</span></code> construct (10.2.4)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code> construct (11.1.3)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> construct (11.1.4)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">CHANGE</span> <span class="pre">TEAM</span></code> construct (11.1.5)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">CRITICAL</span></code> construct (11.1.6)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">DO</span></code> construct (11.1.7)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">IF</span></code> construct (11.1.8)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">CASE</span></code> construct (11.1.9)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">RANK</span></code> construct (11.1.10)</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code> construct (11.1.11)</p></li>
+</ul>
+<div class="section" id="id8">
+<h4><a class="toc-backref" href="#id35">Semantics Checks</a><a class="headerlink" href="#id8" title="Permalink to this headline">¶</a></h4>
+<p>A construct name is a name formed under 6.2.2.  A name is an identifier. Identifiers are parsed by the parser.</p>
+<ul class="simple">
+<li><p>the maximum length of a name is 63 characters (C601)</p></li>
+</ul>
+<p>Names must either not be given for the construct or used throughout when specified.</p>
+<ul class="simple">
+<li><p>if a construct is given a name, the construct’s <code class="docutils literal notranslate"><span class="pre">END</span></code> statement must also specify the same name (<code class="docutils literal notranslate"><span class="pre">WHERE</span></code> C1033, <code class="docutils literal notranslate"><span class="pre">FORALL</span></code> C1035, …)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">WHERE</span></code> has additional <code class="docutils literal notranslate"><span class="pre">ELSEWHERE</span></code> clauses</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IF</span></code> has additional <code class="docutils literal notranslate"><span class="pre">ELSE</span> <span class="pre">IF</span></code> and <code class="docutils literal notranslate"><span class="pre">ELSE</span></code> clauses</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">CASE</span></code> has additional <code class="docutils literal notranslate"><span class="pre">CASE</span></code> clauses</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">RANK</span></code> has additional <code class="docutils literal notranslate"><span class="pre">RANK</span></code> clauses</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code> has additional <em>type-guard-stmt</em>
+These additional statements must meet the same constraint as the <code class="docutils literal notranslate"><span class="pre">END</span></code> of the construct. Names must match, if present, or there must be no names for any of the clauses.</p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="cycle-statement-11-1-7-4-4">
+<h3><a class="toc-backref" href="#id36"><code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> statement (11.1.7.4.4)</a><a class="headerlink" href="#cycle-statement-11-1-7-4-4" title="Permalink to this headline">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> statement takes an optional <em>do-construct-name</em>.</p>
+<div class="section" id="id9">
+<h4><a class="toc-backref" href="#id37">Semantics Checks</a><a class="headerlink" href="#id9" title="Permalink to this headline">¶</a></h4>
+<ul class="simple">
+<li><p>if the <code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> has a <em>construct-name</em>, then the <code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> statement must appear within that named <em>do-construct</em> (C1134)</p></li>
+<li><p>if the <code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> does not have a <em>do-construct-name</em>, the <code class="docutils literal notranslate"><span class="pre">CYCLE</span></code> statement must appear within a <em>do-construct</em> (C1134)</p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="exit-statement-11-1-12">
+<h3><a class="toc-backref" href="#id38"><code class="docutils literal notranslate"><span class="pre">EXIT</span></code> statement (11.1.12)</a><a class="headerlink" href="#exit-statement-11-1-12" title="Permalink to this headline">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> statement takes an optional <em>construct-name</em>.</p>
+<div class="section" id="id10">
+<h4><a class="toc-backref" href="#id39">Semantics Checks</a><a class="headerlink" href="#id10" title="Permalink to this headline">¶</a></h4>
+<ul class="simple">
+<li><p>if the <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> has a <em>construct-name</em>, then the <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> statement must appear within that named construct (C1166)</p></li>
+<li><p>if the <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> does not have a <em>construct-name</em>, the <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> statement must appear within a <em>do-construct</em> (C1166)</p></li>
+<li><p>an <em>exit-stmt</em> must not appear in a <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> if the <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> belongs to the <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> or an outer construct enclosing the <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> (C1167)</p></li>
+<li><p>an <em>exit-stmt</em> must not appear in a <code class="docutils literal notranslate"><span class="pre">CHANGE</span> <span class="pre">TEAM</span></code> (<code class="docutils literal notranslate"><span class="pre">CRITICAL</span></code>) if the <code class="docutils literal notranslate"><span class="pre">EXIT</span></code> belongs to an outer construct enclosing the <code class="docutils literal notranslate"><span class="pre">CHANGE</span> <span class="pre">TEAM</span></code> (<code class="docutils literal notranslate"><span class="pre">CRITICAL</span></code>) (C1168)</p></li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="ModFiles.html" title="Module Files"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Parsing.html" title="The F18 Parser"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2021, The Flang Team.
+      Last updated on Apr 15, 2021.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

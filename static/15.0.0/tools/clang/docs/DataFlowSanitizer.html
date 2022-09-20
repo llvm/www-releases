@@ -1,0 +1,404 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DataFlowSanitizer &#8212; Clang 15.0.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="DataFlowSanitizer Design Document" href="DataFlowSanitizerDesign.html" />
+    <link rel="prev" title="UndefinedBehaviorSanitizer" href="UndefinedBehaviorSanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 15.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>DataFlowSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UndefinedBehaviorSanitizer.html">UndefinedBehaviorSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="DataFlowSanitizerDesign.html">DataFlowSanitizer Design Document</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="dataflowsanitizer">
+<h1>DataFlowSanitizer<a class="headerlink" href="#dataflowsanitizer" title="Permalink to this headline">¶</a></h1>
+<div class="toctree-wrapper compound">
+</div>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id2">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#how-to-build-libc-with-dfsan" id="id3">How to build libc++ with DFSan</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id4">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#abi-list" id="id5">ABI List</a></p></li>
+<li><p><a class="reference internal" href="#compilation-flags" id="id6">Compilation Flags</a></p></li>
+<li><p><a class="reference internal" href="#environment-variables" id="id7">Environment Variables</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#example" id="id8">Example</a></p></li>
+<li><p><a class="reference internal" href="#origin-tracking" id="id9">Origin Tracking</a></p></li>
+<li><p><a class="reference internal" href="#current-status" id="id10">Current status</a></p></li>
+<li><p><a class="reference internal" href="#design" id="id11">Design</a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id2">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>DataFlowSanitizer is a generalised dynamic data flow analysis.</p>
+<p>Unlike other Sanitizer tools, this tool is not designed to detect a
+specific class of bugs on its own.  Instead, it provides a generic
+dynamic data flow analysis framework to be used by clients to help
+detect application-specific issues within their own code.</p>
+</div>
+<div class="section" id="how-to-build-libc-with-dfsan">
+<h2><a class="toc-backref" href="#id3">How to build libc++ with DFSan</a><a class="headerlink" href="#how-to-build-libc-with-dfsan" title="Permalink to this headline">¶</a></h2>
+<p>DFSan requires either all of your code to be instrumented or for uninstrumented
+functions to be listed as <code class="docutils literal notranslate"><span class="pre">uninstrumented</span></code> in the <a class="reference internal" href="#abi-list">ABI list</a>.</p>
+<p>If you’d like to have instrumented libc++ functions, then you need to build it
+with DFSan instrumentation from source. Here is an example of how to build
+libc++ and the libc++ ABI with data flow sanitizer instrumentation.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">mkdir libcxx-build</span>
+<span class="go">cd libcxx-build</span>
+
+<span class="gp"># </span>An example using ninja
+<span class="go">cmake -GNinja -S &lt;monorepo-root&gt;/runtimes \</span>
+<span class="go">  -DCMAKE_C_COMPILER=clang \</span>
+<span class="go">  -DCMAKE_CXX_COMPILER=clang++ \</span>
+<span class="go">  -DLLVM_USE_SANITIZER=&quot;DataFlow&quot; \</span>
+<span class="go">  -DLLVM_ENABLE_RUNTIMES=&quot;libcxx;libcxxabi&quot;</span>
+
+<span class="go">ninja cxx cxxabi</span>
+</pre></div>
+</div>
+<p>Note: Ensure you are building with a sufficiently new version of Clang.</p>
+</div>
+<div class="section" id="usage">
+<h2><a class="toc-backref" href="#id4">Usage</a><a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<p>With no program changes, applying DataFlowSanitizer to a program
+will not alter its behavior.  To use DataFlowSanitizer, the program
+uses API functions to apply tags to data to cause it to be tracked, and to
+check the tag of a specific data item.  DataFlowSanitizer manages
+the propagation of tags through the program according to its data flow.</p>
+<p>The APIs are defined in the header file <code class="docutils literal notranslate"><span class="pre">sanitizer/dfsan_interface.h</span></code>.
+For further information about each function, please refer to the header
+file.</p>
+<div class="section" id="abi-list">
+<span id="id1"></span><h3><a class="toc-backref" href="#id5">ABI List</a><a class="headerlink" href="#abi-list" title="Permalink to this headline">¶</a></h3>
+<p>DataFlowSanitizer uses a list of functions known as an ABI list to decide
+whether a call to a specific function should use the operating system’s native
+ABI or whether it should use a variant of this ABI that also propagates labels
+through function parameters and return values.  The ABI list file also controls
+how labels are propagated in the former case.  DataFlowSanitizer comes with a
+default ABI list which is intended to eventually cover the glibc library on
+Linux but it may become necessary for users to extend the ABI list in cases
+where a particular library or function cannot be instrumented (e.g. because
+it is implemented in assembly or another language which DataFlowSanitizer does
+not support) or a function is called from a library or function which cannot
+be instrumented.</p>
+<p>DataFlowSanitizer’s ABI list file is a <a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>.
+The pass treats every function in the <code class="docutils literal notranslate"><span class="pre">uninstrumented</span></code> category in the
+ABI list file as conforming to the native ABI.  Unless the ABI list contains
+additional categories for those functions, a call to one of those functions
+will produce a warning message, as the labelling behavior of the function
+is unknown.  The other supported categories are <code class="docutils literal notranslate"><span class="pre">discard</span></code>, <code class="docutils literal notranslate"><span class="pre">functional</span></code>
+and <code class="docutils literal notranslate"><span class="pre">custom</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">discard</span></code> – To the extent that this function writes to (user-accessible)
+memory, it also updates labels in shadow memory (this condition is trivially
+satisfied for functions which do not write to user-accessible memory).  Its
+return value is unlabelled.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">functional</span></code> – Like <code class="docutils literal notranslate"><span class="pre">discard</span></code>, except that the label of its return value
+is the union of the label of its arguments.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">custom</span></code> – Instead of calling the function, a custom wrapper <code class="docutils literal notranslate"><span class="pre">__dfsw_F</span></code>
+is called, where <code class="docutils literal notranslate"><span class="pre">F</span></code> is the name of the function.  This function may wrap
+the original function or provide its own implementation.  This category is
+generally used for uninstrumentable functions which write to user-accessible
+memory or which have more complex label propagation behavior.  The signature
+of <code class="docutils literal notranslate"><span class="pre">__dfsw_F</span></code> is based on that of <code class="docutils literal notranslate"><span class="pre">F</span></code> with each argument having a
+label of type <code class="docutils literal notranslate"><span class="pre">dfsan_label</span></code> appended to the argument list.  If <code class="docutils literal notranslate"><span class="pre">F</span></code>
+is of non-void return type a final argument of type <code class="docutils literal notranslate"><span class="pre">dfsan_label</span> <span class="pre">*</span></code>
+is appended to which the custom function can store the label for the
+return value.  For example:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">);</span><span class="w"></span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__dfsw_f</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">x_label</span><span class="p">);</span><span class="w"></span>
+
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">memcpy</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">dest</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">n</span><span class="p">);</span><span class="w"></span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__dfsw_memcpy</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">dest</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">src</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"></span>
+<span class="w">                    </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">dest_label</span><span class="p">,</span><span class="w"> </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">src_label</span><span class="p">,</span><span class="w"></span>
+<span class="w">                    </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">n_label</span><span class="p">,</span><span class="w"> </span><span class="n">dfsan_label</span><span class="w"> </span><span class="o">*</span><span class="n">ret_label</span><span class="p">);</span><span class="w"></span>
+</pre></div>
+</div>
+<p>If a function defined in the translation unit being compiled belongs to the
+<code class="docutils literal notranslate"><span class="pre">uninstrumented</span></code> category, it will be compiled so as to conform to the
+native ABI.  Its arguments will be assumed to be unlabelled, but it will
+propagate labels in shadow memory.</p>
+<p>For example:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># main is called by the C runtime using the native ABI.
+fun:main=uninstrumented
+fun:main=discard
+
+# malloc only writes to its internal data structures, not user-accessible memory.
+fun:malloc=uninstrumented
+fun:malloc=discard
+
+# tolower is a pure function.
+fun:tolower=uninstrumented
+fun:tolower=functional
+
+# memcpy needs to copy the shadow from the source to the destination region.
+# This is done in a custom function.
+fun:memcpy=uninstrumented
+fun:memcpy=custom
+</pre></div>
+</div>
+<p>For instrumented functions, the ABI list supports a <code class="docutils literal notranslate"><span class="pre">force_zero_labels</span></code>
+category, which will make all stores and return values set zero labels.
+Functions should never be labelled with both <code class="docutils literal notranslate"><span class="pre">force_zero_labels</span></code>
+and <code class="docutils literal notranslate"><span class="pre">uninstrumented</span></code> or any of the unistrumented wrapper kinds.</p>
+<p>For example:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># e.g. void writes_data(char* out_buf, int out_buf_len) {...}
+# Applying force_zero_labels will force out_buf shadow to zero.
+fun:writes_data=force_zero_labels
+</pre></div>
+</div>
+</div>
+<div class="section" id="compilation-flags">
+<h3><a class="toc-backref" href="#id6">Compilation Flags</a><a class="headerlink" href="#compilation-flags" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-abilist</span></code> – The additional ABI list files that control how shadow
+parameters are passed. File names are separated by comma.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-combine-pointer-labels-on-load</span></code> – Controls whether to include or
+ignore the labels of pointers in load instructions. Its default value is true.
+For example:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>If the flag is true, the label of <code class="docutils literal notranslate"><span class="pre">v</span></code> is the union of the label of <code class="docutils literal notranslate"><span class="pre">p</span></code> and
+the label of <code class="docutils literal notranslate"><span class="pre">*p</span></code>. If the flag is false, the label of <code class="docutils literal notranslate"><span class="pre">v</span></code> is the label of
+just <code class="docutils literal notranslate"><span class="pre">*p</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-combine-pointer-labels-on-store</span></code> – Controls whether to include or
+ignore the labels of pointers in store instructions. Its default value is
+false. For example:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="o">*</span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>If the flag is true, the label of <code class="docutils literal notranslate"><span class="pre">*p</span></code> is the union of the label of <code class="docutils literal notranslate"><span class="pre">p</span></code> and
+the label of <code class="docutils literal notranslate"><span class="pre">v</span></code>. If the flag is false, the label of <code class="docutils literal notranslate"><span class="pre">*p</span></code> is the label of
+just <code class="docutils literal notranslate"><span class="pre">v</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-combine-offset-labels-on-gep</span></code> – Controls whether to propagate
+labels of offsets in GEP instructions. Its default value is true. For example:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">p</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>If the flag is true, the label of <code class="docutils literal notranslate"><span class="pre">p</span></code> is the union of the label of <code class="docutils literal notranslate"><span class="pre">p</span></code> and
+the label of <code class="docutils literal notranslate"><span class="pre">i</span></code>. If the flag is false, the label of <code class="docutils literal notranslate"><span class="pre">p</span></code> is unchanged.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-track-select-control-flow</span></code> – Controls whether to track the control
+flow of select instructions. Its default value is true. For example:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="o">?</span><span class="w"> </span><span class="nl">v1</span><span class="p">:</span><span class="w"> </span><span class="n">v2</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+</div>
+<p>If the flag is true, the label of <code class="docutils literal notranslate"><span class="pre">v</span></code> is the union of the labels of <code class="docutils literal notranslate"><span class="pre">b</span></code>,
+<code class="docutils literal notranslate"><span class="pre">v1</span></code> and <code class="docutils literal notranslate"><span class="pre">v2</span></code>.  If the flag is false, the label of <code class="docutils literal notranslate"><span class="pre">v</span></code> is the union of the
+labels of just <code class="docutils literal notranslate"><span class="pre">v1</span></code> and <code class="docutils literal notranslate"><span class="pre">v2</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-event-callbacks</span></code> – An experimental feature that inserts callbacks for
+certain data events. Currently callbacks are only inserted for loads, stores,
+memory transfers (i.e. memcpy and memmove), and comparisons. Its default value
+is false. If this flag is set to true, a user must provide definitions for the
+following callback functions:</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">__dfsan_load_callback</span><span class="p">(</span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">Label</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">Addr</span><span class="p">);</span><span class="w"></span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__dfsan_store_callback</span><span class="p">(</span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">Label</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">Addr</span><span class="p">);</span><span class="w"></span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__dfsan_mem_transfer_callback</span><span class="p">(</span><span class="n">dfsan_label</span><span class="w"> </span><span class="o">*</span><span class="n">Start</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">Len</span><span class="p">);</span><span class="w"></span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__dfsan_cmp_callback</span><span class="p">(</span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">CombinedLabel</span><span class="p">);</span><span class="w"></span>
+</pre></div>
+</div>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-conditional-callbacks</span></code> – An experimental feature that inserts
+callbacks for control flow conditional expressions.
+This can be used to find where tainted values can control execution.</p>
+<p>In addition to this compilation flag, a callback handler must be registered
+using <code class="docutils literal notranslate"><span class="pre">dfsan_set_conditional_callback(my_callback);</span></code>, where my_callback is
+a function with a signature matching
+<code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">my_callback(dfsan_label</span> <span class="pre">l,</span> <span class="pre">dfsan_origin</span> <span class="pre">o);</span></code>.
+This signature is the same when origin tracking is disabled - in this case
+the dfsan_origin passed in it will always be 0.</p>
+<p>The callback will only be called when a tainted value reaches a conditional
+expression for control flow (such as an if’s condition).
+The callback will be skipped for conditional expressions inside signal
+handlers, as this is prone to deadlock. Tainted values used in conditional
+expressions inside signal handlers will instead be aggregated via bitwise
+or, and can be accessed using
+<code class="docutils literal notranslate"><span class="pre">dfsan_label</span> <span class="pre">dfsan_get_labels_in_signal_conditional();</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-track-origins</span></code> – Controls how to track origins. When its value is
+0, the runtime does not track origins. When its value is 1, the runtime tracks
+origins at memory store operations. When its value is 2, the runtime tracks
+origins at memory load and store operations. Its default value is 0.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-dfsan-instrument-with-call-threshold</span></code> – If a function being instrumented
+requires more than this number of origin stores, use callbacks instead of
+inline checks (-1 means never use callbacks). Its default value is 3500.</p></li>
+</ul>
+</div>
+<div class="section" id="environment-variables">
+<h3><a class="toc-backref" href="#id7">Environment Variables</a><a class="headerlink" href="#environment-variables" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">warn_unimplemented</span></code> – Whether to warn on unimplemented functions. Its
+default value is false.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">strict_data_dependencies</span></code> – Whether to propagate labels only when there is
+explicit obvious data dependency (e.g., when comparing strings, ignore the fact
+that the output of the comparison might be implicit data-dependent on the
+content of the strings). This applies only to functions with <code class="docutils literal notranslate"><span class="pre">custom</span></code> category
+in ABI list. Its default value is true.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">origin_history_size</span></code> – The limit of origin chain length. Non-positive values
+mean unlimited. Its default value is 16.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">origin_history_per_stack_limit</span></code> – The limit of origin node’s references count.
+Non-positive values mean unlimited. Its default value is 20000.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">store_context_size</span></code> – The depth limit of origin tracking stack traces. Its
+default value is 20.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_in_malloc</span></code> – Whether to zero shadow space of new allocated memory. Its
+default value is true.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_in_free</span></code> — Whether to zero shadow space of deallocated memory. Its
+default value is true.</p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="example">
+<h2><a class="toc-backref" href="#id8">Example</a><a class="headerlink" href="#example" title="Permalink to this headline">¶</a></h2>
+<p>DataFlowSanitizer supports up to 8 labels, to achieve low CPU and code
+size overhead. Base labels are simply 8-bit unsigned integers that are
+powers of 2 (i.e. 1, 2, 4, 8, …, 128), and union labels are created
+by ORing base labels.</p>
+<p>The following program demonstrates label propagation by checking that
+the correct labels are propagated.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sanitizer/dfsan_interface.h&gt;</span><span class="cp"></span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;assert.h&gt;</span><span class="cp"></span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">200</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">300</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">i_label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">j_label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">k_label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w"></span>
+<span class="w">  </span><span class="n">dfsan_set_label</span><span class="p">(</span><span class="n">i_label</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">i</span><span class="p">));</span><span class="w"></span>
+<span class="w">  </span><span class="n">dfsan_set_label</span><span class="p">(</span><span class="n">j_label</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">j</span><span class="p">));</span><span class="w"></span>
+<span class="w">  </span><span class="n">dfsan_set_label</span><span class="p">(</span><span class="n">k_label</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">k</span><span class="p">));</span><span class="w"></span>
+
+<span class="w">  </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">ij_label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dfsan_get_label</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ij_label</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">i_label</span><span class="p">);</span><span class="w">  </span><span class="c1">// ij_label has i_label</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ij_label</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">j_label</span><span class="p">);</span><span class="w">  </span><span class="c1">// ij_label has j_label</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="n">ij_label</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">k_label</span><span class="p">));</span><span class="w">  </span><span class="c1">// ij_label doesn&#39;t have k_label</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ij_label</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">3</span><span class="p">);</span><span class="w">  </span><span class="c1">// Verifies all of the above</span>
+
+<span class="w">  </span><span class="c1">// Or, equivalently:</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">dfsan_has_label</span><span class="p">(</span><span class="n">ij_label</span><span class="p">,</span><span class="w"> </span><span class="n">i_label</span><span class="p">));</span><span class="w"></span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">dfsan_has_label</span><span class="p">(</span><span class="n">ij_label</span><span class="p">,</span><span class="w"> </span><span class="n">j_label</span><span class="p">));</span><span class="w"></span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="o">!</span><span class="n">dfsan_has_label</span><span class="p">(</span><span class="n">ij_label</span><span class="p">,</span><span class="w"> </span><span class="n">k_label</span><span class="p">));</span><span class="w"></span>
+
+<span class="w">  </span><span class="n">dfsan_label</span><span class="w"> </span><span class="n">ijk_label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dfsan_get_label</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">k</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ijk_label</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">i_label</span><span class="p">);</span><span class="w">  </span><span class="c1">// ijk_label has i_label</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ijk_label</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">j_label</span><span class="p">);</span><span class="w">  </span><span class="c1">// ijk_label has j_label</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ijk_label</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">k_label</span><span class="p">);</span><span class="w">  </span><span class="c1">// ijk_label has k_label</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">ijk_label</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">7</span><span class="p">);</span><span class="w">  </span><span class="c1">// Verifies all of the above</span>
+
+<span class="w">  </span><span class="c1">// Or, equivalently:</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">dfsan_has_label</span><span class="p">(</span><span class="n">ijk_label</span><span class="p">,</span><span class="w"> </span><span class="n">i_label</span><span class="p">));</span><span class="w"></span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">dfsan_has_label</span><span class="p">(</span><span class="n">ijk_label</span><span class="p">,</span><span class="w"> </span><span class="n">j_label</span><span class="p">));</span><span class="w"></span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">dfsan_has_label</span><span class="p">(</span><span class="n">ijk_label</span><span class="p">,</span><span class="w"> </span><span class="n">k_label</span><span class="p">));</span><span class="w"></span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="origin-tracking">
+<h2><a class="toc-backref" href="#id9">Origin Tracking</a><a class="headerlink" href="#origin-tracking" title="Permalink to this headline">¶</a></h2>
+<p>DataFlowSanitizer can track origins of labeled values. This feature is enabled by
+<code class="docutils literal notranslate"><span class="pre">-mllvm</span> <span class="pre">-dfsan-track-origins=1</span></code>. For example,</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>cat test.cc
+<span class="gp">#</span>include &lt;sanitizer/dfsan_interface.h&gt;
+<span class="gp">#</span>include &lt;stdio.h&gt;
+
+<span class="go">int main(int argc, char** argv) {</span>
+<span class="go">  int i = 0;</span>
+<span class="go">  dfsan_set_label(i_label, &amp;i, sizeof(i));</span>
+<span class="go">  int j = i + 1;</span>
+<span class="go">  dfsan_print_origin_trace(&amp;j, &quot;A flow from i to j&quot;);</span>
+<span class="go">  return 0;</span>
+<span class="go">}</span>
+
+<span class="gp">% </span>clang++ -fsanitize<span class="o">=</span>dataflow -mllvm -dfsan-track-origins<span class="o">=</span><span class="m">1</span> -fno-omit-frame-pointer -g -O2 test.cc
+<span class="gp">% </span>./a.out
+<span class="go">Taint value 0x1 (at 0x7ffd42bf415c) origin tracking (A flow from i to j)</span>
+<span class="go">Origin value: 0x13900001, Taint value was stored to memory at</span>
+<span class="gp">  #</span><span class="m">0</span> 0x55676db85a62 <span class="k">in</span> main test.cc:7:7
+<span class="gp">  #</span><span class="m">1</span> 0x7f0083611bbc <span class="k">in</span> __libc_start_main libc-start.c:285
+
+<span class="go">Origin value: 0x9e00001, Taint value was created at</span>
+<span class="gp">  #</span><span class="m">0</span> 0x55676db85a08 <span class="k">in</span> main test.cc:6:3
+<span class="gp">  #</span><span class="m">1</span> 0x7f0083611bbc <span class="k">in</span> __libc_start_main libc-start.c:285
+</pre></div>
+</div>
+<p>By <code class="docutils literal notranslate"><span class="pre">-mllvm</span> <span class="pre">-dfsan-track-origins=1</span></code> DataFlowSanitizer collects only
+intermediate stores a labeled value went through. Origin tracking slows down
+program execution by a factor of 2x on top of the usual DataFlowSanitizer
+slowdown and increases memory overhead by 1x. By <code class="docutils literal notranslate"><span class="pre">-mllvm</span> <span class="pre">-dfsan-track-origins=2</span></code>
+DataFlowSanitizer also collects intermediate loads a labeled value went through.
+This mode slows down program execution by a factor of 4x.</p>
+</div>
+<div class="section" id="current-status">
+<h2><a class="toc-backref" href="#id10">Current status</a><a class="headerlink" href="#current-status" title="Permalink to this headline">¶</a></h2>
+<p>DataFlowSanitizer is a work in progress, currently under development for
+x86_64 Linux.</p>
+</div>
+<div class="section" id="design">
+<h2><a class="toc-backref" href="#id11">Design</a><a class="headerlink" href="#design" title="Permalink to this headline">¶</a></h2>
+<p>Please refer to the <a class="reference internal" href="DataFlowSanitizerDesign.html"><span class="doc">design document</span></a>.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="UndefinedBehaviorSanitizer.html">UndefinedBehaviorSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="DataFlowSanitizerDesign.html">DataFlowSanitizer Design Document</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 4.5.0.
+    </div>
+  </body>
+</html>

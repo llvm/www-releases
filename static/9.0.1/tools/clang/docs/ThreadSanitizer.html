@@ -1,0 +1,187 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>ThreadSanitizer &#8212; Clang 9 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="MemorySanitizer" href="MemorySanitizer.html" />
+    <link rel="prev" title="AddressSanitizer" href="AddressSanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 9 documentation</span></a></h1>
+        <h2 class="heading"><span>ThreadSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AddressSanitizer.html">AddressSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="MemorySanitizer.html">MemorySanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="threadsanitizer">
+<h1>ThreadSanitizer<a class="headerlink" href="#threadsanitizer" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>ThreadSanitizer is a tool that detects data races.  It consists of a compiler
+instrumentation module and a run-time library.  Typical slowdown introduced by
+ThreadSanitizer is about <strong>5x-15x</strong>.  Typical memory overhead introduced by
+ThreadSanitizer is about <strong>5x-10x</strong>.</p>
+</div>
+<div class="section" id="how-to-build">
+<h2>How to build<a class="headerlink" href="#how-to-build" title="Permalink to this headline">¶</a></h2>
+<p>Build LLVM/Clang with <a class="reference external" href="https://llvm.org/docs/CMake.html">CMake</a>.</p>
+</div>
+<div class="section" id="supported-platforms">
+<h2>Supported Platforms<a class="headerlink" href="#supported-platforms" title="Permalink to this headline">¶</a></h2>
+<p>ThreadSanitizer is supported on the following OS:</p>
+<ul class="simple">
+<li><p>Android aarch64, x86_64</p></li>
+<li><p>Darwin arm64, x86_64</p></li>
+<li><p>FreeBSD</p></li>
+<li><p>Linux aarch64, x86_64, powerpc64, powerpc64le</p></li>
+<li><p>NetBSD</p></li>
+</ul>
+<p>Support for other 64-bit architectures is possible, contributions are welcome.
+Support for 32-bit platforms is problematic and is not planned.</p>
+</div>
+<div class="section" id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<p>Simply compile and link your program with <code class="docutils literal notranslate"><span class="pre">-fsanitize=thread</span></code>.  To get a
+reasonable performance add <code class="docutils literal notranslate"><span class="pre">-O1</span></code> or higher.  Use <code class="docutils literal notranslate"><span class="pre">-g</span></code> to get file names
+and line numbers in the warning messages.</p>
+<p>Example:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">%</span> cat projects/compiler-rt/lib/tsan/lit_tests/tiny_race.c
+<span class="gp">#</span>include &lt;pthread.h&gt;
+<span class="go">int Global;</span>
+<span class="go">void *Thread1(void *x) {</span>
+<span class="go">  Global = 42;</span>
+<span class="go">  return x;</span>
+<span class="go">}</span>
+<span class="go">int main() {</span>
+<span class="go">  pthread_t t;</span>
+<span class="go">  pthread_create(&amp;t, NULL, Thread1, NULL);</span>
+<span class="go">  Global = 43;</span>
+<span class="go">  pthread_join(t, NULL);</span>
+<span class="go">  return Global;</span>
+<span class="go">}</span>
+
+<span class="gp">$</span> clang -fsanitize<span class="o">=</span>thread -g -O1 tiny_race.c
+</pre></div>
+</div>
+<p>If a bug is detected, the program will print an error message to stderr.
+Currently, ThreadSanitizer symbolizes its output using an external
+<code class="docutils literal notranslate"><span class="pre">addr2line</span></code> process (this will be fixed in future).</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>% ./a.out
+WARNING: ThreadSanitizer: data race <span class="o">(</span><span class="nv">pid</span><span class="o">=</span><span class="m">19219</span><span class="o">)</span>
+  Write of size <span class="m">4</span> at 0x7fcf47b21bc0 by thread T1:
+    <span class="c1">#0 Thread1 tiny_race.c:4 (exe+0x00000000a360)</span>
+
+  Previous write of size <span class="m">4</span> at 0x7fcf47b21bc0 by main thread:
+    <span class="c1">#0 main tiny_race.c:10 (exe+0x00000000a3b4)</span>
+
+  Thread T1 <span class="o">(</span>running<span class="o">)</span> created at:
+    <span class="c1">#0 pthread_create tsan_interceptors.cc:705 (exe+0x00000000c790)</span>
+    <span class="c1">#1 main tiny_race.c:9 (exe+0x00000000a3a4)</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="has-feature-thread-sanitizer">
+<h2><code class="docutils literal notranslate"><span class="pre">__has_feature(thread_sanitizer)</span></code><a class="headerlink" href="#has-feature-thread-sanitizer" title="Permalink to this headline">¶</a></h2>
+<p>In some cases one may need to execute different code depending on whether
+ThreadSanitizer is enabled.
+<a class="reference internal" href="LanguageExtensions.html#langext-has-feature-has-extension"><span class="std std-ref">__has_feature</span></a> can be used for
+this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature)</span>
+<span class="cp">#  if __has_feature(thread_sanitizer)</span>
+<span class="c1">// code that builds only under ThreadSanitizer</span>
+<span class="cp">#  endif</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="attribute-no-sanitize-thread">
+<h2><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;thread&quot;)))</span></code><a class="headerlink" href="#attribute-no-sanitize-thread" title="Permalink to this headline">¶</a></h2>
+<p>Some code should not be instrumented by ThreadSanitizer.  One may use the
+function attribute <code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;thread&quot;)</span></code> to disable instrumentation of plain
+(non-atomic) loads/stores in a particular function.  ThreadSanitizer still
+instruments such functions to avoid false positives and provide meaningful stack
+traces.  This attribute may not be supported by other compilers, so we suggest
+to use it together with <code class="docutils literal notranslate"><span class="pre">__has_feature(thread_sanitizer)</span></code>.</p>
+</div>
+<div class="section" id="blacklist">
+<h2>Blacklist<a class="headerlink" href="#blacklist" title="Permalink to this headline">¶</a></h2>
+<p>ThreadSanitizer supports <code class="docutils literal notranslate"><span class="pre">src</span></code> and <code class="docutils literal notranslate"><span class="pre">fun</span></code> entity types in
+<a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>, that can be used to suppress data race reports
+in the specified source files or functions. Unlike functions marked with
+<code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;thread&quot;)</span></code> attribute, blacklisted functions are not instrumented
+at all. This can lead to false positives due to missed synchronization via
+atomic operations and missed stack frames in reports.</p>
+</div>
+<div class="section" id="limitations">
+<h2>Limitations<a class="headerlink" href="#limitations" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>ThreadSanitizer uses more real memory than a native run. At the default
+settings the memory overhead is 5x plus 1Mb per each thread. Settings with 3x
+(less accurate analysis) and 9x (more accurate analysis) overhead are also
+available.</p></li>
+<li><p>ThreadSanitizer maps (but does not reserve) a lot of virtual address space.
+This means that tools like <code class="docutils literal notranslate"><span class="pre">ulimit</span></code> may not work as usually expected.</p></li>
+<li><p>Libc/libstdc++ static linking is not supported.</p></li>
+<li><p>Non-position-independent executables are not supported.  Therefore, the
+<code class="docutils literal notranslate"><span class="pre">fsanitize=thread</span></code> flag will cause Clang to act as though the <code class="docutils literal notranslate"><span class="pre">-fPIE</span></code>
+flag had been supplied if compiling without <code class="docutils literal notranslate"><span class="pre">-fPIC</span></code>, and as though the
+<code class="docutils literal notranslate"><span class="pre">-pie</span></code> flag had been supplied if linking an executable.</p></li>
+</ul>
+</div>
+<div class="section" id="current-status">
+<h2>Current Status<a class="headerlink" href="#current-status" title="Permalink to this headline">¶</a></h2>
+<p>ThreadSanitizer is in beta stage.  It is known to work on large C++ programs
+using pthreads, but we do not promise anything (yet).  C++11 threading is
+supported with llvm libc++.  The test suite is integrated into CMake build
+and can be run with <code class="docutils literal notranslate"><span class="pre">make</span> <span class="pre">check-tsan</span></code> command.</p>
+<p>We are actively working on enhancing the tool — stay tuned.  Any help,
+especially in the form of minimized standalone tests is more than welcome.</p>
+</div>
+<div class="section" id="more-information">
+<h2>More Information<a class="headerlink" href="#more-information" title="Permalink to this headline">¶</a></h2>
+<p><a class="reference external" href="https://github.com/google/sanitizers/wiki/ThreadSanitizerCppManual">https://github.com/google/sanitizers/wiki/ThreadSanitizerCppManual</a></p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AddressSanitizer.html">AddressSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="MemorySanitizer.html">MemorySanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

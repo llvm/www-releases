@@ -1,0 +1,177 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>SYCL Compiler and Runtime architecture design &#8212; Clang 13 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="ThinLTO" href="ThinLTO.html" />
+    <link rel="prev" title="OpenMP Support" href="OpenMPSupport.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 13 documentation</span></a></h1>
+        <h2 class="heading"><span>SYCL Compiler and Runtime architecture design</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMPSupport.html">OpenMP Support</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ThinLTO.html">ThinLTO</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="sycl-compiler-and-runtime-architecture-design">
+<h1>SYCL Compiler and Runtime architecture design<a class="headerlink" href="#sycl-compiler-and-runtime-architecture-design" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#address-space-handling" id="id2">Address space handling</a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id1">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>This document describes the architecture of the SYCL compiler and runtime
+library. More details are provided in
+<a class="reference external" href="https://github.com/intel/llvm/blob/sycl/sycl/doc/CompilerAndRuntimeDesign.md">external document</a>,
+which are going to be added to clang documentation in the future.</p>
+</div>
+<div class="section" id="address-space-handling">
+<h2><a class="toc-backref" href="#id2">Address space handling</a><a class="headerlink" href="#address-space-handling" title="Permalink to this headline">¶</a></h2>
+<p>The SYCL specification represents pointers to disjoint memory regions using C++
+wrapper classes on an accelerator to enable compilation with a standard C++
+toolchain and a SYCL compiler toolchain. Section 3.8.2 of SYCL 2020
+specification defines
+<a class="reference external" href="https://www.khronos.org/registry/SYCL/specs/sycl-2020/html/sycl-2020.html#_sycl_device_memory_model">memory model</a>,
+section 4.7.7 - <a class="reference external" href="https://www.khronos.org/registry/SYCL/specs/sycl-2020/html/sycl-2020.html#_address_space_classes">address space classes</a>
+and section 5.9 covers <a class="reference external" href="https://www.khronos.org/registry/SYCL/specs/sycl-2020/html/sycl-2020.html#_address_space_deduction">address space deduction</a>.
+The SYCL specification allows two modes of address space deduction: “generic as
+default address space” (see section 5.9.3) and “inferred address space” (see
+section 5.9.4). Current implementation supports only “generic as default address
+space” mode.</p>
+<p>SYCL borrows its memory model from OpenCL however SYCL doesn’t perform
+the address space qualifier inference as detailed in
+<a class="reference external" href="https://www.khronos.org/registry/OpenCL/specs/3.0-unified/html/OpenCL_C.html#addr-spaces-inference">OpenCL C v3.0 6.7.8</a>.</p>
+<p>The default address space is “generic-memory”, which is a virtual address space
+that overlaps the global, local, and private address spaces. SYCL mode enables
+following conversions:</p>
+<ul class="simple">
+<li><p>explicit conversions to/from the default address space from/to the address
+space-attributed type</p></li>
+<li><p>implicit conversions from the address space-attributed type to the default
+address space</p></li>
+<li><p>explicit conversions to/from the global address space from/to the
+<code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global_device))</span></code> or
+<code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global_host))</span></code> address space-attributed type</p></li>
+<li><p>implicit conversions from the <code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global_device))</span></code> or
+<code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global_host))</span></code> address space-attributed type to the
+global address space</p></li>
+</ul>
+<p>All named address spaces are disjoint and sub-sets of default address space.</p>
+<p>The SPIR target allocates SYCL namespace scope variables in the global address
+space.</p>
+<p>Pointers to default address space should get lowered into a pointer to a generic
+address space (or flat to reuse more general terminology). But depending on the
+allocation context, the default address space of a non-pointer type is assigned
+to a specific address space. This is described in
+<a class="reference external" href="https://www.khronos.org/registry/SYCL/specs/sycl-2020/html/sycl-2020.html#subsec:commonAddressSpace">common address space deduction rules</a>
+section.</p>
+<p>This is also in line with the behaviour of CUDA (<a class="reference external" href="https://godbolt.org/z/veqTfo9PK">small example</a>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">multi_ptr</span></code> class implementation example:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// check that SYCL mode is ON and we can use non-standard decorations</span>
+<span class="cp">#if defined(__SYCL_DEVICE_ONLY__)</span>
+<span class="c1">// GPU/accelerator implementation</span>
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="p">,</span> <span class="n">address_space</span> <span class="n">AS</span><span class="o">&gt;</span> <span class="k">class</span> <span class="nc">multi_ptr</span> <span class="p">{</span>
+  <span class="c1">// DecoratedType applies corresponding address space attribute to the type T</span>
+  <span class="c1">// DecoratedType&lt;T, global_space&gt;::type == &quot;__attribute__((opencl_global)) T&quot;</span>
+  <span class="c1">// See sycl/include/CL/sycl/access/access.hpp for more details</span>
+  <span class="k">using</span> <span class="n">pointer_t</span> <span class="o">=</span> <span class="k">typename</span> <span class="n">DecoratedType</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span> <span class="n">AS</span><span class="o">&gt;::</span><span class="n">type</span> <span class="o">*</span><span class="p">;</span>
+
+  <span class="n">pointer_t</span> <span class="n">m_Pointer</span><span class="p">;</span>
+  <span class="k">public</span><span class="o">:</span>
+  <span class="n">pointer_t</span> <span class="n">get</span><span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="n">m_Pointer</span><span class="p">;</span> <span class="p">}</span>
+  <span class="n">T</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">*</span> <span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="o">*</span><span class="k">reinterpret_cast</span><span class="o">&lt;</span><span class="n">T</span><span class="o">*&gt;</span><span class="p">(</span><span class="n">m_Pointer</span><span class="p">);</span> <span class="p">}</span>
+<span class="p">}</span>
+<span class="cp">#else</span>
+<span class="c1">// CPU/host implementation</span>
+<span class="k">template</span> <span class="o">&lt;</span><span class="k">typename</span> <span class="n">T</span><span class="p">,</span> <span class="n">address_space</span> <span class="n">AS</span><span class="o">&gt;</span> <span class="k">class</span> <span class="nc">multi_ptr</span> <span class="p">{</span>
+  <span class="n">T</span> <span class="o">*</span><span class="n">m_Pointer</span><span class="p">;</span> <span class="c1">// regular undecorated pointer</span>
+  <span class="k">public</span><span class="o">:</span>
+  <span class="n">T</span> <span class="o">*</span><span class="n">get</span><span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="n">m_Pointer</span><span class="p">;</span> <span class="p">}</span>
+  <span class="n">T</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">*</span> <span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="o">*</span><span class="n">m_Pointer</span><span class="p">;</span> <span class="p">}</span>
+<span class="p">}</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+<p>Depending on the compiler mode, <code class="docutils literal notranslate"><span class="pre">multi_ptr</span></code> will either decorate its internal
+data with the address space attribute or not.</p>
+<p>To utilize clang’s existing functionality, we reuse the following OpenCL address
+space attributes for pointers:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Address space attribute</p></th>
+<th class="head"><p>SYCL address_space enumeration</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global))</span></code></p></td>
+<td><p>global_space, constant_space</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global_device))</span></code></p></td>
+<td><p>global_space</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_global_host))</span></code></p></td>
+<td><p>global_space</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_local))</span></code></p></td>
+<td><p>local_space</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">__attribute__((opencl_private))</span></code></p></td>
+<td><p>private_space</p></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="c1">//TODO: add support for __attribute__((opencl_global_host)) and __attribute__((opencl_global_device)).</span>
+</pre></div>
+</div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMPSupport.html">OpenMP Support</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ThinLTO.html">ThinLTO</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,95 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>clang-tidy - performance-no-int-to-ptr &#8212; Extra Clang Tools 13 documentation</title>
+    <link rel="stylesheet" href="../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="performance-noexcept-move-constructor" href="performance-noexcept-move-constructor.html" />
+    <link rel="prev" title="performance-no-automatic-move" href="performance-no-automatic-move.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Extra Clang Tools 13 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - performance-no-int-to-ptr</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="performance-no-automatic-move.html">performance-no-automatic-move</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="performance-noexcept-move-constructor.html">performance-noexcept-move-constructor</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="performance-no-int-to-ptr">
+<h1>performance-no-int-to-ptr<a class="headerlink" href="#performance-no-int-to-ptr" title="Permalink to this headline">¶</a></h1>
+<p>Diagnoses every integer to pointer cast.</p>
+<p>While casting an (integral) pointer to an integer is obvious - you just get
+the integral value of the pointer, casting an integer to an (integral) pointer
+is deceivingly different. While you will get a pointer with that integral value,
+if you got that integral value via a pointer-to-integer cast originally,
+the new pointer will lack the provenance information from the original pointer.</p>
+<p>So while (integral) pointer to integer casts are effectively no-ops,
+and are transparent to the optimizer, integer to (integral) pointer casts
+are <em>NOT</em> transparent, and may conceal information from optimizer.</p>
+<p>While that may be the intention, it is not always so. For example,
+let’s take a look at a routine to align the pointer up to the multiple of 16:
+The obvious, naive implementation for that is:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span><span class="o">*</span> <span class="nf">src</span><span class="p">(</span><span class="kt">char</span><span class="o">*</span> <span class="n">maybe_underbiased_ptr</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kt">uintptr_t</span> <span class="n">maybe_underbiased_intptr</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uintptr_t</span><span class="p">)</span><span class="n">maybe_underbiased_ptr</span><span class="p">;</span>
+  <span class="kt">uintptr_t</span> <span class="n">aligned_biased_intptr</span> <span class="o">=</span> <span class="n">maybe_underbiased_intptr</span> <span class="o">+</span> <span class="mi">15</span><span class="p">;</span>
+  <span class="kt">uintptr_t</span> <span class="n">aligned_intptr</span> <span class="o">=</span> <span class="n">aligned_biased_intptr</span> <span class="o">&amp;</span> <span class="p">(</span><span class="o">~</span><span class="mi">15</span><span class="p">);</span>
+  <span class="k">return</span> <span class="p">(</span><span class="kt">char</span><span class="o">*</span><span class="p">)</span><span class="n">aligned_intptr</span><span class="p">;</span> <span class="c1">// warning: avoid integer to pointer casts [performance-no-int-to-ptr]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The check will rightfully diagnose that cast.</p>
+<p>But when provenance concealment is not the goal of the code, but an accident,
+this example can be rewritten as follows, without using integer to pointer cast:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span><span class="o">*</span>
+<span class="nf">tgt</span><span class="p">(</span><span class="kt">char</span><span class="o">*</span> <span class="n">maybe_underbiased_ptr</span><span class="p">)</span> <span class="p">{</span>
+    <span class="kt">uintptr_t</span> <span class="n">maybe_underbiased_intptr</span> <span class="o">=</span> <span class="p">(</span><span class="kt">uintptr_t</span><span class="p">)</span><span class="n">maybe_underbiased_ptr</span><span class="p">;</span>
+    <span class="kt">uintptr_t</span> <span class="n">aligned_biased_intptr</span> <span class="o">=</span> <span class="n">maybe_underbiased_intptr</span> <span class="o">+</span> <span class="mi">15</span><span class="p">;</span>
+    <span class="kt">uintptr_t</span> <span class="n">aligned_intptr</span> <span class="o">=</span> <span class="n">aligned_biased_intptr</span> <span class="o">&amp;</span> <span class="p">(</span><span class="o">~</span><span class="mi">15</span><span class="p">);</span>
+    <span class="kt">uintptr_t</span> <span class="n">bias</span> <span class="o">=</span> <span class="n">aligned_intptr</span> <span class="o">-</span> <span class="n">maybe_underbiased_intptr</span><span class="p">;</span>
+    <span class="k">return</span> <span class="n">maybe_underbiased_ptr</span> <span class="o">+</span> <span class="n">bias</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="performance-no-automatic-move.html">performance-no-automatic-move</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="performance-noexcept-move-constructor.html">performance-noexcept-move-constructor</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

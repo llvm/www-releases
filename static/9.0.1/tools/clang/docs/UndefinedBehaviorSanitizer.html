@@ -1,0 +1,411 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>UndefinedBehaviorSanitizer &#8212; Clang 9 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="DataFlowSanitizer" href="DataFlowSanitizer.html" />
+    <link rel="prev" title="MemorySanitizer" href="MemorySanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 9 documentation</span></a></h1>
+        <h2 class="heading"><span>UndefinedBehaviorSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="MemorySanitizer.html">MemorySanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="DataFlowSanitizer.html">DataFlowSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="undefinedbehaviorsanitizer">
+<h1>UndefinedBehaviorSanitizer<a class="headerlink" href="#undefinedbehaviorsanitizer" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#how-to-build" id="id2">How to build</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id3">Usage</a></p></li>
+<li><p><a class="reference internal" href="#available-checks" id="id4">Available checks</a></p>
+<ul>
+<li><p><a class="reference internal" href="#volatile" id="id5">Volatile</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#minimal-runtime" id="id6">Minimal Runtime</a></p></li>
+<li><p><a class="reference internal" href="#stack-traces-and-report-symbolization" id="id7">Stack traces and report symbolization</a></p></li>
+<li><p><a class="reference internal" href="#silencing-unsigned-integer-overflow" id="id8">Silencing Unsigned Integer Overflow</a></p></li>
+<li><p><a class="reference internal" href="#issue-suppression" id="id9">Issue Suppression</a></p>
+<ul>
+<li><p><a class="reference internal" href="#disabling-instrumentation-with-attribute-no-sanitize-undefined" id="id10">Disabling Instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;undefined&quot;)))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#suppressing-errors-in-recompiled-code-blacklist" id="id11">Suppressing Errors in Recompiled Code (Blacklist)</a></p></li>
+<li><p><a class="reference internal" href="#runtime-suppressions" id="id12">Runtime suppressions</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#supported-platforms" id="id13">Supported Platforms</a></p></li>
+<li><p><a class="reference internal" href="#current-status" id="id14">Current Status</a></p></li>
+<li><p><a class="reference internal" href="#additional-configuration" id="id15">Additional Configuration</a></p>
+<ul>
+<li><p><a class="reference internal" href="#example" id="id16">Example</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#more-information" id="id17">More Information</a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id1">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>UndefinedBehaviorSanitizer (UBSan) is a fast undefined behavior detector.
+UBSan modifies the program at compile-time to catch various kinds of undefined
+behavior during program execution, for example:</p>
+<ul class="simple">
+<li><p>Using misaligned or null pointer</p></li>
+<li><p>Signed integer overflow</p></li>
+<li><p>Conversion to, from, or between floating-point types which would
+overflow the destination</p></li>
+</ul>
+<p>See the full list of available <a class="reference internal" href="#ubsan-checks"><span class="std std-ref">checks</span></a> below.</p>
+<p>UBSan has an optional run-time library which provides better error reporting.
+The checks have small runtime cost and no impact on address space layout or ABI.</p>
+</div>
+<div class="section" id="how-to-build">
+<h2><a class="toc-backref" href="#id2">How to build</a><a class="headerlink" href="#how-to-build" title="Permalink to this headline">¶</a></h2>
+<p>Build LLVM/Clang with <a class="reference external" href="https://llvm.org/docs/CMake.html">CMake</a>.</p>
+</div>
+<div class="section" id="usage">
+<h2><a class="toc-backref" href="#id3">Usage</a><a class="headerlink" href="#usage" title="Permalink to this headline">¶</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">clang++</span></code> to compile and link your program with <code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined</span></code>
+flag. Make sure to use <code class="docutils literal notranslate"><span class="pre">clang++</span></code> (not <code class="docutils literal notranslate"><span class="pre">ld</span></code>) as a linker, so that your
+executable is linked with proper UBSan runtime libraries. You can use <code class="docutils literal notranslate"><span class="pre">clang</span></code>
+instead of <code class="docutils literal notranslate"><span class="pre">clang++</span></code> if you’re compiling/linking C code.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">%</span> cat test.cc
+<span class="go">int main(int argc, char **argv) {</span>
+<span class="go">  int k = 0x7fffffff;</span>
+<span class="go">  k += argc;</span>
+<span class="go">  return 0;</span>
+<span class="go">}</span>
+<span class="gp">%</span> clang++ -fsanitize<span class="o">=</span>undefined test.cc
+<span class="gp">%</span> ./a.out
+<span class="go">test.cc:3:5: runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type &#39;int&#39;</span>
+</pre></div>
+</div>
+<p>You can enable only a subset of <a class="reference internal" href="#ubsan-checks"><span class="std std-ref">checks</span></a> offered by UBSan,
+and define the desired behavior for each kind of check:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=...</span></code>: print a verbose error report and continue execution (default);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fno-sanitize-recover=...</span></code>: print a verbose error report and exit the program;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize-trap=...</span></code>: execute a trap instruction (doesn’t require UBSan run-time support).</p></li>
+</ul>
+<p>For example if you compile/link your program as:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">%</span> clang++ -fsanitize<span class="o">=</span>signed-integer-overflow,null,alignment -fno-sanitize-recover<span class="o">=</span>null -fsanitize-trap<span class="o">=</span>alignment
+</pre></div>
+</div>
+<p>the program will continue execution after signed integer overflows, exit after
+the first invalid use of a null pointer, and trap after the first use of misaligned
+pointer.</p>
+</div>
+<div class="section" id="available-checks">
+<span id="ubsan-checks"></span><h2><a class="toc-backref" href="#id4">Available checks</a><a class="headerlink" href="#available-checks" title="Permalink to this headline">¶</a></h2>
+<p>Available checks are:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=alignment</span></code>: Use of a misaligned pointer or creation
+of a misaligned reference. Also sanitizes assume_aligned-like attributes.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=bool</span></code>: Load of a <code class="docutils literal notranslate"><span class="pre">bool</span></code> value which is neither
+<code class="docutils literal notranslate"><span class="pre">true</span></code> nor <code class="docutils literal notranslate"><span class="pre">false</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=builtin</span></code>: Passing invalid values to compiler builtins.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=bounds</span></code>: Out of bounds array indexing, in cases
+where the array bound can be statically determined.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=enum</span></code>: Load of a value of an enumerated type which
+is not in the range of representable values for that enumerated
+type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=float-cast-overflow</span></code>: Conversion to, from, or
+between floating-point types which would overflow the
+destination. Because the range of representable values for all
+floating-point types supported by Clang is [-inf, +inf], the only
+cases detected are conversions from floating point to integer types.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=float-divide-by-zero</span></code>: Floating point division by
+zero. This is undefined per the C and C++ standards, but is defined
+by Clang (and by ISO/IEC/IEEE 60559 / IEEE 754) as producing either an
+infinity or NaN value, so is not included in <code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code>: Indirect call of a function through a
+function pointer of the wrong type (Darwin/Linux, C++ and x86/x86_64
+only).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-unsigned-integer-truncation</span></code>,
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-signed-integer-truncation</span></code>: Implicit conversion from
+integer of larger bit width to smaller bit width, if that results in data
+loss. That is, if the demoted value, after casting back to the original
+width, is not equal to the original value before the downcast.
+The <code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-unsigned-integer-truncation</span></code> handles conversions
+between two <code class="docutils literal notranslate"><span class="pre">unsigned</span></code> types, while
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-signed-integer-truncation</span></code> handles the rest of the
+conversions - when either one, or both of the types are signed.
+Issues caught by these sanitizers are not undefined behavior,
+but are often unintentional.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-integer-sign-change</span></code>: Implicit conversion between
+integer types, if that changes the sign of the value. That is, if the the
+original value was negative and the new value is positive (or zero),
+or the original value was positive, and the new value is negative.
+Issues caught by this sanitizer are not undefined behavior,
+but are often unintentional.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=integer-divide-by-zero</span></code>: Integer division by zero.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=nonnull-attribute</span></code>: Passing null pointer as a function
+parameter which is declared to never be null.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=null</span></code>: Use of a null pointer or creation of a null
+reference.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=nullability-arg</span></code>: Passing null as a function parameter
+which is annotated with <code class="docutils literal notranslate"><span class="pre">_Nonnull</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=nullability-assign</span></code>: Assigning null to an lvalue which
+is annotated with <code class="docutils literal notranslate"><span class="pre">_Nonnull</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=nullability-return</span></code>: Returning null from a function with
+a return type annotated with <code class="docutils literal notranslate"><span class="pre">_Nonnull</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=object-size</span></code>: An attempt to potentially use bytes which
+the optimizer can determine are not part of the object being accessed.
+This will also detect some types of undefined behavior that may not
+directly access memory, but are provably incorrect given the size of
+the objects involved, such as invalid downcasts and calling methods on
+invalid pointers. These checks are made in terms of
+<code class="docutils literal notranslate"><span class="pre">__builtin_object_size</span></code>, and consequently may be able to detect more
+problems at higher optimization levels.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=pointer-overflow</span></code>: Performing pointer arithmetic which
+overflows.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=return</span></code>: In C++, reaching the end of a
+value-returning function without returning a value.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=returns-nonnull-attribute</span></code>: Returning null pointer
+from a function which is declared to never return null.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=shift</span></code>: Shift operators where the amount shifted is
+greater or equal to the promoted bit-width of the left hand side
+or less than zero, or where the left hand side is negative. For a
+signed left shift, also checks for signed overflow in C, and for
+unsigned overflow in C++. You can use <code class="docutils literal notranslate"><span class="pre">-fsanitize=shift-base</span></code> or
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=shift-exponent</span></code> to check only left-hand side or
+right-hand side of shift operation, respectively.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=signed-integer-overflow</span></code>: Signed integer overflow, where the
+result of a signed integer computation cannot be represented in its type.
+This includes all the checks covered by <code class="docutils literal notranslate"><span class="pre">-ftrapv</span></code>, as well as checks for
+signed division overflow (<code class="docutils literal notranslate"><span class="pre">INT_MIN/-1</span></code>), but not checks for
+lossy implicit conversions performed before the computation
+(see <code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-conversion</span></code>). Both of these two issues are
+handled by <code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-conversion</span></code> group of checks.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=unreachable</span></code>: If control flow reaches an unreachable
+program point.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=unsigned-integer-overflow</span></code>: Unsigned integer overflow, where
+the result of an unsigned integer computation cannot be represented in its
+type. Unlike signed integer overflow, this is not undefined behavior, but
+it is often unintentional. This sanitizer does not check for lossy implicit
+conversions performed before such a computation
+(see <code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-conversion</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=vla-bound</span></code>: A variable-length array whose bound
+does not evaluate to a positive value.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=vptr</span></code>: Use of an object whose vptr indicates that it is of
+the wrong dynamic type, or that its lifetime has not begun or has ended.
+Incompatible with <code class="docutils literal notranslate"><span class="pre">-fno-rtti</span></code>. Link must be performed by <code class="docutils literal notranslate"><span class="pre">clang++</span></code>, not
+<code class="docutils literal notranslate"><span class="pre">clang</span></code>, to make sure C++-specific parts of the runtime library and C++
+standard libraries are present.</p></li>
+</ul>
+</div></blockquote>
+<dl class="simple">
+<dt>You can also use the following check groups:</dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined</span></code>: All of the checks listed above other than
+<code class="docutils literal notranslate"><span class="pre">float-divide-by-zero</span></code>, <code class="docutils literal notranslate"><span class="pre">unsigned-integer-overflow</span></code>,
+<code class="docutils literal notranslate"><span class="pre">implicit-conversion</span></code>, and the <code class="docutils literal notranslate"><span class="pre">nullability-*</span></code> group of checks.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined-trap</span></code>: Deprecated alias of
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-integer-truncation</span></code>: Catches lossy integral
+conversions. Enables <code class="docutils literal notranslate"><span class="pre">implicit-signed-integer-truncation</span></code> and
+<code class="docutils literal notranslate"><span class="pre">implicit-unsigned-integer-truncation</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-integer-arithmetic-value-change</span></code>: Catches implicit
+conversions that change the arithmetic value of the integer. Enables
+<code class="docutils literal notranslate"><span class="pre">implicit-signed-integer-truncation</span></code> and <code class="docutils literal notranslate"><span class="pre">implicit-integer-sign-change</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=implicit-conversion</span></code>: Checks for suspicious
+behavior of implicit conversions. Enables
+<code class="docutils literal notranslate"><span class="pre">implicit-unsigned-integer-truncation</span></code>,
+<code class="docutils literal notranslate"><span class="pre">implicit-signed-integer-truncation</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">implicit-integer-sign-change</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=integer</span></code>: Checks for undefined or suspicious integer
+behavior (e.g. unsigned integer overflow).
+Enables <code class="docutils literal notranslate"><span class="pre">signed-integer-overflow</span></code>, <code class="docutils literal notranslate"><span class="pre">unsigned-integer-overflow</span></code>,
+<code class="docutils literal notranslate"><span class="pre">shift</span></code>, <code class="docutils literal notranslate"><span class="pre">integer-divide-by-zero</span></code>,
+<code class="docutils literal notranslate"><span class="pre">implicit-unsigned-integer-truncation</span></code>,
+<code class="docutils literal notranslate"><span class="pre">implicit-signed-integer-truncation</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">implicit-integer-sign-change</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=nullability</span></code>: Enables <code class="docutils literal notranslate"><span class="pre">nullability-arg</span></code>,
+<code class="docutils literal notranslate"><span class="pre">nullability-assign</span></code>, and <code class="docutils literal notranslate"><span class="pre">nullability-return</span></code>. While violating
+nullability does not have undefined behavior, it is often unintentional,
+so UBSan offers to catch it.</p></li>
+</ul>
+</dd>
+</dl>
+<div class="section" id="volatile">
+<h3><a class="toc-backref" href="#id5">Volatile</a><a class="headerlink" href="#volatile" title="Permalink to this headline">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">null</span></code>, <code class="docutils literal notranslate"><span class="pre">alignment</span></code>, <code class="docutils literal notranslate"><span class="pre">object-size</span></code>, and <code class="docutils literal notranslate"><span class="pre">vptr</span></code> checks do not apply
+to pointers to types with the <code class="docutils literal notranslate"><span class="pre">volatile</span></code> qualifier.</p>
+</div>
+</div>
+<div class="section" id="minimal-runtime">
+<h2><a class="toc-backref" href="#id6">Minimal Runtime</a><a class="headerlink" href="#minimal-runtime" title="Permalink to this headline">¶</a></h2>
+<p>There is a minimal UBSan runtime available suitable for use in production
+environments. This runtime has a small attack surface. It only provides very
+basic issue logging and deduplication, and does not support
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsanitize=vptr</span></code> checking.</p>
+<p>To use the minimal runtime, add <code class="docutils literal notranslate"><span class="pre">-fsanitize-minimal-runtime</span></code> to the clang
+command line options. For example, if you’re used to compiling with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined</span></code>, you could enable the minimal runtime with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=undefined</span> <span class="pre">-fsanitize-minimal-runtime</span></code>.</p>
+</div>
+<div class="section" id="stack-traces-and-report-symbolization">
+<h2><a class="toc-backref" href="#id7">Stack traces and report symbolization</a><a class="headerlink" href="#stack-traces-and-report-symbolization" title="Permalink to this headline">¶</a></h2>
+<p>If you want UBSan to print symbolized stack trace for each error report, you
+will need to:</p>
+<ol class="arabic simple">
+<li><p>Compile with <code class="docutils literal notranslate"><span class="pre">-g</span></code> and <code class="docutils literal notranslate"><span class="pre">-fno-omit-frame-pointer</span></code> to get proper debug
+information in your binary.</p></li>
+<li><p>Run your program with environment variable
+<code class="docutils literal notranslate"><span class="pre">UBSAN_OPTIONS=print_stacktrace=1</span></code>.</p></li>
+<li><p>Make sure <code class="docutils literal notranslate"><span class="pre">llvm-symbolizer</span></code> binary is in <code class="docutils literal notranslate"><span class="pre">PATH</span></code>.</p></li>
+</ol>
+</div>
+<div class="section" id="silencing-unsigned-integer-overflow">
+<h2><a class="toc-backref" href="#id8">Silencing Unsigned Integer Overflow</a><a class="headerlink" href="#silencing-unsigned-integer-overflow" title="Permalink to this headline">¶</a></h2>
+<p>To silence reports from unsigned integer overflow, you can set
+<code class="docutils literal notranslate"><span class="pre">UBSAN_OPTIONS=silence_unsigned_overflow=1</span></code>.  This feature, combined with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize-recover=unsigned-integer-overflow</span></code>, is particularly useful for
+providing fuzzing signal without blowing up logs.</p>
+</div>
+<div class="section" id="issue-suppression">
+<h2><a class="toc-backref" href="#id9">Issue Suppression</a><a class="headerlink" href="#issue-suppression" title="Permalink to this headline">¶</a></h2>
+<p>UndefinedBehaviorSanitizer is not expected to produce false positives.
+If you see one, look again; most likely it is a true positive!</p>
+<div class="section" id="disabling-instrumentation-with-attribute-no-sanitize-undefined">
+<h3><a class="toc-backref" href="#id10">Disabling Instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;undefined&quot;)))</span></code></a><a class="headerlink" href="#disabling-instrumentation-with-attribute-no-sanitize-undefined" title="Permalink to this headline">¶</a></h3>
+<p>You disable UBSan checks for particular functions with
+<code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;undefined&quot;)))</span></code>. You can use all values of
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=</span></code> flag in this attribute, e.g. if your function deliberately
+contains possible signed integer overflow, you can use
+<code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;signed-integer-overflow&quot;)))</span></code>.</p>
+<p>This attribute may not be
+supported by other compilers, so consider using it together with
+<code class="docutils literal notranslate"><span class="pre">#if</span> <span class="pre">defined(__clang__)</span></code>.</p>
+</div>
+<div class="section" id="suppressing-errors-in-recompiled-code-blacklist">
+<h3><a class="toc-backref" href="#id11">Suppressing Errors in Recompiled Code (Blacklist)</a><a class="headerlink" href="#suppressing-errors-in-recompiled-code-blacklist" title="Permalink to this headline">¶</a></h3>
+<p>UndefinedBehaviorSanitizer supports <code class="docutils literal notranslate"><span class="pre">src</span></code> and <code class="docutils literal notranslate"><span class="pre">fun</span></code> entity types in
+<a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>, that can be used to suppress error reports
+in the specified source files or functions.</p>
+</div>
+<div class="section" id="runtime-suppressions">
+<h3><a class="toc-backref" href="#id12">Runtime suppressions</a><a class="headerlink" href="#runtime-suppressions" title="Permalink to this headline">¶</a></h3>
+<p>Sometimes you can suppress UBSan error reports for specific files, functions,
+or libraries without recompiling the code. You need to pass a path to
+suppression file in a <code class="docutils literal notranslate"><span class="pre">UBSAN_OPTIONS</span></code> environment variable.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">UBSAN_OPTIONS</span><span class="o">=</span><span class="nv">suppressions</span><span class="o">=</span>MyUBSan.supp
+</pre></div>
+</div>
+<p>You need to specify a <a class="reference internal" href="#ubsan-checks"><span class="std std-ref">check</span></a> you are suppressing and the
+bug location. For example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>signed-integer-overflow:file-with-known-overflow.cpp
+alignment:function_doing_unaligned_access
+vptr:shared_object_with_vptr_failures.so
+</pre></div>
+</div>
+<p>There are several limitations:</p>
+<ul class="simple">
+<li><p>Sometimes your binary must have enough debug info and/or symbol table, so
+that the runtime could figure out source file or function name to match
+against the suppression.</p></li>
+<li><p>It is only possible to suppress recoverable checks. For the example above,
+you can additionally pass
+<code class="docutils literal notranslate"><span class="pre">-fsanitize-recover=signed-integer-overflow,alignment,vptr</span></code>, although
+most of UBSan checks are recoverable by default.</p></li>
+<li><p>Check groups (like <code class="docutils literal notranslate"><span class="pre">undefined</span></code>) can’t be used in suppressions file, only
+fine-grained checks are supported.</p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="supported-platforms">
+<h2><a class="toc-backref" href="#id13">Supported Platforms</a><a class="headerlink" href="#supported-platforms" title="Permalink to this headline">¶</a></h2>
+<p>UndefinedBehaviorSanitizer is supported on the following operating systems:</p>
+<ul class="simple">
+<li><p>Android</p></li>
+<li><p>Linux</p></li>
+<li><p>NetBSD</p></li>
+<li><p>FreeBSD</p></li>
+<li><p>OpenBSD</p></li>
+<li><p>macOS</p></li>
+<li><p>Windows</p></li>
+</ul>
+<p>The runtime library is relatively portable and platform independent. If the OS
+you need is not listed above, UndefinedBehaviorSanitizer may already work for
+it, or could be made to work with a minor porting effort.</p>
+</div>
+<div class="section" id="current-status">
+<h2><a class="toc-backref" href="#id14">Current Status</a><a class="headerlink" href="#current-status" title="Permalink to this headline">¶</a></h2>
+<p>UndefinedBehaviorSanitizer is available on selected platforms starting from LLVM
+3.3. The test suite is integrated into the CMake build and can be run with
+<code class="docutils literal notranslate"><span class="pre">check-ubsan</span></code> command.</p>
+</div>
+<div class="section" id="additional-configuration">
+<h2><a class="toc-backref" href="#id15">Additional Configuration</a><a class="headerlink" href="#additional-configuration" title="Permalink to this headline">¶</a></h2>
+<p>UndefinedBehaviorSanitizer adds static check data for each check unless it is
+in trap mode. This check data includes the full file name. The option
+<code class="docutils literal notranslate"><span class="pre">-fsanitize-undefined-strip-path-components=N</span></code> can be used to trim this
+information. If <code class="docutils literal notranslate"><span class="pre">N</span></code> is positive, file information emitted by
+UndefinedBehaviorSanitizer will drop the first <code class="docutils literal notranslate"><span class="pre">N</span></code> components from the file
+path. If <code class="docutils literal notranslate"><span class="pre">N</span></code> is negative, the last <code class="docutils literal notranslate"><span class="pre">N</span></code> components will be kept.</p>
+<div class="section" id="example">
+<h3><a class="toc-backref" href="#id16">Example</a><a class="headerlink" href="#example" title="Permalink to this headline">¶</a></h3>
+<p>For a file called <code class="docutils literal notranslate"><span class="pre">/code/library/file.cpp</span></code>, here is what would be emitted:</p>
+<ul class="simple">
+<li><p>Default (No flag, or <code class="docutils literal notranslate"><span class="pre">-fsanitize-undefined-strip-path-components=0</span></code>): <code class="docutils literal notranslate"><span class="pre">/code/library/file.cpp</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize-undefined-strip-path-components=1</span></code>: <code class="docutils literal notranslate"><span class="pre">code/library/file.cpp</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize-undefined-strip-path-components=2</span></code>: <code class="docutils literal notranslate"><span class="pre">library/file.cpp</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize-undefined-strip-path-components=-1</span></code>: <code class="docutils literal notranslate"><span class="pre">file.cpp</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize-undefined-strip-path-components=-2</span></code>: <code class="docutils literal notranslate"><span class="pre">library/file.cpp</span></code></p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="more-information">
+<h2><a class="toc-backref" href="#id17">More Information</a><a class="headerlink" href="#more-information" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p>From LLVM project blog:
+<a class="reference external" href="http://blog.llvm.org/2011/05/what-every-c-programmer-should-know.html">What Every C Programmer Should Know About Undefined Behavior</a></p></li>
+<li><p>From John Regehr’s <em>Embedded in Academia</em> blog:
+<a class="reference external" href="https://blog.regehr.org/archives/213">A Guide to Undefined Behavior in C and C++</a></p></li>
+</ul>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="MemorySanitizer.html">MemorySanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="DataFlowSanitizer.html">DataFlowSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2021, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
