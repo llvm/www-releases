@@ -5,7 +5,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
-    <title>LLVM Testing Infrastructure Guide &#8212; LLVM 15.0.0 documentation</title>
+    <title>LLVM Testing Infrastructure Guide &#8212; LLVM 16.0.0 documentation</title>
     <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
@@ -75,7 +75,7 @@
     <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
     <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
     <li><a href="https://llvm.org/pubs">Publications</a></li>
-    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
 </ul>
   <div role="note" aria-label="source link">
     <h3>This Page</h3>
@@ -131,9 +131,10 @@
 <li><p><a class="reference internal" href="#fragile-tests" id="id18">Fragile tests</a></p></li>
 <li><p><a class="reference internal" href="#platform-specific-tests" id="id19">Platform-Specific Tests</a></p></li>
 <li><p><a class="reference internal" href="#constraining-test-execution" id="id20">Constraining test execution</a></p></li>
-<li><p><a class="reference internal" href="#substitutions" id="id21">Substitutions</a></p></li>
-<li><p><a class="reference internal" href="#options" id="id22">Options</a></p></li>
-<li><p><a class="reference internal" href="#other-features" id="id23">Other Features</a></p></li>
+<li><p><a class="reference internal" href="#tips-for-writing-constraints" id="id21">Tips for writing constraints</a></p></li>
+<li><p><a class="reference internal" href="#substitutions" id="id22">Substitutions</a></p></li>
+<li><p><a class="reference internal" href="#options" id="id23">Options</a></p></li>
+<li><p><a class="reference internal" href="#other-features" id="id24">Other Features</a></p></li>
 </ul>
 </li>
 </ul>
@@ -296,7 +297,7 @@ particular area of LLVM.</p>
 <h3><a class="toc-backref" href="#id15">Writing new regression tests</a><a class="headerlink" href="#writing-new-regression-tests" title="Permalink to this headline">¶</a></h3>
 <p>The regression test structure is very simple, but does require some
 information to be set. This information is gathered via <code class="docutils literal notranslate"><span class="pre">cmake</span></code>
-and is written to a file, <code class="docutils literal notranslate"><span class="pre">test/lit.site.cfg</span></code> in the build directory.
+and is written to a file, <code class="docutils literal notranslate"><span class="pre">test/lit.site.cfg.py</span></code> in the build directory.
 The <code class="docutils literal notranslate"><span class="pre">llvm/test</span></code> Makefile does this work for you.</p>
 <p>In order for the regression tests to work, each directory of tests must
 have a <code class="docutils literal notranslate"><span class="pre">lit.local.cfg</span></code> file. <strong class="program">lit</strong> looks for this file to determine
@@ -321,7 +322,7 @@ Consequently, the syntax differs from shell in a few ways. You can specify
 as many RUN lines as needed.</p>
 <p><strong class="program">lit</strong> performs substitution on each RUN line to replace LLVM tool names
 with the full paths to the executable built for each tool (in
-<code class="docutils literal notranslate"><span class="pre">$(LLVM_OBJ_ROOT)/$(BuildMode)/bin)</span></code>. This ensures that <strong class="program">lit</strong> does
+<code class="docutils literal notranslate"><span class="pre">$(LLVM_OBJ_ROOT)/bin</span></code>). This ensures that <strong class="program">lit</strong> does
 not invoke any stray LLVM tools in the user’s path during testing.</p>
 <p>Each RUN line is executed on its own, distinct from other lines unless
 its last character is <code class="docutils literal notranslate"><span class="pre">\</span></code>. This continuation character causes the RUN
@@ -359,7 +360,8 @@ adding your code there instead of creating a new file.</p>
 <p>Some regression test cases are very large and complex to write/update by hand.
 In that case to reduce the human work we can use the scripts available in
 llvm/utils/ to generate the assertions.</p>
-<p>For example to generate assertions in an <strong class="program">llc</strong>-based test, run:</p>
+<p>For example to generate assertions in an <strong class="program">llc</strong>-based test, after
+adding RUN line use:</p>
 <blockquote>
 <div><div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>% llvm/utils/update_llc_test_checks.py --llc-binary build/bin/llc test.ll
 </pre></div>
@@ -543,10 +545,10 @@ An <code class="docutils literal notranslate"><span class="pre">XFAIL</span></co
 will be a failure if its execution succeeds.</p>
 <div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; This test will be only enabled in the build with asserts.</span>
 <span class="c">; REQUIRES: asserts</span>
-<span class="c">; This test is disabled on Linux.</span>
-<span class="c">; UNSUPPORTED: -linux-</span>
-<span class="c">; This test is expected to fail on PowerPC.</span>
-<span class="c">; XFAIL: powerpc</span>
+<span class="c">; This test is disabled when running on Linux.</span>
+<span class="c">; UNSUPPORTED: system-linux</span>
+<span class="c">; This test is expected to fail when targeting PowerPC.</span>
+<span class="c">; XFAIL: target=powerpc{{.*}}</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">REQUIRES</span></code> and <code class="docutils literal notranslate"><span class="pre">UNSUPPORTED</span></code> and <code class="docutils literal notranslate"><span class="pre">XFAIL</span></code> all accept a comma-separated
@@ -558,7 +560,10 @@ contain any Python regular expression enclosed in <code class="docutils literal 
 expression is satisfied if any feature matches the regular expression. Regular
 expressions can appear inside an identifier, so for example <code class="docutils literal notranslate"><span class="pre">he{{l+}}o</span></code> would match
 <code class="docutils literal notranslate"><span class="pre">helo</span></code>, <code class="docutils literal notranslate"><span class="pre">hello</span></code>, <code class="docutils literal notranslate"><span class="pre">helllo</span></code>, and so on.</p></li>
-<li><p>Substrings of the target triple (<code class="docutils literal notranslate"><span class="pre">UNSUPPORTED</span></code> and <code class="docutils literal notranslate"><span class="pre">XFAIL</span></code> only).</p></li>
+<li><p>The default target triple, preceded by the string <code class="docutils literal notranslate"><span class="pre">target=</span></code> (for example,
+<code class="docutils literal notranslate"><span class="pre">target=x86_64-pc-windows-msvc</span></code>). Typically regular expressions are used
+to match parts of the triple (for example, <code class="docutils literal notranslate"><span class="pre">target={{.*}}-windows{{.*}}</span></code>
+to match any Windows target triple).</p></li>
 </ul>
 <div class="line-block">
 <div class="line"><code class="docutils literal notranslate"><span class="pre">REQUIRES</span></code> enables the test if all expressions are true.</div>
@@ -566,16 +571,48 @@ expressions can appear inside an identifier, so for example <code class="docutil
 <div class="line"><code class="docutils literal notranslate"><span class="pre">XFAIL</span></code> expects the test to fail if any expression is true.</div>
 </div>
 <p>As a special case, <code class="docutils literal notranslate"><span class="pre">XFAIL:</span> <span class="pre">*</span></code> is expected to fail everywhere.</p>
-<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; This test is disabled on Windows,</span>
-<span class="c">; and is disabled on Linux, except for Android Linux.</span>
-<span class="c">; UNSUPPORTED: windows, linux &amp;&amp; !android</span>
-<span class="c">; This test is expected to fail on both PowerPC and ARM.</span>
-<span class="c">; XFAIL: powerpc || arm</span>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; This test is disabled when running on Windows,</span>
+<span class="c">; and is disabled when targeting Linux, except for Android Linux.</span>
+<span class="c">; UNSUPPORTED: system-windows, target={{.*linux.*}} &amp;&amp; !target={{.*android.*}}</span>
+<span class="c">; This test is expected to fail when targeting PowerPC or running on Darwin.</span>
+<span class="c">; XFAIL: target=powerpc{{.*}}, system-darwin</span>
 </pre></div>
 </div>
 </div>
+<div class="section" id="tips-for-writing-constraints">
+<h3><a class="toc-backref" href="#id21">Tips for writing constraints</a><a class="headerlink" href="#tips-for-writing-constraints" title="Permalink to this headline">¶</a></h3>
+<p><strong>``REQUIRES`` and ``UNSUPPORTED``</strong></p>
+<p>These are logical inverses. In principle, <code class="docutils literal notranslate"><span class="pre">UNSUPPORTED</span></code> isn’t absolutely
+necessary (the logical negation could be used with <code class="docutils literal notranslate"><span class="pre">REQUIRES</span></code> to get
+exactly the same effect), but it can make these clauses easier to read and
+understand. Generally, people use <code class="docutils literal notranslate"><span class="pre">REQUIRES</span></code> to state things that the test
+depends on to operate correctly, and <code class="docutils literal notranslate"><span class="pre">UNSUPPORTED</span></code> to exclude cases where
+the test is expected never to work.</p>
+<p><strong>``UNSUPPORTED`` and ``XFAIL``</strong></p>
+<p>Both of these indicate that the test isn’t expected to work; however, they
+have different effects. <code class="docutils literal notranslate"><span class="pre">UNSUPPORTED</span></code> causes the test to be skipped;
+this saves execution time, but then you’ll never know whether the test
+actually would start working. Conversely, <code class="docutils literal notranslate"><span class="pre">XFAIL</span></code> actually runs the test
+but expects a failure output, taking extra execution time but alerting you
+if/when the test begins to behave correctly (an XPASS test result). You
+need to decide which is more appropriate in each case.</p>
+<p><strong>Using ``target=…``</strong></p>
+<p>Checking the target triple can be tricky; it’s easy to mis-specify. For
+example, <code class="docutils literal notranslate"><span class="pre">target=mips{{.*}}</span></code> will match not only mips, but also mipsel,
+mips64, and mips64el. <code class="docutils literal notranslate"><span class="pre">target={{.*}}-linux-gnu</span></code> will match
+x86_64-unknown-linux-gnu, but not armv8l-unknown-linux-gnueabihf.
+Prefer to use hyphens to delimit triple components (<code class="docutils literal notranslate"><span class="pre">target=mips-{{.*}}</span></code>)
+and it’s generally a good idea to use a trailing wildcard to allow for
+unexpected suffixes.</p>
+<p>Also, it’s generally better to write regular expressions that use entire
+triple components, than to do something clever to shorten them. For
+example, to match both freebsd and netbsd in an expression, you could write
+<code class="docutils literal notranslate"><span class="pre">target={{.*(free|net)bsd.*}}</span></code> and that would work. However, it would
+prevent a <code class="docutils literal notranslate"><span class="pre">grep</span> <span class="pre">freebsd</span></code> from finding this test. Better to use:
+<code class="docutils literal notranslate"><span class="pre">target={{.+-freebsd.*}}</span> <span class="pre">||</span> <span class="pre">target={{.+-netbsd.*}}</span></code></p>
+</div>
 <div class="section" id="substitutions">
-<h3><a class="toc-backref" href="#id21">Substitutions</a><a class="headerlink" href="#substitutions" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id22">Substitutions</a><a class="headerlink" href="#substitutions" title="Permalink to this headline">¶</a></h3>
 <p>Besides replacing LLVM tool names the following substitutions are performed in
 RUN lines:</p>
 <dl>
@@ -652,6 +689,15 @@ ENOENT, EISDIR, EINVAL, EACCES.</p>
 <code class="docutils literal notranslate"><span class="pre">%else</span> <span class="pre">%{&lt;else</span> <span class="pre">branch&gt;%}</span></code> is optional and treated like <code class="docutils literal notranslate"><span class="pre">%else</span> <span class="pre">%{%}</span></code>
 if not present.</p>
 </div></blockquote>
+<p><code class="docutils literal notranslate"><span class="pre">%(line)</span></code>, <code class="docutils literal notranslate"><span class="pre">%(line+&lt;number&gt;)</span></code>, <code class="docutils literal notranslate"><span class="pre">%(line-&lt;number&gt;)</span></code></p>
+<blockquote>
+<div><p>The number of the line where this substitution is used, with an
+optional integer offset.  These expand only if they appear
+immediately in <code class="docutils literal notranslate"><span class="pre">RUN:</span></code>, <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code>, and <code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code> directives.
+Occurrences in substitutions defined elsewhere are never expanded.
+For example, this can be used in tests with multiple RUN lines,
+which reference the test file’s line numbers.</p>
+</div></blockquote>
 <p><strong>LLVM-specific substitutions:</strong></p>
 <dl>
 <dt><code class="docutils literal notranslate"><span class="pre">%shlibext</span></code></dt><dd><p>The suffix for the host platforms shared library files. This includes the
@@ -661,10 +707,6 @@ period as the first character.</p>
 <dt><code class="docutils literal notranslate"><span class="pre">%exeext</span></code></dt><dd><p>The suffix for the host platforms executable files. This includes the
 period as the first character.</p>
 <p>Example: <code class="docutils literal notranslate"><span class="pre">.exe</span></code> (Windows), empty on Linux.</p>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">%(line)</span></code>, <code class="docutils literal notranslate"><span class="pre">%(line+&lt;number&gt;)</span></code>, <code class="docutils literal notranslate"><span class="pre">%(line-&lt;number&gt;)</span></code></dt><dd><p>The number of the line where this substitution is used, with an optional
-integer offset. This can be used in tests with multiple RUN lines, which
-reference test file’s line numbers.</p>
 </dd>
 </dl>
 <p><strong>Clang-specific substitutions:</strong></p>
@@ -693,10 +735,189 @@ output affects test results.  It’s usually easy to tell: just look for
 redirection or piping of the <code class="docutils literal notranslate"><span class="pre">FileCheck</span></code> call’s stdout or stderr.</p>
 </dd>
 </dl>
-<p>To add more substitutions, look at <code class="docutils literal notranslate"><span class="pre">test/lit.cfg</span></code> or <code class="docutils literal notranslate"><span class="pre">lit.local.cfg</span></code>.</p>
+<p id="test-specific-substitutions"><strong>Test-specific substitutions:</strong></p>
+<p>Additional substitutions can be defined as follows:</p>
+<ul class="simple">
+<li><p>Lit configuration files (e.g., <code class="docutils literal notranslate"><span class="pre">lit.cfg</span></code> or <code class="docutils literal notranslate"><span class="pre">lit.local.cfg</span></code>) can define
+substitutions for all tests in a test directory.  They do so by extending the
+substitution list, <code class="docutils literal notranslate"><span class="pre">config.substitutions</span></code>.  Each item in the list is a tuple
+consisting of a pattern and its replacement, which lit applies using python’s
+<code class="docutils literal notranslate"><span class="pre">re.sub</span></code> function.</p></li>
+<li><p>To define substitutions within a single test file, lit supports the
+<code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> and <code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code> directives, described in detail below.  So that
+they have no effect on other test files, these directives modify a copy of the
+substitution list that is produced by lit configuration files.</p></li>
+</ul>
+<p>For example, the following directives can be inserted into a test file to define
+<code class="docutils literal notranslate"><span class="pre">%{cflags}</span></code> and <code class="docutils literal notranslate"><span class="pre">%{fcflags}</span></code> substitutions with empty initial values, which
+serve as the parameters of another newly defined <code class="docutils literal notranslate"><span class="pre">%{check}</span></code> substitution:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; DEFINE: %{cflags} =</span>
+<span class="c">; DEFINE: %{fcflags} =</span>
+
+<span class="c">; DEFINE: %{check} =                                                  \</span>
+<span class="c">; DEFINE:   %clang_cc1 -verify -fopenmp -fopenmp-version=51 %{cflags} \</span>
+<span class="c">; DEFINE:              -emit-llvm -o - %s |                           \</span>
+<span class="c">; DEFINE:     FileCheck %{fcflags} %s</span>
+</pre></div>
+</div>
+<p>Alternatively, the above substitutions can be defined in a lit configuration
+file to be shared with other test files.  Either way, the test file can then
+specify directives like the following to redefine the parameter substitutions as
+desired before each use of <code class="docutils literal notranslate"><span class="pre">%{check}</span></code> in a <code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; REDEFINE: %{cflags} = -triple x86_64-apple-darwin10.6.0 -fopenmp-simd</span>
+<span class="c">; REDEFINE: %{fcflags} = -check-prefix=SIMD</span>
+<span class="c">; RUN: %{check}</span>
+
+<span class="c">; REDEFINE: %{cflags} = -triple x86_64-unknown-linux-gnu -fopenmp-simd</span>
+<span class="c">; REDEFINE: %{fcflags} = -check-prefix=SIMD</span>
+<span class="c">; RUN: %{check}</span>
+
+<span class="c">; REDEFINE: %{cflags} = -triple x86_64-apple-darwin10.6.0</span>
+<span class="c">; REDEFINE: %{fcflags} = -check-prefix=NO-SIMD</span>
+<span class="c">; RUN: %{check}</span>
+
+<span class="c">; REDEFINE: %{cflags} = -triple x86_64-unknown-linux-gnu</span>
+<span class="c">; REDEFINE: %{fcflags} = -check-prefix=NO-SIMD</span>
+<span class="c">; RUN: %{check}</span>
+</pre></div>
+</div>
+<p>Besides providing initial values, the initial <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> directives for the
+parameter substitutions in the above example serve a second purpose: they
+establish the substitution order so that both <code class="docutils literal notranslate"><span class="pre">%{check}</span></code> and its parameters
+expand as desired.  There’s a simple way to remember the required definition
+order in a test file: define a substitution before any substitution that might
+refer to it.</p>
+<p>In general, substitution expansion behaves as follows:</p>
+<ul class="simple">
+<li><p>Upon arriving at each <code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line, lit expands all substitutions in that
+<code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line using their current values from the substitution list.  No
+substitution expansion is performed immediately at <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> and
+<code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code> directives except <code class="docutils literal notranslate"><span class="pre">%(line)</span></code>, <code class="docutils literal notranslate"><span class="pre">%(line+&lt;number&gt;)</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">%(line-&lt;number&gt;)</span></code>.</p></li>
+<li><p>When expanding substitutions in a <code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line, lit makes only one pass
+through the substitution list by default.  In this case, a substitution must
+have been inserted earlier in the substitution list than any substitution
+appearing in its value in order for the latter to expand.  (For greater
+flexibility, you can enable multiple passes through the substitution list by
+setting <a class="reference internal" href="#recursiveexpansionlimit">recursiveExpansionLimit</a> in a lit configuration file.)</p></li>
+<li><p>While lit configuration files can insert anywhere in the substitution list,
+the insertion behavior of the <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> and <code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code> directives is
+specified below and is designed specifically for the use case presented in the
+example above.</p></li>
+<li><p>Defining a substitution in terms of itself, whether directly or via other
+substitutions, should be avoided.  It usually produces an infinitely recursive
+definition that cannot be fully expanded.  It does <em>not</em> define the
+substitution in terms of its previous value, even when using <code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code>.</p></li>
+</ul>
+<p>The relationship between the <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> and <code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code> directive is
+analogous to the relationship between a variable declaration and variable
+assignment in many programming languages:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">DEFINE:</span> <span class="pre">%{name}</span> <span class="pre">=</span> <span class="pre">value</span></code></p>
+<blockquote>
+<div><p>This directive assigns the specified value to a new substitution whose
+pattern is <code class="docutils literal notranslate"><span class="pre">%{name}</span></code>, or it reports an error if there is already a
+substitution whose pattern contains <code class="docutils literal notranslate"><span class="pre">%{name}</span></code> because that could produce
+confusing expansions (e.g., a lit configuration file might define a
+substitution with the pattern <code class="docutils literal notranslate"><span class="pre">%{name}\[0\]</span></code>).  The new substitution is
+inserted at the start of the substitution list so that it will expand first.
+Thus, its value can contain any substitution previously defined, whether in
+the same test file or in a lit configuration file, and both will expand.</p>
+</div></blockquote>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">REDEFINE:</span> <span class="pre">%{name}</span> <span class="pre">=</span> <span class="pre">value</span></code></p>
+<blockquote>
+<div><p>This directive assigns the specified value to an existing substitution whose
+pattern is <code class="docutils literal notranslate"><span class="pre">%{name}</span></code>, or it reports an error if there are no substitutions
+with that pattern or if there are multiple substitutions whose patterns
+contain <code class="docutils literal notranslate"><span class="pre">%{name}</span></code>.  The substitution’s current position in the substitution
+list does not change so that expansion order relative to other existing
+substitutions is preserved.</p>
+</div></blockquote>
+</li>
+</ul>
+<p>The following properties apply to both the <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> and <code class="docutils literal notranslate"><span class="pre">REDEFINE:</span></code>
+directives:</p>
+<ul>
+<li><p><strong>Substitution name</strong>: In the directive, whitespace immediately before or
+after <code class="docutils literal notranslate"><span class="pre">%{name}</span></code> is optional and discarded.  <code class="docutils literal notranslate"><span class="pre">%{name}</span></code> must start with
+<code class="docutils literal notranslate"><span class="pre">%{</span></code>, it must end with <code class="docutils literal notranslate"><span class="pre">}</span></code>, and the rest must start with a letter or
+underscore and contain only alphanumeric characters, hyphens, underscores, and
+colons.  This syntax has a few advantages:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>It is impossible for <code class="docutils literal notranslate"><span class="pre">%{name}</span></code> to contain sequences that are special in
+python’s <code class="docutils literal notranslate"><span class="pre">re.sub</span></code> patterns.  Otherwise, attempting to specify
+<code class="docutils literal notranslate"><span class="pre">%{name}</span></code> as a substitution pattern in a lit configuration file could
+produce confusing expansions.</p></li>
+<li><p>The braces help avoid the possibility that another substitution’s pattern
+will match part of <code class="docutils literal notranslate"><span class="pre">%{name}</span></code> or vice-versa, producing confusing
+expansions.  However, the patterns of substitutions defined by lit
+configuration files and by lit itself are not restricted to this form, so
+overlaps are still theoretically possible.</p></li>
+</ul>
+</div></blockquote>
+</li>
+<li><p><strong>Substitution value</strong>: The value includes all text from the first
+non-whitespace character after <code class="docutils literal notranslate"><span class="pre">=</span></code> to the last non-whitespace character.  If
+there is no non-whitespace character after <code class="docutils literal notranslate"><span class="pre">=</span></code>, the value is the empty
+string.  Escape sequences that can appear in python <code class="docutils literal notranslate"><span class="pre">re.sub</span></code> replacement
+strings are treated as plain text in the value.</p></li>
+<li><p><strong>Line continuations</strong>: If the last non-whitespace character on the line after
+<code class="docutils literal notranslate"><span class="pre">:</span></code> is <code class="docutils literal notranslate"><span class="pre">\</span></code>, then the next directive must use the same directive keyword
+(e.g., <code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code>) , and it is an error if there is no additional directive.
+That directive serves as a continuation.  That is, before following the rules
+above to parse the text after <code class="docutils literal notranslate"><span class="pre">:</span></code> in either directive, lit joins that text
+together to form a single directive, replaces the <code class="docutils literal notranslate"><span class="pre">\</span></code> with a single space,
+and removes any other whitespace that is now adjacent to that space.  A
+continuation can be continued in the same manner.  A continuation containing
+only whitespace after its <code class="docutils literal notranslate"><span class="pre">:</span></code> is an error.</p></li>
+</ul>
+<p id="recursiveexpansionlimit"><strong>recursiveExpansionLimit:</strong></p>
+<p>As described in the previous section, when expanding substitutions in a <code class="docutils literal notranslate"><span class="pre">RUN:</span></code>
+line, lit makes only one pass through the substitution list by default.  Thus,
+if substitutions are not defined in the proper order, some will remain in the
+<code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line unexpanded.  For example, the following directives refer to
+<code class="docutils literal notranslate"><span class="pre">%{inner}</span></code> within <code class="docutils literal notranslate"><span class="pre">%{outer}</span></code> but do not define <code class="docutils literal notranslate"><span class="pre">%{inner}</span></code> until after
+<code class="docutils literal notranslate"><span class="pre">%{outer}</span></code>:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; By default, this definition order does not enable full expansion.</span>
+
+<span class="c">; DEFINE: %{outer} = %{inner}</span>
+<span class="c">; DEFINE: %{inner} = expanded</span>
+
+<span class="c">; RUN: echo &#39;%{outer}&#39;</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">DEFINE:</span></code> inserts substitutions at the start of the substitution list, so
+<code class="docutils literal notranslate"><span class="pre">%{inner}</span></code> expands first but has no effect because the original <code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line
+does not contain <code class="docutils literal notranslate"><span class="pre">%{inner}</span></code>.  Next, <code class="docutils literal notranslate"><span class="pre">%{outer}</span></code> expands, and the output of
+the <code class="docutils literal notranslate"><span class="pre">echo</span></code> command becomes:</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>%<span class="o">{</span>inner<span class="o">}</span>
+</pre></div>
+</div>
+<p>Of course, one way to fix this simple case is to reverse the definitions of
+<code class="docutils literal notranslate"><span class="pre">%{outer}</span></code> and <code class="docutils literal notranslate"><span class="pre">%{inner}</span></code>.  However, if a test has a complex set of
+substitutions that can all reference each other, there might not exist a
+sufficient substitution order.</p>
+<p>To address such use cases, lit configuration files support
+<code class="docutils literal notranslate"><span class="pre">config.recursiveExpansionLimit</span></code>, which can be set to a non-negative integer
+to specify the maximum number of passes through the substitution list.  Thus, in
+the above example, setting the limit to 2 would cause lit to make a second pass
+that expands <code class="docutils literal notranslate"><span class="pre">%{inner}</span></code> in the <code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line, and the output from the <code class="docutils literal notranslate"><span class="pre">echo</span></code>
+command when then be:</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>expanded
+</pre></div>
+</div>
+<p>To improve performance, lit will stop making passes when it notices the <code class="docutils literal notranslate"><span class="pre">RUN:</span></code>
+line has stopped changing.  In the above example, setting the limit higher than
+2 is thus harmless.</p>
+<p>To facilitate debugging, after reaching the limit, lit will make one extra pass
+and report an error if the <code class="docutils literal notranslate"><span class="pre">RUN:</span></code> line changes again.  In the above example,
+setting the limit to 1 will thus cause lit to report an error instead of
+producing incorrect output.</p>
 </div>
 <div class="section" id="options">
-<h3><a class="toc-backref" href="#id22">Options</a><a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id23">Options</a><a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h3>
 <p>The llvm lit configuration allows to customize some things with user options:</p>
 <dl>
 <dt><code class="docutils literal notranslate"><span class="pre">llc</span></code>, <code class="docutils literal notranslate"><span class="pre">opt</span></code>, …</dt><dd><p>Substitute the respective llvm tool name with a custom command line. This
@@ -711,7 +932,7 @@ Example:</p>
 </dl>
 </div>
 <div class="section" id="other-features">
-<h3><a class="toc-backref" href="#id23">Other Features</a><a class="headerlink" href="#other-features" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id24">Other Features</a><a class="headerlink" href="#other-features" title="Permalink to this headline">¶</a></h3>
 <p>To make RUN line writing easier, there are several helper programs. These
 helpers are in the PATH when running tests, so you can just call them using
 their name. For example:</p>
@@ -765,8 +986,8 @@ interpretation of the remainder of the file.</p></li>
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2003-2022, LLVM Project.
-      Last updated on 2022-08-10.
+        &#169; Copyright 2003-2023, LLVM Project.
+      Last updated on 2023-03-18.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

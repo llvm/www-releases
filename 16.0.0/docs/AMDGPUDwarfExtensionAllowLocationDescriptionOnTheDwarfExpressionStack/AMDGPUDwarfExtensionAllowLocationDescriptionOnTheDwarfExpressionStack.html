@@ -5,7 +5,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
-    <title>Allow Location Descriptions on the DWARF Expression Stack &#8212; LLVM 15.0.0 documentation</title>
+    <title>Allow Location Descriptions on the DWARF Expression Stack &#8212; LLVM 16.0.0 documentation</title>
     <link rel="stylesheet" href="../_static/llvm-theme.css" type="text/css" />
     <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
     <script type="text/javascript" id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
@@ -76,7 +76,7 @@
     <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
     <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
     <li><a href="https://llvm.org/pubs">Publications</a></li>
-    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
 </ul>
   <div role="note" aria-label="source link">
     <h3>This Page</h3>
@@ -118,6 +118,8 @@
 <li><p><a class="reference external" href="#variable-location-in-memory">3.2.3 Variable Location in Memory</a></p></li>
 <li><p><a class="reference external" href="#variable-spread-across-different-locations">3.2.4 Variable Spread Across Different Locations</a></p></li>
 <li><p><a class="reference external" href="#offsetting-a-composite-location">3.2.5 Offsetting a Composite Location</a></p></li>
+<li><p><a class="reference external" href="#pointer-to-member">3.2.6 Pointer to Member</a></p></li>
+<li><p><a class="reference external" href="#virtual-base-class">3.2.7 Virtual Base Class</a></p></li>
 </ul>
 </li>
 <li><p><a class="reference external" href="#limitations">3.3 Limitations</a></p></li>
@@ -276,7 +278,7 @@ devices.</p>
 rules. However, these resulted in the need for more operations that did not
 compose. It also resulted in operations with context sensitive semantics and
 corner cases that had to be defined. The observation was that numerous
-specialized context sensitive operations are harder for both produces and
+specialized context sensitive operations are harder for both producers and
 consumers than a smaller number of general composable operations that have
 consistent semantics regardless of context.</p>
 <p>First, section <a class="reference external" href="#heterogeneous-computing-devices">2. Heterogeneous Computing
@@ -558,6 +560,331 @@ the offset. For example:</p>
 </div>
 <p>This illustrates that operations on stack values are not composable with
 operations on location descriptions.</p>
+</div>
+<div class="section" id="pointer-to-member">
+<h3>3.2.6 Pointer to Member<a class="headerlink" href="#pointer-to-member" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>NOTE: Without loss of generality, DWARF 4 is used in this example as full
+support for DWARF 5 is not present in the versions of the tools used. No
+feature of DWARF 5 provides a remedy for this issue.</p>
+</div></blockquote>
+<p>This example highlights the inability of DWARF 5 to describe C++
+pointer-to-member use semantics.</p>
+<p>The mechanism DWARF 5 provides for describing pointer-to-member use is
+<code class="docutils literal notranslate"><span class="pre">DW_AT_use_location</span></code>, which is defined as encoding a location description which
+computes the address of the member pointed to by a pointer-to-member, given the
+pointer-to-member object and the address of the containing object.</p>
+<p>That is, when a debug agent wishes to evaluate a pointer-to-member access
+operation, it first pushes two values onto the DWARF expression stack:</p>
+<ul class="simple">
+<li><p>The pointer-to-member object</p></li>
+<li><p>The address of the containing object</p></li>
+</ul>
+<p>It then evaluates the location description associated with the
+<code class="docutils literal notranslate"><span class="pre">DW_AT_use_location</span></code> of the pointer-to-member type, and interprets the result
+as the address of the member pointed to by the pointer-to-member.</p>
+<p>Consider the following C++ source file <code class="docutils literal notranslate"><span class="pre">s.cc</span></code>:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span> <span class="n">s</span> <span class="p">{</span>
+  <span class="kt">int</span> <span class="n">m</span><span class="p">;</span>
+  <span class="kt">int</span> <span class="n">n</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="kt">int</span> <span class="n">s</span><span class="o">::*</span> <span class="n">p</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>When compiled with GCC and inspected with dwarfdump:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ g++ -gdwarf-5 -O3 -c s.cc
+$ dwarfdump s.o
+&lt; 1&gt;&lt;0x0000001e&gt;    DW_TAG_structure_type
+                      DW_AT_name                  s
+                      DW_AT_byte_size             0x00000008
+                      DW_AT_sibling               &lt;0x0000003c&gt;
+&lt; 2&gt;&lt;0x00000029&gt;      DW_TAG_member
+                        DW_AT_name                  m
+                        DW_AT_type                  &lt;0x0000003c&gt;
+                        DW_AT_data_member_location  0
+&lt; 2&gt;&lt;0x00000032&gt;      DW_TAG_member
+                        DW_AT_name                  n
+                        DW_AT_type                  &lt;0x0000003c&gt;
+                        DW_AT_data_member_location  4
+&lt; 1&gt;&lt;0x0000003c&gt;    DW_TAG_base_type
+                      DW_AT_byte_size             0x00000004
+                      DW_AT_encoding              DW_ATE_signed
+                      DW_AT_name                  int
+&lt; 1&gt;&lt;0x00000043&gt;    DW_TAG_ptr_to_member_type
+                      DW_AT_containing_type       &lt;0x0000001e&gt;
+                      DW_AT_type                  &lt;0x0000003c&gt;
+                      DW_AT_use_location          len 0x0001: 22: DW_OP_plus
+&lt; 1&gt;&lt;0x0000004e&gt;    DW_TAG_variable
+                      DW_AT_name                  p
+                      DW_AT_type                  &lt;0x00000043&gt;
+                      DW_AT_external              yes(1)
+                      DW_AT_location              len 0x0009: 030000000000000000: DW_OP_addr 0x00000000
+</pre></div>
+</div>
+<p>Note the location description for <code class="docutils literal notranslate"><span class="pre">DW_AT_use_location</span></code> is <code class="docutils literal notranslate"><span class="pre">DW_OP_plus</span></code>, which
+reflects the GCC implementation of the pointer-to-member as an integral byte
+offset within the containing object. For example, the value of <code class="docutils literal notranslate"><span class="pre">&amp;s::m</span></code> in this
+implementation is <code class="docutils literal notranslate"><span class="pre">offsetof(s,</span> <span class="pre">m)</span></code> and the value of <code class="docutils literal notranslate"><span class="pre">&amp;s::n</span></code> is <code class="docutils literal notranslate"><span class="pre">offsetof(s,</span> <span class="pre">n)</span></code>:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span> <span class="n">s</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="n">m</span><span class="p">;</span>   <span class="c1">// offsetof(s, m) == 0</span>
+    <span class="kt">int</span> <span class="n">n</span><span class="p">;</span>   <span class="c1">// offsetof(s, n) == 4</span>
+<span class="p">}</span> <span class="n">o</span><span class="p">;</span>         <span class="c1">// &amp;o == 0xff00</span>
+<span class="kt">int</span> <span class="n">s</span><span class="o">::*</span> <span class="n">p</span><span class="p">;</span>
+<span class="kt">int</span> <span class="o">*</span><span class="n">i</span><span class="p">;</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">s</span><span class="o">::</span><span class="n">m</span><span class="p">;</span>   <span class="c1">// p == 0</span>
+<span class="n">i</span> <span class="o">=</span> <span class="o">&amp;</span><span class="p">(</span><span class="n">o</span><span class="p">.</span><span class="o">*</span><span class="n">p</span><span class="p">);</span> <span class="c1">// i == 0xff00 + 0</span>
+<span class="n">p</span> <span class="o">=</span> <span class="o">&amp;</span><span class="n">s</span><span class="o">::</span><span class="n">n</span><span class="p">;</span>   <span class="c1">// p == 4</span>
+<span class="n">i</span> <span class="o">=</span> <span class="o">&amp;</span><span class="p">(</span><span class="n">o</span><span class="p">.</span><span class="o">*</span><span class="n">p</span><span class="p">);</span> <span class="c1">// i == 0xff00 + 4</span>
+</pre></div>
+</div>
+<p>The expression <code class="docutils literal notranslate"><span class="pre">DW_OP_plus</span></code> accurately describes this implementation so long as
+the entire containing object resides in memory in the default address space.</p>
+<p>However, what if the containing object or the member pointed to are not at any
+default address space address?</p>
+<p>The compiler may store the containing object in memory in any address space,
+in a register, recompute its value at each use, or compose any of these in
+arbitrary ways.</p>
+<p>The richness of the existing DWARF 5 expression language is a reflection of the
+diversity of possible implementation strategies and optimization choices
+affecting the location of an object in a program, and (modulo address spaces)
+it can describe all of these locations for variables. However, the moment we
+look at a pointer-to-member use we are restricted to only objects residing in a
+contiguous piece of memory in the default address space.</p>
+<p>To demonstrate the problem, consider a program which GCC chooses to optimize in
+such a way that the containing object is not in memory at all:</p>
+<p>ptm.h:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span> <span class="n">s</span> <span class="p">{</span>
+    <span class="kt">int</span> <span class="n">m</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">n</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="kt">void</span> <span class="nf">i</span><span class="p">(</span><span class="kt">int</span><span class="p">);</span>
+<span class="k">extern</span> <span class="kt">int</span> <span class="n">t</span><span class="p">;</span>
+<span class="kt">void</span> <span class="nf">f</span><span class="p">(</span><span class="n">s</span> <span class="n">x</span><span class="p">,</span> <span class="kt">int</span> <span class="n">s</span><span class="o">::*</span> <span class="n">p</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>ptm.cc:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span> <span class="cpf">&quot;ptm.h&quot;</span><span class="cp"></span>
+<span class="kt">void</span> <span class="nf">f</span><span class="p">(</span><span class="n">s</span> <span class="n">x</span><span class="p">,</span> <span class="kt">int</span> <span class="n">s</span><span class="o">::*</span> <span class="n">p</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">a</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">a</span> <span class="o">&lt;</span> <span class="n">t</span><span class="p">;</span> <span class="o">++</span><span class="n">a</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">x</span><span class="p">.</span><span class="n">m</span> <span class="o">+=</span> <span class="n">a</span> <span class="o">+</span> <span class="n">x</span><span class="p">.</span><span class="n">n</span><span class="p">;</span>
+        <span class="n">i</span><span class="p">(</span><span class="n">x</span><span class="p">.</span><span class="o">*</span><span class="n">p</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>main.cc:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span> <span class="cpf">&quot;ptm.h&quot;</span><span class="cp"></span>
+<span class="kt">int</span> <span class="n">t</span> <span class="o">=</span> <span class="mi">100</span><span class="p">;</span>
+<span class="kt">void</span> <span class="nf">i</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span> <span class="p">{}</span>
+<span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">argv</span><span class="p">[])</span> <span class="p">{</span>
+    <span class="n">s</span> <span class="n">x</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span> <span class="p">};</span>
+    <span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">s</span><span class="o">::</span><span class="n">m</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>When compiled and run under GDB:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ g++-9 -gdwarf-4 -O3 -c main.cc -o main.o
+$ g++-9 -gdwarf-4 -O3 -c ptm.cc -o ptm.o
+$ g++-9 main.o ptm.o -o use_location.out
+$ gdb ./use_location.out
+(gdb) maint set dwarf always-disassemble
+(gdb) b ptm.cc:5
+Breakpoint 1 at 0x119e: file ptm.cc, line 5.
+(gdb) r
+
+Breakpoint 1, f (x=..., p=&lt;optimized out&gt;) at ptm.cc:5
+5               i(x.*p);
+</pre></div>
+</div>
+<p>Note that the compiler has promoted the entire object <code class="docutils literal notranslate"><span class="pre">x</span></code> into register <code class="docutils literal notranslate"><span class="pre">rdi</span></code>
+for the body of the loop:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>(gdb) info addr x
+Symbol &quot;x&quot; is multi-location:
+  Range 0x555555555160-0x5555555551af: a complex DWARF expression:
+     0: DW_OP_reg5 [$rdi]
+
+  Range 0x5555555551af-0x5555555551ba: a complex DWARF expression:
+     0: DW_OP_fbreg -56
+
+.
+(gdb) p $pc
+$1 = (void (*)(void)) 0x55555555519e &lt;f(s, int s::*)+62&gt;
+</pre></div>
+</div>
+<p>And so it is impossible to interpret <code class="docutils literal notranslate"><span class="pre">DW_OP_use_location</span></code> in this case:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>(gdb) p x.*p
+Address requested for identifier &quot;x&quot; which is in register $rdi
+</pre></div>
+</div>
+<p>With location descriptions on the stack, the definition of <code class="docutils literal notranslate"><span class="pre">DW_OP_use_location</span></code>
+can be modified by replacing every instance of “address” with “location
+description”, as is described in <a class="reference external" href="#a-5-type-entries">A.5 Type Entries</a>.</p>
+<p>To implement the fully generalized version of this attribute, GCC would only
+need to change the expression from <code class="docutils literal notranslate"><span class="pre">DW_OP_plus</span></code> to <code class="docutils literal notranslate"><span class="pre">DW_OP_swap,</span> <span class="pre">DW_OP_LLVM_offset</span></code>.</p>
+</div>
+<div class="section" id="virtual-base-class">
+<h3>3.2.7 Virtual Base Class<a class="headerlink" href="#virtual-base-class" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p>NOTE: Without loss of generality, DWARF 4 is used in this example as full
+support for DWARF 5 is not present in the versions of the tools used. No
+feature of DWARF 5 provides a remedy for this issue.</p>
+</div></blockquote>
+<p>This example highlights the inability of DWARF 5 to describe C++
+virtual inheritance semantics.</p>
+<p>The mechanism DWARF 5 provides for describing the location of an inherited
+subobject is <code class="docutils literal notranslate"><span class="pre">DW_AT_data_member_location</span></code>. This attribute is overloaded to
+describe both data member locations and inherited subobject locations, and
+in each case has multiple possible forms:</p>
+<ul class="simple">
+<li><p>If an integral constant form, it encodes the byte offset from the derived
+object to the data member or subobject.</p></li>
+<li><p>Otherwise, it encodes a location description to compute the address of the
+data member or subobject given the address of the derived object.</p></li>
+</ul>
+<p>Only the attribute describing a subobject, and only the location description
+form are considered here.</p>
+<p>In this case, when a debug agent wishes to locate the subobject, it first
+pushes the address of the derived object onto the DWARF expression stack. It
+then evaluates the location description associated with the
+<code class="docutils literal notranslate"><span class="pre">DW_AT_data_member_location</span></code> of the <code class="docutils literal notranslate"><span class="pre">DW_TAG_inheritence</span></code> DIE corresponding to
+the inherited subobject.</p>
+<p>Consider the following C++ source file <code class="docutils literal notranslate"><span class="pre">ab.cc</span></code>:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">class</span> <span class="nc">A</span> <span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+    <span class="kt">char</span> <span class="n">x</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="k">class</span> <span class="nc">B</span>
+<span class="o">:</span> <span class="k">public</span> <span class="k">virtual</span> <span class="n">A</span> <span class="p">{}</span> <span class="n">o</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>When compiled with GCC and inspected with dwarfdump:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ g++ -gdwarf-5 -O3 -c ab.cc
+$ dwarfdump ab.o
+&lt; 1&gt;&lt;0x0000002a&gt;    DW_TAG_class_type
+                      DW_AT_name                  A
+                      DW_AT_byte_size             0x00000001
+                      DW_AT_sibling               &lt;0x00000042&gt;
+&lt; 1&gt;&lt;0x00000049&gt;    DW_TAG_class_type
+                      DW_AT_name                  B
+                      DW_AT_byte_size             0x00000010
+                      DW_AT_containing_type       &lt;0x00000049&gt;
+                      DW_AT_sibling               &lt;0x000000f9&gt;
+&lt; 2&gt;&lt;0x00000058&gt;      DW_TAG_inheritance
+                        DW_AT_type                  &lt;0x0000002a&gt;
+                        DW_AT_data_member_location  len 0x0006: 1206481c0622:
+                          DW_OP_dup DW_OP_deref DW_OP_lit24 DW_OP_minus DW_OP_deref DW_OP_plus
+                        DW_AT_virtuality            DW_VIRTUALITY_virtual
+                        DW_AT_accessibility         DW_ACCESS_public
+</pre></div>
+</div>
+<p>This <code class="docutils literal notranslate"><span class="pre">DW_AT_data_member_location</span></code> expression describes the dynamic process of
+locating the <code class="docutils literal notranslate"><span class="pre">A</span></code>-in-<code class="docutils literal notranslate"><span class="pre">B</span></code> subobject according to the <a class="reference external" href="https://refspecs.linuxfoundation.org/cxxabi-1.86.html#layout">Itanium
+ABI</a>. A diagram
+of the logical layout of class <code class="docutils literal notranslate"><span class="pre">B</span></code> is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="mi">0</span><span class="p">:</span> <span class="k">class</span> <span class="nc">B</span>
+<span class="mi">0</span><span class="p">:</span>   <span class="n">vptr</span> <span class="n">B</span>
+<span class="mi">8</span><span class="p">:</span>   <span class="k">class</span> <span class="nc">A</span>
+<span class="mi">8</span><span class="p">:</span>     <span class="n">A</span><span class="p">::</span><span class="n">x</span>
+</pre></div>
+</div>
+<p>That is, the address of an object of class <code class="docutils literal notranslate"><span class="pre">B</span></code> is equivalent to the address for
+the <code class="docutils literal notranslate"><span class="pre">vtable</span></code> pointer for <code class="docutils literal notranslate"><span class="pre">B</span></code>. As there are no other direct data members of <code class="docutils literal notranslate"><span class="pre">B</span></code>
+the primary base class subobject of class <code class="docutils literal notranslate"><span class="pre">A</span></code> comes next, and there is no
+intervening padding as the subobject alignment requirements are already
+satisfied.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">vtable</span></code> pointer for <code class="docutils literal notranslate"><span class="pre">B</span></code> contains an entry <code class="docutils literal notranslate"><span class="pre">vbase_offset</span></code> for each virtual
+base class. In this case, that table layout is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">-</span><span class="mi">24</span><span class="p">:</span> <span class="n">vbase_offset</span><span class="p">[</span><span class="n">A</span><span class="p">]</span><span class="o">=</span><span class="mi">8</span>
+<span class="o">-</span><span class="mi">16</span><span class="p">:</span> <span class="n">offset_to_top</span><span class="o">=</span><span class="mi">0</span>
+ <span class="o">-</span><span class="mi">8</span><span class="p">:</span> <span class="n">B</span> <span class="n">RTTI</span>
+  <span class="mi">0</span><span class="p">:</span> <span class="o">&lt;</span><span class="n">vtable</span> <span class="k">for</span> <span class="n">B</span><span class="o">&gt;</span>
+</pre></div>
+</div>
+<p>That is, to find the <code class="docutils literal notranslate"><span class="pre">vbase_offset</span></code> for the <code class="docutils literal notranslate"><span class="pre">A</span></code>-in-<code class="docutils literal notranslate"><span class="pre">B</span></code> subobject the address
+<code class="docutils literal notranslate"><span class="pre">vptr</span> <span class="pre">B</span></code> is offset by the statically determined value <code class="docutils literal notranslate"><span class="pre">-24</span></code>.</p>
+<p>Thus, in order to implement <code class="docutils literal notranslate"><span class="pre">DW_AT_data_member_location</span></code> for <code class="docutils literal notranslate"><span class="pre">A</span></code>-in-<code class="docutils literal notranslate"><span class="pre">B</span></code>, the
+expression needs to index to a statically known byte offset of <code class="docutils literal notranslate"><span class="pre">-24</span></code> through
+<code class="docutils literal notranslate"><span class="pre">vptr</span> <span class="pre">B</span></code> to lookup <code class="docutils literal notranslate"><span class="pre">vbase_offset</span></code> for <code class="docutils literal notranslate"><span class="pre">A</span></code>-in-<code class="docutils literal notranslate"><span class="pre">B</span></code>. It must then offset the
+location of <code class="docutils literal notranslate"><span class="pre">B</span></code> by the dynamic value of <code class="docutils literal notranslate"><span class="pre">vbase_offset</span></code> (in this case <code class="docutils literal notranslate"><span class="pre">8</span></code>) to
+arrive at the location of the inherited subobject.</p>
+<p>This definition shares the same problem as example <a class="reference external" href="#pointer-to-member">3.2.6</a>
+in that it relies on the address of the derived object and inherited subobject,
+when there is no guarantee either or both have any address at all.</p>
+<p>To demonstrate the problem, consider a program which GCC chooses to optimize in
+such a way that the derived object is not in memory at all:</p>
+<p>f.h:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">class</span> <span class="nc">A</span> <span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+    <span class="kt">char</span> <span class="n">x</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="k">class</span> <span class="nc">B</span>
+<span class="o">:</span> <span class="k">public</span> <span class="k">virtual</span> <span class="n">A</span> <span class="p">{};</span>
+<span class="kt">void</span> <span class="nf">f</span><span class="p">(</span><span class="n">B</span> <span class="n">b</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>f.cc:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span> <span class="cpf">&quot;f.h&quot;</span><span class="cp"></span>
+<span class="kt">void</span> <span class="nf">f</span><span class="p">(</span><span class="n">B</span> <span class="n">b</span><span class="p">)</span> <span class="p">{}</span>
+</pre></div>
+</div>
+<p>main.cc:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span> <span class="cpf">&quot;f.h&quot;</span><span class="cp"></span>
+<span class="kt">int</span> <span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span> <span class="o">*</span><span class="n">argv</span><span class="p">[])</span> <span class="p">{</span>
+    <span class="n">B</span> <span class="n">b</span><span class="p">;</span>
+    <span class="n">b</span><span class="p">.</span><span class="n">x</span> <span class="o">=</span> <span class="mi">42</span><span class="p">;</span>
+    <span class="n">f</span><span class="p">(</span><span class="n">b</span><span class="p">);</span>
+    <span class="k">return</span> <span class="n">b</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>When compiled and run under GDB:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ g++-9 -gdwarf-4 -O3 -c main.cc -o main.o
+$ g++-9 -gdwarf-4 -O3 -c f.cc -o f.o
+$ g++-9 main.o f.o -o cpp-vbase.out
+(gdb) maint set dwarf always-disassemble
+(gdb) b main.cc:6
+Breakpoint 1 at 0x1090: file main.cc, line 6.
+(gdb) r
+
+Breakpoint 1, main (argc=&lt;optimized out&gt;, argv=&lt;optimized out&gt;) at main.cc:6
+6           return b.x;
+</pre></div>
+</div>
+<p>Note that the compiler has elided storage for the entire object <code class="docutils literal notranslate"><span class="pre">x</span></code> in the
+body of <code class="docutils literal notranslate"><span class="pre">main()</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>(gdb) info addr b
+Symbol &quot;b&quot; is multi-location:
+  Range 0x555555555078-0x5555555550af: a complex DWARF expression:
+     0: DW_OP_piece 8 (bytes)
+     2: DW_OP_const1u 42
+     4: DW_OP_stack_value
+     5: DW_OP_piece 1 (bytes)
+     7: DW_OP_piece 7 (bytes)
+
+.
+(gdb) p $pc
+$1 = (void (*)(void)) 0x555555555090 &lt;main(int, char**)+48&gt;
+</pre></div>
+</div>
+<p>And so it is impossible to interpret <code class="docutils literal notranslate"><span class="pre">DW_OP_data_member_location</span></code> in this case:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>(gdb) p b
+$2 = {&lt;A&gt; = &lt;invalid address&gt;, _vptr.B = &lt;optimized out&gt;}
+</pre></div>
+</div>
+<blockquote>
+<div><p>NOTE: The <code class="docutils literal notranslate"><span class="pre">vptr</span> <span class="pre">B</span></code> which should occupy the first 8 bytes of the object <code class="docutils literal notranslate"><span class="pre">b</span></code>
+are undefined in the DWARF, but could be described as an implicit value by
+the compiler. This change would be trivial and would directly expose the
+issue in DWARF 5 described here.</p>
+</div></blockquote>
+<p>With location descriptions on the stack, the definition of
+<code class="docutils literal notranslate"><span class="pre">DW_OP_data_member_location</span></code> can be modified by replacing every instance of
+“address” with “location description”, as is described in <a class="reference external" href="#a-5-type-entries">A.5 Type
+Entries</a>.</p>
+<p>To implement the fully generalized version of this attribute, GCC would only
+need to change the last operation in the expression from <code class="docutils literal notranslate"><span class="pre">DW_OP_plus</span></code> to
+<code class="docutils literal notranslate"><span class="pre">DW_OP_LLVM_offset</span></code>.</p>
 </div>
 </div>
 <div class="section" id="limitations">
@@ -1156,8 +1483,11 @@ identifiers, DWARF address space identifiers, the default address space, and
 the address space address sizes.</i></p>
 <p>If specified:</p>
 <ul class="simple">
-<li><p>If the current thread is specified, then the current target architecture
-must be the same as the target architecture of the current thread.</p></li>
+<li><p>If the current frame is specified, then the current target architecture
+must be the same as the target architecture of the current frame.</p></li>
+<li><p>If the current frame is specified and is the top frame, and if the current
+thread is specified, then the current target architecture must be the same
+as the target architecture of the current thread.</p></li>
 <li><p>If the current compilation unit is specified, then the current target
 architecture default address space address size must be the same as the
 <code class="docutils literal notranslate"><span class="pre">address_size</span></code> field in the header of the current compilation unit and any
@@ -1183,7 +1513,7 @@ current program location in the <code class="docutils literal notranslate"><span
 information entries specifies the program object corresponding to a runtime
 descriptor as the current object when it evaluates its associated
 expression.</i></p>
-<p>The result is undefined if the location descriptor is invalid (see <a class="reference external" href="#dwarf-location-description">3.5.3
+<p>The result is undefined if the location description is invalid (see <a class="reference external" href="#dwarf-location-description">2.5.3
 DWARF Location Description</a>).</p>
 </li>
 <li><p><i>An initial stack</i></p>
@@ -1193,7 +1523,7 @@ evaluation of an operation expression starts.</p>
 <p>Some debugger information entries have attributes that evaluate their DWARF
 expression value with initial stack entries. In all other cases the initial
 stack is empty.</p>
-<p>The result is undefined if any location descriptors are invalid (see <a class="reference external" href="#dwarf-location-description">3.5.3
+<p>The result is undefined if any location descriptions are invalid (see <a class="reference external" href="#dwarf-location-description">2.5.3
 DWARF Location Description</a>).</p>
 </li>
 </ol>
@@ -1502,6 +1832,8 @@ the stack becomes the third stack entry, the second entry becomes the top of
 the stack, and the third entry becomes the second entry.</p>
 </li>
 </ol>
+<p><i>Examples illustrating many of these stack operations are found in Appendix
+D.1.2 on page 289.</i></p>
 </div>
 <div class="section" id="a-2-5-4-2-control-flow-operations">
 <h5>A.2.5.4.2 Control Flow Operations<a class="headerlink" href="#a-2-5-4-2-control-flow-operations" title="Permalink to this headline">¶</a></h5>
@@ -1545,7 +1877,7 @@ not at the start of an operation.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_OP_call2,</span> <span class="pre">DW_OP_call4,</span> <span class="pre">DW_OP_call_ref</span></code></p>
 <p><code class="docutils literal notranslate"><span class="pre">DW_OP_call2</span></code>, <code class="docutils literal notranslate"><span class="pre">DW_OP_call4</span></code>, and <code class="docutils literal notranslate"><span class="pre">DW_OP_call_ref</span></code> perform DWARF procedure
-calls during evaluation of a DWARF expression.</p>
+calls during evaluation of a DWARF operation expression.</p>
 <p><code class="docutils literal notranslate"><span class="pre">DW_OP_call2</span></code> and <code class="docutils literal notranslate"><span class="pre">DW_OP_call4</span></code>, have one operand that is, respectively, a
 2-byte or 4-byte unsigned offset DR that represents the byte offset of a
 debugging information entry D relative to the beginning of the current
@@ -1808,7 +2140,7 @@ register by register basis. It defaults to truncation of bigger registers.
 Removing use of the target hook does not cause any test failures in common
 architectures. If the compiler for a target architecture did want some
 form of conversion, including a larger result type, it could always
-explicitly used the <code class="docutils literal notranslate"><span class="pre">DW_OP_convert</span></code> operation.</p>
+explicitly use the <code class="docutils literal notranslate"><span class="pre">DW_OP_convert</span></code> operation.</p>
 <p>If T is a larger type than the register size, then the default GDB
 register hook reads bytes from the next register (or reads out of bounds
 for the last register!). Removing use of the target hook does not cause
@@ -1972,7 +2304,7 @@ operation executed by E is a <code class="docutils literal notranslate"><span cl
 architecture specific base type of T, then the contents of the register are
 retrieved as if a <code class="docutils literal notranslate"><span class="pre">DW_OP_deref_type</span> <span class="pre">DR</span></code> operation was performed where DR is
 the offset of a hypothetical debug information entry in the current
-compilation unit for T. The resulting value V s pushed on the stack.</p>
+compilation unit for T. The resulting value V is pushed on the stack.</p>
 <p><i>Using <code class="docutils literal notranslate"><span class="pre">DW_OP_reg*</span></code> provides a more compact form for the case where the
 value was in a register on entry to the subprogram.</i></p>
 <blockquote>
@@ -2170,7 +2502,7 @@ run-time environment. If the run-time environment supports multiple
 thread-local storage blocks for a single thread, then the block
 corresponding to the executable or shared library containing this DWARF
 expression is used.</p>
-<p><i>Some implementations of C, C++, Fortran, and other languages support a
+<p><i>Some implementations of C, C++, Fortran, and other languages, support a
 thread-local storage class. Variables with this storage class have distinct
 values and addresses in distinct threads, much as automatic variables have
 distinct values and addresses in each subprogram invocation. Typically,
@@ -2310,22 +2642,19 @@ on the stack. SL specifies LS with a bit offset of 0.</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_OP_stack_value</span></code></p>
 <p><code class="docutils literal notranslate"><span class="pre">DW_OP_stack_value</span></code> pops one stack entry that must be a value V.</p>
 <p>An implicit location storage LS is created with the literal value V using
-the size, encoding, and enianity specified by V’s base type.</p>
+the size, encoding, and endianity specified by V’s base type.</p>
 <p>It pushes a location description L with one implicit location description SL
 on the stack. SL specifies LS with a bit offset of 0.</p>
 <p><i>The <code class="docutils literal notranslate"><span class="pre">DW_OP_stack_value</span></code> operation specifies that the object does not
 exist in memory, but its value is nonetheless known. In this form, the
 location description specifies the actual value of the object, rather than
 specifying the memory or register storage that holds the value.</i></p>
-<p>See <a class="reference external" href="#implicit-location-description-operations">2.5.4.4.5 Implicit Location Description
-Operations</a> for special
-rules concerning implicit pointer values produced by dereferencing implicit
-location descriptions created by the <code class="docutils literal notranslate"><span class="pre">DW_OP_implicit_pointer</span></code> operation.</p>
-<blockquote>
-<div><p>NOTE: Since location descriptions are allowed on the stack, the
+<p>See <code class="docutils literal notranslate"><span class="pre">DW_OP_implicit_pointer</span></code> (following) for special rules concerning
+implicit pointer values produced by dereferencing implicit location
+descriptions created by the <code class="docutils literal notranslate"><span class="pre">DW_OP_implicit_pointer</span></code> operation.</p>
+<p>Note: Since location descriptions are allowed on the stack, the
 <code class="docutils literal notranslate"><span class="pre">DW_OP_stack_value</span></code> operation no longer terminates the DWARF operation
 expression execution as in DWARF Version 5.</p>
-</div></blockquote>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_OP_implicit_pointer</span></code></p>
 <p><i>An optimizing compiler may eliminate a pointer, while still retaining the
@@ -2345,7 +2674,7 @@ the 64-bit DWARF format, that represents the byte offset DR of a debugging
 information entry D relative to the beginning of the <code class="docutils literal notranslate"><span class="pre">.debug_info</span></code> section
 that contains the current compilation unit. The second operand is a signed
 LEB128 integer that represents a byte displacement B.</p>
-<p><i>Note that D may not be in the current compilation unit.</i></p>
+<p><i>Note that D might not be in the current compilation unit.</i></p>
 <p><i>The first operand interpretation is exactly like that for
 <code class="docutils literal notranslate"><span class="pre">DW_FORM_ref_addr</span></code>.</i></p>
 <p>The address space identifier AS is defined as the one corresponding to the
@@ -2365,7 +2694,7 @@ following conditions are met:</p>
 refers to an implicit location storage that is the same as LS.</p>
 <p><i>Note that all bits do not have to come from the same implicit
 location description, as L’ may involve composite location
-descriptors.</i></p>
+descriptions.</i></p>
 </li>
 <li><p>The bits come from consecutive ascending offsets within their respective
 implicit location storage.</p></li>
@@ -2698,7 +3027,7 @@ has a result kind of a location description, an unspecified object, the
 compilation unit that contains E, an empty initial stack, and other context
 elements corresponding to the source language thread of execution upon which
 the user is focused, if any.</p>
-<p>The DWARF is ill-formed if E contains an <code class="docutils literal notranslate"><span class="pre">DW_OP_fbreg</span></code> operation, or the
+<p>The DWARF is ill-formed if E contains a <code class="docutils literal notranslate"><span class="pre">DW_OP_fbreg</span></code> operation, or the
 resulting location description L is not comprised of one single location
 description SL.</p>
 <p>If SL is a register location description for register R, then L is replaced
@@ -2819,10 +3148,15 @@ chapter 4 sections.</p>
 </div></blockquote>
 <div class="section" id="a-4-1-data-object-entries">
 <h3>A.4.1 Data Object Entries<a class="headerlink" href="#a-4-1-data-object-entries" title="Permalink to this headline">¶</a></h3>
+<p>Program variables, formal parameters and constants are represented by debugging
+information entries with the tags <code class="docutils literal notranslate"><span class="pre">DW_TAG_variable</span></code>, <code class="docutils literal notranslate"><span class="pre">DW_TAG_formal_parameter</span></code>
+and <code class="docutils literal notranslate"><span class="pre">DW_TAG_constant</span></code>, respectively.</p>
+<p><em>The tag <code class="docutils literal notranslate"><span class="pre">DW_TAG_constant</span></code> is used for languages that have true named constants.</em></p>
+<p>The debugging information entry for a program variable, formal parameter or
+constant may have the following attributes:</p>
 <ol>
-<li><p>Any debugging information entry describing a data object (which includes
-variables and parameters) or common blocks may have a <code class="docutils literal notranslate"><span class="pre">DW_AT_location</span></code>
-attribute, whose value is a DWARF expression E.</p>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">DW_AT_location</span></code> attribute, whose value is a DWARF expression E that
+describes the location of a variable or parameter at run-time.</p>
 <p>The result of the attribute is obtained by evaluating E with a context that
 has a result kind of a location description, an unspecified object, the
 compilation unit that contains E, an empty initial stack, and other context
@@ -2861,6 +3195,18 @@ optimized.</p>
 </div></blockquote>
 </li>
 </ol>
+</div>
+<div class="section" id="a-4-2-common-block-entries">
+<h3>A.4.2 Common Block Entries<a class="headerlink" href="#a-4-2-common-block-entries" title="Permalink to this headline">¶</a></h3>
+<p>A common block entry also has a DW_AT_location attribute whose value is a DWARF
+expression E that describes the location of the common block at run-time. The
+result of the attribute is obtained by evaluating E with a context that has a
+result kind of a location description, an unspecified object, the compilation
+unit that contains E, an empty initial stack, and other context elements
+corresponding to the source language thread of execution upon which the user is
+focused, if any. The result of the evaluation is the location description of the
+base of the common block. See 2.5.4.2 Control Flow Operations for special
+evaluation rules used by the DW_OP_call* operations.</p>
 </div>
 </div>
 <div class="section" id="a-5-type-entries">
@@ -2950,8 +3296,10 @@ points.</p>
 </li>
 </ol>
 </div>
-<div class="section" id="a-5-16-dynamic-type-entries">
-<h3>A.5.16 Dynamic Type Entries<a class="headerlink" href="#a-5-16-dynamic-type-entries" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="a-5-18-dynamic-properties-of-types">
+<h3>A.5.18 Dynamic Properties of Types<a class="headerlink" href="#a-5-18-dynamic-properties-of-types" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="a-5-18-1-data-location">
+<h4>A.5.18.1 Data Location<a class="headerlink" href="#a-5-18-1-data-location" title="Permalink to this headline">¶</a></h4>
 <ol>
 <li><p>The <code class="docutils literal notranslate"><span class="pre">DW_AT_data_location</span></code> attribute may be used with any type that provides one
 or more levels of hidden indirection and/or run-time parameters in its
@@ -2982,6 +3330,7 @@ expression has to need it.</p>
 </div></blockquote>
 </li>
 </ol>
+</div>
 </div>
 </div>
 <div class="section" id="a-6-other-debugging-information">
@@ -3088,8 +3437,9 @@ current CFA (see <a class="reference external" href="#dwarf-operation-expression
 Expressions</a>).</p>
 </li>
 <li><p><i>val_expression(E)</i></p>
-<p>The previous value of this register is the value produced by evaluating the
-DWARF operation expression E (see <a class="reference external" href="#dwarf-operation-expressions">2.5.4 DWARF Operation
+<p>The previous value of this register is located at the implicit location
+description created from the value produced by evaluating the DWARF
+operation expression E (see <a class="reference external" href="#dwarf-operation-expressions">2.5.4 DWARF Operation
 Expressions</a>).</p>
 <p>E is evaluated with the current context, except the result kind is a value,
 the compilation unit is unspecified, the object is unspecified, and an
@@ -3257,41 +3607,42 @@ use would be circular.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa</span></code></p>
 <p>The <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa</span></code> instruction takes two unsigned LEB128 operands
 representing a register number R and a (non-factored) byte displacement B.
-The required action is to define the current CFA rule to be the result of
-evaluating the DWARF operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span></code> as a location
-description.</p>
+The required action is to define the current CFA rule to be equivalent to
+the result of evaluating the DWARF operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span></code>
+as a location description.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_sf</span></code></p>
 <p>The <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_sf</span></code> instruction takes two operands: an unsigned LEB128
 value representing a register number R and a signed LEB128 factored byte
 displacement B. The required action is to define the current CFA rule to be
-the result of evaluating the DWARF operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">data_alignment_factor</span></code> as a location description.</p>
+equivalent to the result of evaluating the DWARF operation expression
+<code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">data_alignment_factor</span></code> as a location description.</p>
 <p><i>The action is the same as <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa</span></code>, except that the second
 operand is signed and factored.</i></p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_register</span></code></p>
 <p>The <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_register</span></code> instruction takes a single unsigned LEB128
 operand representing a register number R. The required action is to define
-the current CFA rule to be the result of evaluating the DWARF operation
-expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span></code> as a location description. B is the old CFA
-byte displacement.</p>
+the current CFA rule to be equivalent to the result of evaluating the DWARF
+operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span></code> as a location description. B is the
+old CFA byte displacement.</p>
 <p>If the subprogram has no current CFA rule, or the rule was defined by a
 <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_expression</span></code> instruction, then the DWARF is ill-formed.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_offset</span></code></p>
 <p>The <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_offset</span></code> instruction takes a single unsigned LEB128
 operand representing a (non-factored) byte displacement B. The required
-action is to define the current CFA rule to be the result of evaluating the
-DWARF operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span></code> as a location description. R
-is the old CFA register number.</p>
+action is to define the current CFA rule to be equivalent to the result of
+evaluating the DWARF operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span></code> as a location
+description. R is the old CFA register number.</p>
 <p>If the subprogram has no current CFA rule, or the rule was defined by a
 <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_expression</span></code> instruction, then the DWARF is ill-formed.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_offset_sf</span></code></p>
 <p>The <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_offset_sf</span></code> instruction takes a signed LEB128 operand
 representing a factored byte displacement B. The required action is to
-define the current CFA rule to be the result of evaluating the DWARF
-operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">data_alignment_factor</span></code> as a
+define the current CFA rule to be equivalent to the result of evaluating the
+DWARF operation expression <code class="docutils literal notranslate"><span class="pre">DW_OP_bregx</span> <span class="pre">R,</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">data_alignment_factor</span></code> as a
 location description. R is the old CFA register number.</p>
 <p>If the subprogram has no current CFA rule, or the rule was defined by a
 <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_expression</span></code> instruction, then the DWARF is ill-formed.</p>
@@ -3301,10 +3652,10 @@ operand is signed and factored.</i></p>
 <li><p><code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_expression</span></code></p>
 <p>The <code class="docutils literal notranslate"><span class="pre">DW_CFA_def_cfa_expression</span></code> instruction takes a single operand encoded
 as a <code class="docutils literal notranslate"><span class="pre">DW_FORM_exprloc</span></code> value representing a DWARF operation expression E.
-The required action is to define the current CFA rule to be the result of
-evaluating E with the current context, except the result kind is a location
-description, the compilation unit is unspecified, the object is unspecified,
-and an empty initial stack.</p>
+The required action is to define the current CFA rule to be equivalent to
+the result of evaluating E with the current context, except the result kind
+is a location description, the compilation unit is unspecified, the object
+is unspecified, and an empty initial stack.</p>
 <p><i>See <a class="reference external" href="#call-frame-instructions">6.4.2 Call Frame Instructions</a> regarding
 restrictions on the DWARF expression operations that can be used in E.</i></p>
 <p>The DWARF is ill-formed if the result of evaluating E is not a memory byte
@@ -3542,8 +3893,8 @@ examples. It also covers other extensions needed for heterogeneous devices.</p>
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2003-2022, LLVM Project.
-      Last updated on 2022-08-10.
+        &#169; Copyright 2003-2023, LLVM Project.
+      Last updated on 2023-03-18.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

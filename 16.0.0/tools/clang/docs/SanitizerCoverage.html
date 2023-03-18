@@ -4,7 +4,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
-    <title>SanitizerCoverage &#8212; Clang 15.0.0 documentation</title>
+    <title>SanitizerCoverage &#8212; Clang 16.0.0 documentation</title>
     <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
@@ -18,7 +18,7 @@
     <link rel="prev" title="LeakSanitizer" href="LeakSanitizer.html" /> 
   </head><body>
       <div class="header" role="banner"><h1 class="heading"><a href="index.html">
-          <span>Clang 15.0.0 documentation</span></a></h1>
+          <span>Clang 16.0.0 documentation</span></a></h1>
         <h2 class="heading"><span>SanitizerCoverage</span></h2>
       </div>
       <div class="topnav" role="navigation" aria-label="top navigation">
@@ -51,14 +51,15 @@
 </ul>
 </li>
 <li><p><a class="reference internal" href="#tracing-data-flow" id="id9">Tracing data flow</a></p></li>
-<li><p><a class="reference internal" href="#disabling-instrumentation-with-attribute-no-sanitize-coverage" id="id10">Disabling instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code></a></p></li>
-<li><p><a class="reference internal" href="#disabling-instrumentation-without-source-modification" id="id11">Disabling instrumentation without source modification</a></p></li>
-<li><p><a class="reference internal" href="#default-implementation" id="id12">Default implementation</a></p>
+<li><p><a class="reference internal" href="#tracing-control-flow" id="id10">Tracing control flow</a></p></li>
+<li><p><a class="reference internal" href="#disabling-instrumentation-with-attribute-no-sanitize-coverage" id="id11">Disabling instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#disabling-instrumentation-without-source-modification" id="id12">Disabling instrumentation without source modification</a></p></li>
+<li><p><a class="reference internal" href="#default-implementation" id="id13">Default implementation</a></p>
 <ul>
-<li><p><a class="reference internal" href="#sancov-data-format" id="id13">Sancov data format</a></p></li>
-<li><p><a class="reference internal" href="#sancov-tool" id="id14">Sancov Tool</a></p></li>
-<li><p><a class="reference internal" href="#coverage-reports" id="id15">Coverage Reports</a></p></li>
-<li><p><a class="reference internal" href="#output-directory" id="id16">Output directory</a></p></li>
+<li><p><a class="reference internal" href="#sancov-data-format" id="id14">Sancov data format</a></p></li>
+<li><p><a class="reference internal" href="#sancov-tool" id="id15">Sancov Tool</a></p></li>
+<li><p><a class="reference internal" href="#coverage-reports" id="id16">Coverage Reports</a></p></li>
+<li><p><a class="reference internal" href="#output-directory" id="id17">Output directory</a></p></li>
 </ul>
 </li>
 </ul>
@@ -344,15 +345,58 @@ will not be instrumented.</p>
 </pre></div>
 </div>
 </div>
+<div class="section" id="tracing-control-flow">
+<h2><a class="toc-backref" href="#id10">Tracing control flow</a><a class="headerlink" href="#tracing-control-flow" title="Permalink to this headline">¶</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=control-flow</span></code> the compiler will create a table to collect
+control flow for each function. More specifically, for each basic block in the function,
+two lists are populated. One list for successors of the basic block and another list for
+non-intrinsic called functions.</p>
+<p><strong>TODO:</strong> in the current implementation, indirect calls are not tracked
+and are only marked with special value (-1) in the list.</p>
+<p>Each table row consists of the basic block address
+followed by <code class="docutils literal notranslate"><span class="pre">null</span></code>-ended lists of successors and callees.
+The table is encoded in a special section named <code class="docutils literal notranslate"><span class="pre">sancov_cfs</span></code></p>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="nf">foo</span> <span class="p">(</span><span class="kt">int</span> <span class="n">x</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">bar</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+  <span class="k">else</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="k">return</span> <span class="n">x</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The code above contains 4 basic blocks, let’s name them A, B, C, D:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>A
+|\
+| \
+B  C
+| /
+|/
+D
+</pre></div>
+</div>
+<p>The collected control flow table is as follows:
+<code class="docutils literal notranslate"><span class="pre">A,</span> <span class="pre">B,</span> <span class="pre">C,</span> <span class="pre">null,</span> <span class="pre">null,</span> <span class="pre">B,</span> <span class="pre">D,</span> <span class="pre">null,</span> <span class="pre">&#64;bar,</span> <span class="pre">null,</span> <span class="pre">C,</span> <span class="pre">D,</span> <span class="pre">null,</span> <span class="pre">null,</span> <span class="pre">D,</span> <span class="pre">null,</span> <span class="pre">null.</span></code></p>
+<p>Users need to implement a single function to capture the CF table at startup:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span> <span class="s">&quot;C&quot;</span>
+<span class="kt">void</span> <span class="n">__sanitizer_cov_cfs_init</span><span class="p">(</span><span class="k">const</span> <span class="kt">uintptr_t</span> <span class="o">*</span><span class="n">cfs_beg</span><span class="p">,</span>
+                              <span class="k">const</span> <span class="kt">uintptr_t</span> <span class="o">*</span><span class="n">cfs_end</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// [cfs_beg,cfs_end) is the array of ptr-sized integers representing</span>
+  <span class="c1">// the collected control flow.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
 <div class="section" id="disabling-instrumentation-with-attribute-no-sanitize-coverage">
-<h2><a class="toc-backref" href="#id10">Disabling instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code></a><a class="headerlink" href="#disabling-instrumentation-with-attribute-no-sanitize-coverage" title="Permalink to this headline">¶</a></h2>
+<h2><a class="toc-backref" href="#id11">Disabling instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code></a><a class="headerlink" href="#disabling-instrumentation-with-attribute-no-sanitize-coverage" title="Permalink to this headline">¶</a></h2>
 <p>It is possible to disable coverage instrumentation for select functions via the
 function attribute <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code>. Because this
 attribute may not be supported by other compilers, it is recommended to use it
 together with <code class="docutils literal notranslate"><span class="pre">__has_feature(coverage_sanitizer)</span></code>.</p>
 </div>
 <div class="section" id="disabling-instrumentation-without-source-modification">
-<h2><a class="toc-backref" href="#id11">Disabling instrumentation without source modification</a><a class="headerlink" href="#disabling-instrumentation-without-source-modification" title="Permalink to this headline">¶</a></h2>
+<h2><a class="toc-backref" href="#id12">Disabling instrumentation without source modification</a><a class="headerlink" href="#disabling-instrumentation-without-source-modification" title="Permalink to this headline">¶</a></h2>
 <p>It is sometimes useful to tell SanitizerCoverage to instrument only a subset of the
 functions in your target without modifying source files.
 With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage-allowlist=allowlist.txt</span></code>
@@ -394,7 +438,7 @@ file such as <code class="docutils literal notranslate"><span class="pre">./bar/
 So, please make sure to always double check that your lists are correctly applied.</p>
 </div>
 <div class="section" id="default-implementation">
-<h2><a class="toc-backref" href="#id12">Default implementation</a><a class="headerlink" href="#default-implementation" title="Permalink to this headline">¶</a></h2>
+<h2><a class="toc-backref" href="#id13">Default implementation</a><a class="headerlink" href="#default-implementation" title="Permalink to this headline">¶</a></h2>
 <p>The sanitizer run-time (AddressSanitizer, MemorySanitizer, etc) provide a
 default implementations of some of the coverage callbacks.
 You may use this implementation to dump the coverage on disk at the process
@@ -428,14 +472,14 @@ one <code class="docutils literal notranslate"><span class="pre">*.sancov</span>
 If the executable is dynamically linked against instrumented DSOs,
 one <code class="docutils literal notranslate"><span class="pre">*.sancov</span></code> file will be also created for every DSO.</p>
 <div class="section" id="sancov-data-format">
-<h3><a class="toc-backref" href="#id13">Sancov data format</a><a class="headerlink" href="#sancov-data-format" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id14">Sancov data format</a><a class="headerlink" href="#sancov-data-format" title="Permalink to this headline">¶</a></h3>
 <p>The format of <code class="docutils literal notranslate"><span class="pre">*.sancov</span></code> files is very simple: the first 8 bytes is the magic,
 one of <code class="docutils literal notranslate"><span class="pre">0xC0BFFFFFFFFFFF64</span></code> and <code class="docutils literal notranslate"><span class="pre">0xC0BFFFFFFFFFFF32</span></code>. The last byte of the
 magic defines the size of the following offsets. The rest of the data is the
 offsets in the corresponding binary/DSO that were executed during the run.</p>
 </div>
 <div class="section" id="sancov-tool">
-<h3><a class="toc-backref" href="#id14">Sancov Tool</a><a class="headerlink" href="#sancov-tool" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id15">Sancov Tool</a><a class="headerlink" href="#sancov-tool" title="Permalink to this headline">¶</a></h3>
 <p>An simple <code class="docutils literal notranslate"><span class="pre">sancov</span></code> tool is provided to process coverage files.
 The tool is part of LLVM project and is currently supported only on Linux.
 It can handle symbolization tasks autonomously without any extra support
@@ -458,7 +502,7 @@ Sancov matches these files using module names and binaries file names.</p>
 </div>
 </div>
 <div class="section" id="coverage-reports">
-<h3><a class="toc-backref" href="#id15">Coverage Reports</a><a class="headerlink" href="#coverage-reports" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id16">Coverage Reports</a><a class="headerlink" href="#coverage-reports" title="Permalink to this headline">¶</a></h3>
 <p><strong>Experimental</strong></p>
 <p><code class="docutils literal notranslate"><span class="pre">.sancov</span></code> files do not contain enough information to generate a source-level
 coverage report. The missing information is contained
@@ -472,7 +516,7 @@ running <code class="docutils literal notranslate"><span class="pre">tools/sanco
 an HTTP server.</p>
 </div>
 <div class="section" id="output-directory">
-<h3><a class="toc-backref" href="#id16">Output directory</a><a class="headerlink" href="#output-directory" title="Permalink to this headline">¶</a></h3>
+<h3><a class="toc-backref" href="#id17">Output directory</a><a class="headerlink" href="#output-directory" title="Permalink to this headline">¶</a></h3>
 <p>By default, .sancov files are created in the current working directory.
 This can be changed with <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=coverage_dir=/path</span></code>:</p>
 <div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">%</span> <span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="s2">&quot;coverage=1:coverage_dir=/tmp/cov&quot;</span> ./a.out foo
@@ -500,7 +544,7 @@ This can be changed with <code class="docutils literal notranslate"><span class=
       </div>
 
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2007-2022, The Clang Team.
+        &#169; Copyright 2007-2023, The Clang Team.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

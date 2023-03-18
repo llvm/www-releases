@@ -633,6 +633,93 @@ to re-analyze expressions and modify scope or symbols. You can check
 e.g. during the semantic checks.</p>
 </div>
 </div>
+<div class="section" id="llvm-pass-plugins">
+<h1>LLVM Pass Plugins<a class="headerlink" href="#llvm-pass-plugins" title="Permalink to this headline">¶</a></h1>
+<p>Pass plugins are dynamic shared objects that consist of one or more LLVM IR
+passes. The <code class="docutils literal notranslate"><span class="pre">-fpass-plugin</span></code> option enables these passes to be passed to the
+middle-end where they are added to the optimization pass pipeline and run after
+lowering to LLVM IR.The exact position of the pass in the pipeline will depend
+on how it has been registered with the <code class="docutils literal notranslate"><span class="pre">llvm::PassBuilder</span></code>. See the
+documentation for
+<a class="reference external" href="https://llvm.org/doxygen/classllvm_1_1PassBuilder.html"><code class="docutils literal notranslate"><span class="pre">llvm::PassBuilder</span></code></a>
+for details.</p>
+<p>The framework to enable pass plugins in <code class="docutils literal notranslate"><span class="pre">flang-new</span></code> uses the exact same
+machinery as that used by <code class="docutils literal notranslate"><span class="pre">clang</span></code> and thus has the same capabilities and
+limitations.</p>
+<p>In order to use a pass plugin, the pass(es) must be compiled into a dynamic
+shared object which is then loaded using the <code class="docutils literal notranslate"><span class="pre">-fpass-plugin</span></code> option.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">flang</span><span class="o">-</span><span class="n">new</span> <span class="o">-</span><span class="n">fpass</span><span class="o">-</span><span class="n">plugin</span><span class="o">=/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">plugin</span><span class="o">.</span><span class="n">so</span> <span class="o">&lt;</span><span class="n">file</span><span class="o">.</span><span class="n">f90</span><span class="o">&gt;</span>
+</pre></div>
+</div>
+<p>This option is available in both the compiler driver and the frontend driver.
+Note that LLVM plugins are not officially supported on Windows.</p>
+<div class="section" id="llvm-pass-extensions">
+<h2>LLVM Pass Extensions<a class="headerlink" href="#llvm-pass-extensions" title="Permalink to this headline">¶</a></h2>
+<p>Pass extensions are similar to plugins, except that they can also be linked
+statically. Setting <code class="docutils literal notranslate"><span class="pre">-DLLVM_${NAME}_LINK_INTO_TOOLS</span></code> to <code class="docutils literal notranslate"><span class="pre">ON</span></code> in the cmake
+command turns the project into a statically linked extension. An example would
+be Polly, e.g., using <code class="docutils literal notranslate"><span class="pre">-DLLVM_POLLY_LINK_INTO_TOOLS=ON</span></code> would link Polly passes
+into <code class="docutils literal notranslate"><span class="pre">flang-new</span></code> as built-in middle-end passes.</p>
+<p>See the
+<a class="reference external" href="https://llvm.org/docs/WritingAnLLVMNewPMPass.html#id9"><code class="docutils literal notranslate"><span class="pre">WritingAnLLVMNewPMPass</span></code></a>
+documentation for more details.</p>
+</div>
+<div class="section" id="ofast-and-fast-math">
+<h2>Ofast and Fast Math<a class="headerlink" href="#ofast-and-fast-math" title="Permalink to this headline">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">-Ofast</span></code> in Flang means <code class="docutils literal notranslate"><span class="pre">-O3</span> <span class="pre">-ffast-math</span></code>. <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code> will be added to
+<code class="docutils literal notranslate"><span class="pre">-Ofast</span></code> in the future (https://github.com/llvm/llvm-project/issues/59231).</p>
+<p><code class="docutils literal notranslate"><span class="pre">-ffast-math</span></code> means the following:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-fno-honor-infinities</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fno-honor-nans</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fassociative-math</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-freciprocal-math</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fapprox-func</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fno-signed-zeros</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-ffp-contract=fast</span></code></p></li>
+</ul>
+<p>These correspond to LLVM IR Fast Math attributes:
+https://llvm.org/docs/LangRef.html#fast-math-flags</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">-ffast-math</span></code> is specified, any linker steps generated by the compiler
+driver will also link to <code class="docutils literal notranslate"><span class="pre">crtfastmath.o</span></code>, which adds a static constructor
+that sets the FTZ/DAZ bits in MXCSR, affecting not only the current only the
+current compilation unit but all static and shared libraries included in the
+program. Setting these bits causes denormal floating point numbers to be flushed
+to zero.</p>
+<div class="section" id="comparison-with-gcc-gfortran">
+<h3>Comparison with GCC/GFortran<a class="headerlink" href="#comparison-with-gcc-gfortran" title="Permalink to this headline">¶</a></h3>
+<p>GCC/GFortran translate <code class="docutils literal notranslate"><span class="pre">-Ofast</span></code> to
+<code class="docutils literal notranslate"><span class="pre">-O3</span> <span class="pre">-ffast-math</span> <span class="pre">-fstack-arrays</span> <span class="pre">-fno-semantic-interposition</span></code>. <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code>
+is TODO for Flang.
+<code class="docutils literal notranslate"><span class="pre">-fno-semantic-interposition</span></code> is not used because clang does not enable this as
+part of <code class="docutils literal notranslate"><span class="pre">-Ofast</span></code> as the default behaviour is similar.</p>
+<p>GCC/GFortran has a wider definition of <code class="docutils literal notranslate"><span class="pre">-ffast-math</span></code>: also including
+<code class="docutils literal notranslate"><span class="pre">-fno-trapping-math</span></code>,  <code class="docutils literal notranslate"><span class="pre">-fno-rounding-math</span></code>, and  <code class="docutils literal notranslate"><span class="pre">-fsignaling-nans</span></code>; these
+aren’t included in Flang because Flang currently has no support for strict
+floating point and so always acts as though these flags were specified.</p>
+<p>GCC/GFortran will also set flush-to-zero mode: linking <code class="docutils literal notranslate"><span class="pre">crtfastmath.o</span></code>, the same
+as Flang.</p>
+</div>
+<div class="section" id="comparison-with-nvfortran">
+<h3>Comparison with nvfortran<a class="headerlink" href="#comparison-with-nvfortran" title="Permalink to this headline">¶</a></h3>
+<p>nvfortran defines <code class="docutils literal notranslate"><span class="pre">-fast</span></code> as
+<code class="docutils literal notranslate"><span class="pre">-O2</span> <span class="pre">-Munroll=c:1</span> <span class="pre">-Mnoframe</span> <span class="pre">-Mlre</span> <span class="pre">-Mpre</span> <span class="pre">-Mvect=simd</span> <span class="pre">-Mcache_align</span> <span class="pre">-Mflushz</span> <span class="pre">-Mvect</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-O2</span> <span class="pre">-Munroll=c:1</span> <span class="pre">-Mlre</span> <span class="pre">-Mautoinline</span> <span class="pre">-Mpre</span> <span class="pre">-Mvect-simd</span></code> affect code
+optimization. <code class="docutils literal notranslate"><span class="pre">flang</span> <span class="pre">-O3</span></code> should enable all optimizations for execution time,
+similarly to <code class="docutils literal notranslate"><span class="pre">clang</span> <span class="pre">-O3</span></code>. The <code class="docutils literal notranslate"><span class="pre">-O3</span></code> pipeline has passes that perform
+transformations like inlining, vectorisation, unrolling, etc. Additionally,
+the GVN and LICM passes perform redundancy elimination like <code class="docutils literal notranslate"><span class="pre">Mpre</span></code> and <code class="docutils literal notranslate"><span class="pre">Mlre</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-Mnoframe</span></code>: the equivalent flag would be <code class="docutils literal notranslate"><span class="pre">-fomit-frame-pointer</span></code>. This flag
+is not yet supported in Flang and so Flang follows GFortran in not including
+this in <code class="docutils literal notranslate"><span class="pre">-Ofast</span></code>. There is no plan to include this flag as part of <code class="docutils literal notranslate"><span class="pre">-Ofast</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-Mcache_align</span></code>: there is no equivalent flag in Flang or Clang.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-Mflushz</span></code>: flush-to-zero mode - when <code class="docutils literal notranslate"><span class="pre">-ffast-math</span></code> is specified, Flang will
+link to <code class="docutils literal notranslate"><span class="pre">crtfastmath.o</span></code> to ensure denormal numbers are flushed to zero.</p></li>
+</ul>
+</div>
+</div>
+</div>
 
 
           </div>
@@ -659,8 +746,8 @@ e.g. during the semantic checks.</p>
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2017-2022, The Flang Team.
-      Last updated on Aug 10, 2022.
+        &#169; Copyright 2017-2023, The Flang Team.
+      Last updated on Mar 18, 2023.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

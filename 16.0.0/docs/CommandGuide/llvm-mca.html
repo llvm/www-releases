@@ -5,7 +5,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
-    <title>llvm-mca - LLVM Machine Code Analyzer &#8212; LLVM 15.0.0 documentation</title>
+    <title>llvm-mca - LLVM Machine Code Analyzer &#8212; LLVM 16.0.0 documentation</title>
     <link rel="stylesheet" href="../_static/llvm-theme.css" type="text/css" />
     <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
     <script type="text/javascript" id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
@@ -15,7 +15,7 @@
     <script type="text/javascript" src="../_static/language_data.js"></script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="llvm-otool - Mach-O dumping tool" href="llvm-otool.html" />
+    <link rel="next" title="llvm-opt-report - generate optimization report from YAML" href="llvm-opt-report.html" />
     <link rel="prev" title="llvm-lipo - LLVM tool for manipulating universal binaries" href="llvm-lipo.html" />
 <style type="text/css">
   table.right { float: right; margin-left: 20px; }
@@ -36,7 +36,7 @@
           <a href="../genindex.html" title="General Index"
              accesskey="I">index</a></li>
         <li class="right" >
-          <a href="llvm-otool.html" title="llvm-otool - Mach-O dumping tool"
+          <a href="llvm-opt-report.html" title="llvm-opt-report - generate optimization report from YAML"
              accesskey="N">next</a> |</li>
         <li class="right" >
           <a href="llvm-lipo.html" title="llvm-lipo - LLVM tool for manipulating universal binaries"
@@ -76,7 +76,7 @@
     <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
     <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
     <li><a href="https://llvm.org/pubs">Publications</a></li>
-    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
 </ul>
   <div role="note" aria-label="source link">
     <h3>This Page</h3>
@@ -372,6 +372,15 @@ detect any custom hazards or make any post processing modifications to
 instructions.</p>
 </dd></dl>
 
+<dl class="option">
+<dt id="cmdoption-llvm-mca-disable-im">
+<code class="sig-name descname">-disable-im</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-llvm-mca-disable-im" title="Permalink to this definition">¶</a></dt>
+<dd><p>Force usage of the generic InstrumentManager rather than using the target
+specific implementation. The generic class creates Instruments that provide
+no extra information, and InstrumentManager never overrides the default
+schedule class for a given instruction.</p>
+</dd></dl>
+
 </div>
 <div class="section" id="exit-status">
 <h2>EXIT STATUS<a class="headerlink" href="#exit-status" title="Permalink to this headline">¶</a></h2>
@@ -382,9 +391,9 @@ to standard error, and the tool returns 1.</p>
 <h2>USING MARKERS TO ANALYZE SPECIFIC CODE BLOCKS<a class="headerlink" href="#using-markers-to-analyze-specific-code-blocks" title="Permalink to this headline">¶</a></h2>
 <p><strong class="program">llvm-mca</strong> allows for the optional usage of special code comments to
 mark regions of the assembly code to be analyzed.  A comment starting with
-substring <code class="docutils literal notranslate"><span class="pre">LLVM-MCA-BEGIN</span></code> marks the beginning of a code region. A comment
-starting with substring <code class="docutils literal notranslate"><span class="pre">LLVM-MCA-END</span></code> marks the end of a code region.  For
-example:</p>
+substring <code class="docutils literal notranslate"><span class="pre">LLVM-MCA-BEGIN</span></code> marks the beginning of an analysis region. A
+comment starting with substring <code class="docutils literal notranslate"><span class="pre">LLVM-MCA-END</span></code> marks the end of a region.
+For example:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span># LLVM-MCA-BEGIN
   ...
 # LLVM-MCA-END
@@ -393,8 +402,8 @@ example:</p>
 <p>If no user-defined region is specified, then <strong class="program">llvm-mca</strong> assumes a
 default region which contains every instruction in the input file.  Every region
 is analyzed in isolation, and the final performance report is the union of all
-the reports generated for every code region.</p>
-<p>Code regions can have names. For example:</p>
+the reports generated for every analysis region.</p>
+<p>Analysis regions can have names. For example:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span># LLVM-MCA-BEGIN A simple example
   add %eax, %eax
 # LLVM-MCA-END
@@ -445,6 +454,72 @@ to emit markers, then the recommendation is to always verify that the output
 assembly is equivalent to the assembly generated in the absence of markers.
 The <a class="reference external" href="https://clang.llvm.org/docs/UsersManual.html#options-to-emit-optimization-reports">Clang options to emit optimization reports</a>
 can also help in detecting missed optimizations.</p>
+</div>
+<div class="section" id="instrument-regions">
+<h2>INSTRUMENT REGIONS<a class="headerlink" href="#instrument-regions" title="Permalink to this headline">¶</a></h2>
+<p>An InstrumentRegion describes a region of assembly code guarded by
+special LLVM-MCA comment directives.</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># LLVM-MCA-&lt;INSTRUMENT_TYPE&gt; &lt;data&gt;
+  ...  ## asm
+</pre></div>
+</div>
+<p>where <cite>INSTRUMENT_TYPE</cite> is a type defined by the target and expects
+to use <cite>data</cite>.</p>
+<p>A comment starting with substring <cite>LLVM-MCA-&lt;INSTRUMENT_TYPE&gt;</cite>
+brings data into scope for llvm-mca to use in its analysis for
+all following instructions.</p>
+<p>If a comment with the same <cite>INSTRUMENT_TYPE</cite> is found later in the
+instruction list, then the original InstrumentRegion will be
+automatically ended, and a new InstrumentRegion will begin.</p>
+<p>If there are comments containing the different <cite>INSTRUMENT_TYPE</cite>,
+then both data sets remain available. In contrast with an AnalysisRegion,
+an InstrumentRegion does not need a comment to end the region.</p>
+<p>Comments that are prefixed with <cite>LLVM-MCA-</cite> but do not correspond to
+a valid <cite>INSTRUMENT_TYPE</cite> for the target cause an error, except for
+<cite>BEGIN</cite> and <cite>END</cite>, since those correspond to AnalysisRegions. Comments
+that do not start with <cite>LLVM-MCA-</cite> are ignored by :program <cite>llvm-mca</cite>.</p>
+<p>An instruction (a MCInst) is added to an InstrumentRegion R only
+if its location is in range [R.RangeStart, R.RangeEnd].</p>
+<p>On RISCV targets, vector instructions have different behaviour depending
+on the LMUL. Code can be instrumented with a comment that takes the
+following form:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># LLVM-MCA-RISCV-LMUL &lt;M1|M2|M4|M8|MF2|MF4|MF8&gt;
+</pre></div>
+</div>
+<p>The RISCV InstrumentManager will override the schedule class for vector
+instructions to use the scheduling behaviour of its pseudo-instruction
+which is LMUL dependent. It makes sense to place RISCV instrument
+comments directly after <cite>vset{i}vl{i}</cite> instructions, although
+they can be placed anywhere in the program.</p>
+<p>Example of program with no call to <cite>vset{i}vl{i}</cite>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># LLVM-MCA-RISCV-LMUL M2
+vadd.vv v2, v2, v2
+</pre></div>
+</div>
+<p>Example of program with call to <cite>vset{i}vl{i}</cite>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>vsetvli zero, a0, e8, m1, tu, mu
+# LLVM-MCA-RISCV-LMUL M1
+vadd.vv v2, v2, v2
+</pre></div>
+</div>
+<p>Example of program with multiple calls to <cite>vset{i}vl{i}</cite>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>vsetvli zero, a0, e8, m1, tu, mu
+# LLVM-MCA-RISCV-LMUL M1
+vadd.vv v2, v2, v2
+vsetvli zero, a0, e8, m8, tu, mu
+# LLVM-MCA-RISCV-LMUL M8
+vadd.vv v2, v2, v2
+</pre></div>
+</div>
+<p>Example of program with call to <cite>vsetvl</cite>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>vsetvl rd, rs1, rs2
+# LLVM-MCA-RISCV-LMUL M1
+vadd.vv v12, v12, v12
+vsetvl rd, rs1, rs2
+# LLVM-MCA-RISCV-LMUL M4
+vadd.vv v12, v12, v12
+</pre></div>
+</div>
 </div>
 <div class="section" id="how-llvm-mca-works">
 <h2>HOW LLVM-MCA WORKS<a class="headerlink" href="#how-llvm-mca-works" title="Permalink to this headline">¶</a></h2>
@@ -1079,6 +1154,25 @@ already have one, refer to an existing implementation to see how to set it
 up. The classes are implemented within the target specific backend (for
 example <cite>/llvm/lib/Target/AMDGPU/MCA/</cite>) so that they can access backend symbols.</p>
 </div>
+<div class="section" id="instrument-manager">
+<h4>Instrument Manager<a class="headerlink" href="#instrument-manager" title="Permalink to this headline">¶</a></h4>
+<p>On certain architectures, scheduling information for certain instructions
+do not contain all of the information required to identify the most precise
+schedule class. For example, data that can have an impact on scheduling can
+be stored in CSR registers.</p>
+<p>One example of this is on RISCV, where values in registers such as <cite>vtype</cite>
+and <cite>vl</cite> change the scheduling behaviour of vector instructions. Since MCA
+does not keep track of the values in registers, instrument comments can
+be used to specify these values.</p>
+<p>InstrumentManager’s main function is <cite>getSchedClassID()</cite> which has access
+to the MCInst and all of the instruments that are active for that MCInst.
+This function can use the instruments to override the schedule class of
+the MCInst.</p>
+<p>On RISCV, instrument comments containing LMUL information are used
+by <cite>getSchedClassID()</cite> to map a vector instruction and the active
+LMUL to the scheduling class of the pseudo-instruction that describes
+that base instruction and the active LMUL.</p>
+</div>
 <div class="section" id="custom-views">
 <h4>Custom Views<a class="headerlink" href="#custom-views" title="Permalink to this headline">¶</a></h4>
 <p><strong class="program">llvm-mca</strong> comes with several Views such as the Timeline View and
@@ -1120,7 +1214,7 @@ Views.</p>
           <a href="../genindex.html" title="General Index"
              >index</a></li>
         <li class="right" >
-          <a href="llvm-otool.html" title="llvm-otool - Mach-O dumping tool"
+          <a href="llvm-opt-report.html" title="llvm-opt-report - generate optimization report from YAML"
              >next</a> |</li>
         <li class="right" >
           <a href="llvm-lipo.html" title="llvm-lipo - LLVM tool for manipulating universal binaries"
@@ -1133,8 +1227,8 @@ Views.</p>
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2003-2022, LLVM Project.
-      Last updated on 2022-08-10.
+        &#169; Copyright 2003-2023, LLVM Project.
+      Last updated on 2023-03-18.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

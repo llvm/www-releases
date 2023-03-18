@@ -96,6 +96,8 @@ guidelines – if you would like to be added to it, please reach out on Discord.
 <li><p>Update the version number in <code class="docutils literal notranslate"><span class="pre">libcxx/docs/conf.py</span></code></p></li>
 <li><p>Update <code class="docutils literal notranslate"><span class="pre">_LIBCPPABI_VERSION</span></code> in <code class="docutils literal notranslate"><span class="pre">libcxxabi/include/cxxabi.h</span></code></p></li>
 <li><p>Update <code class="docutils literal notranslate"><span class="pre">_LIBUNWIND_VERSION</span></code> in <code class="docutils literal notranslate"><span class="pre">libunwind/include/__libunwind_config.h</span></code></p></li>
+<li><p>Update the list of supported clang versions in <code class="docutils literal notranslate"><span class="pre">libcxx/docs/index.rst</span></code></p></li>
+<li><p>Remove the in-progress warning from <code class="docutils literal notranslate"><span class="pre">libcxx/docs/ReleaseNotes.rst</span></code></p></li>
 </ol>
 </div>
 <div class="section" id="exporting-new-symbols-from-the-library">
@@ -110,9 +112,142 @@ updated list from the failed build at
 Look for the failed build and select the <code class="docutils literal notranslate"><span class="pre">artifacts</span></code> tab. There, download the
 abilist for the platform, e.g.:</p>
 <ul class="simple">
-<li><p>C++20 for the Linux platform.</p></li>
-<li><p>MacOS C++20 for the Apple platform.</p></li>
+<li><p>C++&lt;version&gt;.</p></li>
+<li><p>MacOS X86_64 and MacOS arm64 for the Apple platform.</p></li>
 </ul>
+</div>
+<div class="section" id="pre-commit-ci">
+<h2>Pre-commit CI<a class="headerlink" href="#pre-commit-ci" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="introduction">
+<h3>Introduction<a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h3>
+<p>Unlike most parts of the LLVM project, libc++ uses a pre-commit CI <a class="footnote-reference brackets" href="#id2" id="id1">1</a>. This
+CI is hosted on <a class="reference external" href="https://buildkite.com/llvm-project/libcxx-ci">Buildkite</a> and
+the build results are visible in the review on Phabricator. Please make sure
+the CI is green before committing a patch.</p>
+<p>The CI tests libc++ for all <a class="reference internal" href="index.html#supportedplatforms"><span class="std std-ref">supported platforms</span></a>.
+The build is started for every diff uploaded to Phabricator. A complete CI run
+takes approximately one hour. To reduce the load:</p>
+<ul class="simple">
+<li><p>The build is cancelled when a new diff for the same revision is uploaded.</p></li>
+<li><p>The build is done in several stages and cancelled when a stage fails.</p></li>
+</ul>
+<p>Typically, the libc++ jobs use a Ubuntu Docker image. This image contains
+recent <a class="reference external" href="https://apt.llvm.org">nightly builds</a> of all supported versions of
+Clang and the current version of the <code class="docutils literal notranslate"><span class="pre">main</span></code> branch. These versions of Clang
+are used to build libc++ and execute its tests.</p>
+<p>Unless specified otherwise, the configurations:</p>
+<ul class="simple">
+<li><p>use a nightly build of the <code class="docutils literal notranslate"><span class="pre">main</span></code> branch of Clang,</p></li>
+<li><p>execute the tests using the language C++&lt;latest&gt;. This is the version
+“developed” by the C++ committee.</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Updating the Clang nightly builds in the Docker image is a manual
+process and is done at an irregular interval on purpose. When you need to
+have the latest nightly build to test recent Clang changes, ask in the
+<code class="docutils literal notranslate"><span class="pre">#libcxx</span></code> channel on <a class="reference external" href="https://discord.gg/jzUbyP26tQ">LLVM’s Discord server</a>.</p>
+</div>
+<dl class="footnote brackets">
+<dt class="label" id="id2"><span class="brackets"><a class="fn-backref" href="#id1">1</a></span></dt>
+<dd><p>There’s <a class="reference external" href="https://www.youtube.com/watch?v=B7gB6van7Bw">LLVM Dev Meeting talk</a>
+explaining the benefits of libc++’s pre-commit CI.</p>
+</dd>
+</dl>
+</div>
+<div class="section" id="builds">
+<h3>Builds<a class="headerlink" href="#builds" title="Permalink to this headline">¶</a></h3>
+<p>Below is a short description of the most interesting CI builds <a class="footnote-reference brackets" href="#id5" id="id3">2</a>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">Format</span></code> runs <code class="docutils literal notranslate"><span class="pre">clang-format</span></code> and uploads its output as an artifact. At the
+moment this build is a soft error and doesn’t fail the build.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Generated</span> <span class="pre">output</span></code> runs the <code class="docutils literal notranslate"><span class="pre">libcxx-generate-files</span></code> build target and
+tests for non-ASCII characters in libcxx. Some files are excluded since they
+use Unicode, mainly tests. The output of these commands are uploaded as
+artifact.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Documentation</span></code> builds the documentation. (This is done early in the build
+process since it is cheap to run.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">C++&lt;version&gt;</span></code> these build steps test the various C++ versions, making sure all
+C++ language versions work with the changes made.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Clang</span> <span class="pre">&lt;version&gt;</span></code> these build steps test whether the changes work with all
+supported Clang versions.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Booststrapping</span> <span class="pre">build</span></code> builds Clang using the revision of the patch and
+uses that Clang version to build and test libc++. This validates the current
+Clang and lib++ are compatible.</p>
+<p>When a crash occurs in this build, the crash reproducer is available as an
+artifact.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Modular</span> <span class="pre">build</span></code> tests libc++ using Clang modules <a class="footnote-reference brackets" href="#id6" id="id4">3</a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GCC</span> <span class="pre">&lt;version&gt;</span></code> tests libc++ with the latest stable GCC version. Only C++11
+and the latest C++ version are tested.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Santitizers</span></code> tests libc++ using the Clang sanitizers.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Parts</span> <span class="pre">disabled</span></code> tests libc++ with certain libc++ features disabled.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Windows</span></code> tests libc++ using MinGW and clang-cl.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Apple</span></code> tests libc++ on MacOS.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ARM</span></code> tests libc++ on various Linux ARM platforms.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">AIX</span></code> tests libc++ on AIX.</p></li>
+</ul>
+<dl class="footnote brackets">
+<dt class="label" id="id5"><span class="brackets"><a class="fn-backref" href="#id3">2</a></span></dt>
+<dd><p>Not all all steps are listed: steps are added and removed when the need
+arises.</p>
+</dd>
+<dt class="label" id="id6"><span class="brackets"><a class="fn-backref" href="#id4">3</a></span></dt>
+<dd><p>Clang modules are not the same as C++20’s modules.</p>
+</dd>
+</dl>
+</div>
+<div class="section" id="infrastructure">
+<h3>Infrastructure<a class="headerlink" href="#infrastructure" title="Permalink to this headline">¶</a></h3>
+<p>All files of the CI infrastructure are in the directory <code class="docutils literal notranslate"><span class="pre">libcxx/utils/ci</span></code>.
+Note that quite a bit of this infrastructure is heavily Linux focused. This is
+the platform used by most of libc++’s Buildkite runners and developers.</p>
+<div class="section" id="dockerfile">
+<h4>Dockerfile<a class="headerlink" href="#dockerfile" title="Permalink to this headline">¶</a></h4>
+<p>Contains the Docker image for the Ubuntu CI. Because the same Docker image is
+used for the <code class="docutils literal notranslate"><span class="pre">main</span></code> and <code class="docutils literal notranslate"><span class="pre">release</span></code> branch, it should contain no hard-coded
+versions.  It contains the used versions of Clang, various clang-tools,
+GCC, and CMake.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This image is pulled from Docker hub and not rebuild when changing
+the Dockerfile.</p>
+</div>
+</div>
+<div class="section" id="run-buildbot-container">
+<h4>run-buildbot-container<a class="headerlink" href="#run-buildbot-container" title="Permalink to this headline">¶</a></h4>
+<p>Helper script that pulls and runs the Docker image. This image mounts the LLVM
+monorepo at <code class="docutils literal notranslate"><span class="pre">/llvm</span></code>. This can be used to test with compilers not available on
+your system.</p>
+</div>
+<div class="section" id="run-buildbot">
+<h4>run-buildbot<a class="headerlink" href="#run-buildbot" title="Permalink to this headline">¶</a></h4>
+<p>Contains the buld script executed on Buildkite. This script can be executed
+locally or inside <code class="docutils literal notranslate"><span class="pre">run-buildbot-container</span></code>. The script must be called with
+the target to test. For example, <code class="docutils literal notranslate"><span class="pre">run-buildbot</span> <span class="pre">generic-cxx20</span></code> will build
+libc++ and test it using C++20.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>This script will overwrite the directory <code class="docutils literal notranslate"><span class="pre">&lt;llvm-root&gt;/build/XX</span></code>
+where <code class="docutils literal notranslate"><span class="pre">XX</span></code> is the target of <code class="docutils literal notranslate"><span class="pre">run-buildbot</span></code>.</p>
+</div>
+<p>This script contains as little version information as possible. This makes it
+easy to use the script with a different compiler. This allows testing a
+combination not in the libc++ CI. It can be used to add a new (temporary)
+job to the CI. For example, testing the C++17 build with Clang-14 can be done
+like:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">CC</span><span class="o">=</span>clang-14 <span class="nv">CXX</span><span class="o">=</span>clang++-14 run-buildbot generic-cxx17
+</pre></div>
+</div>
+</div>
+<div class="section" id="buildkite-pipeline-yml">
+<h4>buildkite-pipeline.yml<a class="headerlink" href="#buildkite-pipeline-yml" title="Permalink to this headline">¶</a></h4>
+<p>Contains the jobs executed in the CI. This file contains the version
+information of the jobs being executed. Since this script differs between the
+<code class="docutils literal notranslate"><span class="pre">main</span></code> and <code class="docutils literal notranslate"><span class="pre">release</span></code> branch, both branches can use different compiler
+versions.</p>
+</div>
+</div>
 </div>
 </div>
 
@@ -131,7 +266,7 @@ abilist for the platform, e.g.:</p>
       </div>
 
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2011-2022, LLVM Project.
+        &#169; Copyright 2011-2023, LLVM Project.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

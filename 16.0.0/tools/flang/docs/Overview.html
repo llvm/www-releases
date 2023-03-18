@@ -5,7 +5,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
-    <title>Intro &#8212; The Flang Compiler</title>
+    <title>Overview of Compiler Phases &#8212; The Flang Compiler</title>
     <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
@@ -99,30 +99,35 @@
    See https://llvm.org/LICENSE.txt for license information.
    SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
   
---><div class="section" id="intro">
-<h1>Intro<a class="headerlink" href="#intro" title="Permalink to this headline">¶</a></h1>
-<p>This document goes briefly over compiler phases in Flang. It focuses on the
-internal implementation and as such, it is intended for Flang developers rather
-than end-users.</p>
-</div>
-<div class="section" id="overview-of-compiler-phases">
+--><div class="section" id="overview-of-compiler-phases">
 <h1>Overview of Compiler Phases<a class="headerlink" href="#overview-of-compiler-phases" title="Permalink to this headline">¶</a></h1>
-<div class="contents local topic" id="contents">
-<ul class="simple">
-<li><p><a class="reference internal" href="#prescan-and-preprocess" id="id1">Prescan and Preprocess</a></p></li>
-<li><p><a class="reference internal" href="#parse" id="id2">Parse</a></p></li>
-<li><p><a class="reference internal" href="#validate-labels-and-canonicalize-do-statements" id="id3">Validate Labels and Canonicalize Do Statements</a></p></li>
-<li><p><a class="reference internal" href="#resolve-names" id="id4">Resolve Names</a></p></li>
-<li><p><a class="reference internal" href="#check-do-concurrent-constraints" id="id5">Check DO CONCURRENT Constraints</a></p></li>
-<li><p><a class="reference internal" href="#write-module-files" id="id6">Write Module Files</a></p></li>
-<li><p><a class="reference internal" href="#analyze-expressions-and-assignments" id="id7">Analyze Expressions and Assignments</a></p></li>
-<li><p><a class="reference internal" href="#produce-the-intermediate-representation" id="id8">Produce the Intermediate Representation</a></p></li>
-</ul>
+<p>The Flang compiler transforms Fortran source code into an executable file.
+This transformation proceeds in three high level phases – analysis, lowering,
+and code generation/linking.</p>
+<p>The first high level phase (analysis) transforms Fortran source code into a
+decorated parse tree and a symbol table.  During this phase, all user
+related errors are detected and reported.</p>
+<p>The second high level phase (lowering), changes the decorated parse tree and
+symbol table into the Fortran Intermediate Representation (FIR), which is a
+dialect of LLVM’s Multi-Level Intermediate Representation or MLIR.  It then
+runs a series of passes on the FIR code which verify its validity, perform a
+series of optimizations, and finally transform it into LLVM’s Intermediate
+Representation, or LLVM IR</p>
+<p>The third high level phase generates machine code and invokes a linker to
+produce an executable file.</p>
+<p>This document describes the first two high level phases.  Each of these is
+described in more detailed phases.</p>
+<p>Each detailed phase is described – its inputs and outputs along with how to
+produce a readable version of the outputs.</p>
+<p>Each detailed phase produces either correct output or fatal errors.</p>
 </div>
-<p>Each phase produces either correct output or fatal errors.</p>
+<div class="section" id="analysis">
+<h1>Analysis<a class="headerlink" href="#analysis" title="Permalink to this headline">¶</a></h1>
+<p>This high level phase validates that the program is correct and creates all of
+the information needed for lowering.</p>
 <div class="section" id="prescan-and-preprocess">
-<h2><a class="toc-backref" href="#id1">Prescan and Preprocess</a><a class="headerlink" href="#prescan-and-preprocess" title="Permalink to this headline">¶</a></h2>
-<p>See: <a class="reference internal" href="Preprocessing.html"><span class="doc">Preprocessing.md</span></a>.</p>
+<h2>Prescan and Preprocess<a class="headerlink" href="#prescan-and-preprocess" title="Permalink to this headline">¶</a></h2>
+<p>See <a class="reference internal" href="Preprocessing.html"><span class="doc">Preprocessing.md</span></a>.</p>
 <p><strong>Input:</strong> Fortran source and header files, command line macro definitions,
 set of enabled compiler directives (to be treated as directives rather than
 comments).</p>
@@ -131,79 +136,136 @@ comments).</p>
 <li><p>A “cooked” character stream: the entire program as a contiguous stream of
 normalized Fortran source.
 Extraneous whitespace and comments are removed (except comments that are
-compiler directives that are not disabled) and case is normalized.</p></li>
+compiler directives that are not disabled) and case is normalized.  Also,
+directives are processed and macros expanded.</p></li>
 <li><p>Provenance information mapping each character back to the source it came from.
-This is used in subsequent phases to issue errors messages that refer to source locations.</p></li>
+This is used in subsequent phases that need source locations.  This includes
+error messages, optimization reports, and debugging information.</p></li>
 </ul>
 <p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">parser::Parsing::Prescan</span></code></p>
-<p><strong>Command:</strong> <code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-E</span> <span class="pre">src.f90</span></code> dumps the cooked character stream</p>
-</div>
-<div class="section" id="parse">
-<h2><a class="toc-backref" href="#id2">Parse</a><a class="headerlink" href="#parse" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Cooked character stream.</p>
-<p><strong>Output:</strong> A parse tree representing a syntactically correct program,
-rooted at a <code class="docutils literal notranslate"><span class="pre">parser::Program</span></code>.
-See: <a class="reference internal" href="Parsing.html"><span class="doc">Parsing.md</span></a> and <a class="reference internal" href="ParserCombinators.html"><span class="doc">ParserCombinators.md</span></a>.</p>
-<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">parser::Parsing::Parse</span></code></p>
-<p><strong>Command:</strong></p>
+<p><strong>Commands:</strong></p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parse-tree</span> <span class="pre">src.f90</span></code> dumps the parse tree</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-unparse</span> <span class="pre">src.f90</span></code> converts the parse tree to normalized Fortran</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-E</span> <span class="pre">src.f90</span></code> dumps the cooked character stream</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-provenance</span> <span class="pre">src.f90</span></code> dumps provenance
+information</p></li>
 </ul>
 </div>
-<div class="section" id="validate-labels-and-canonicalize-do-statements">
-<h2><a class="toc-backref" href="#id3">Validate Labels and Canonicalize Do Statements</a><a class="headerlink" href="#validate-labels-and-canonicalize-do-statements" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Parse tree.</p>
-<p><strong>Output:</strong> The parse tree with label constraints and construct names checked,
-and each <code class="docutils literal notranslate"><span class="pre">LabelDoStmt</span></code> converted to a <code class="docutils literal notranslate"><span class="pre">NonLabelDoStmt</span></code>.
-See: <a class="reference internal" href="LabelResolution.html"><span class="doc">LabelResolution.md</span></a>.</p>
-<p><strong>Entry points:</strong> <code class="docutils literal notranslate"><span class="pre">semantics::ValidateLabels</span></code>, <code class="docutils literal notranslate"><span class="pre">parser::CanonicalizeDo</span></code></p>
+<div class="section" id="parsing">
+<h2>Parsing<a class="headerlink" href="#parsing" title="Permalink to this headline">¶</a></h2>
+<p><strong>Input:</strong> Cooked character stream</p>
+<p><strong>Output:</strong> A parse tree for each Fortran program unit in the source code
+representing a syntactically correct program, rooted at the program unit.  See:
+<a class="reference internal" href="Parsing.html"><span class="doc">Parsing.md</span></a> and <a class="reference internal" href="ParserCombinators.html"><span class="doc">ParserCombinators.md</span></a>.</p>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">parser::Parsing::Parse</span></code></p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parse-tree-no-sema</span> <span class="pre">src.f90</span></code> dumps the parse tree</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-unparse</span> <span class="pre">src.f90</span></code> converts the parse tree to normalized Fortran</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parsing-log</span> <span class="pre">src.f90</span></code> runs an instrumented parse and dumps the log</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-measure-parse-tree</span> <span class="pre">src.f90</span></code> measures the parse tree</p></li>
+</ul>
 </div>
-<div class="section" id="resolve-names">
-<h2><a class="toc-backref" href="#id4">Resolve Names</a><a class="headerlink" href="#resolve-names" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Parse tree (without <code class="docutils literal notranslate"><span class="pre">LabelDoStmt</span></code>) and <code class="docutils literal notranslate"><span class="pre">.mod</span></code> files from compilation
-of USEd modules.</p>
+<div class="section" id="semantic-processing">
+<h2>Semantic processing<a class="headerlink" href="#semantic-processing" title="Permalink to this headline">¶</a></h2>
+<p><strong>Input:</strong> the parse tree, the cooked character stream, and provenance
+information</p>
 <p><strong>Output:</strong></p>
 <ul class="simple">
-<li><p>Tree of scopes populated with symbols and types</p></li>
-<li><p>Parse tree with some refinements:</p>
-<ul>
-<li><p>each <code class="docutils literal notranslate"><span class="pre">parser::Name::symbol</span></code> field points to one of the symbols</p></li>
-<li><p>each <code class="docutils literal notranslate"><span class="pre">parser::TypeSpec::declTypeSpec</span></code> field points to one of the types</p></li>
-<li><p>array element references that were parsed as function references or
-statement functions are corrected</p></li>
+<li><p>a symbol table</p></li>
+<li><p>modified parse tree</p></li>
+<li><p>module files, (see: <a class="reference internal" href="ModFiles.html"><span class="doc">ModFiles.md</span></a>)</p></li>
+<li><p>the intrinsic procedure table</p></li>
+<li><p>the target characteristics</p></li>
+<li><p>the runtime derived type derived type tables (see: <a class="reference internal" href="RuntimeTypeInfo.html"><span class="doc">RuntimeTypeInfo.md</span></a>)</p></li>
 </ul>
-</li>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">semantics::Semantics::Perform</span></code></p>
+<p>For more detail on semantic analysis, see: <a class="reference internal" href="Semantics.html"><span class="doc">Semantics.md</span></a>.
+Semantic processing performs several tasks:</p>
+<ul class="simple">
+<li><p>validates labels, see: <a class="reference internal" href="LabelResolution.html"><span class="doc">LabelResolution.md</span></a>.</p></li>
+<li><p>canonicalizes DO statements,</p></li>
+<li><p>canonicalizes OpenACC and OpenMP code</p></li>
+<li><p>resolves names, building a tree of scopes and symbols</p></li>
+<li><p>rewrites the parse tree to correct parsing mistakes (when needed) once semantic information is available to clarify the program’s meaning</p></li>
+<li><p>checks the validity of declarations</p></li>
+<li><p>analyzes expressions and statements, emitting error messages where appropriate</p></li>
+<li><p>creates module files if the source code contains modules,
+see <a class="reference internal" href="ModFiles.html"><span class="doc">ModFiles.md</span></a>.</p></li>
 </ul>
-<p><strong>Entry points:</strong> <code class="docutils literal notranslate"><span class="pre">semantics::ResolveNames</span></code>, <code class="docutils literal notranslate"><span class="pre">semantics::RewriteParseTree</span></code></p>
-<p><strong>Command:</strong> <code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-symbols</span> <span class="pre">src.f90</span></code> dumps the
-tree of scopes and symbols in each scope</p>
+<p>In the course of semantic analysis, the compiler:</p>
+<ul class="simple">
+<li><p>creates the symbol table</p></li>
+<li><p>decorates the parse tree with semantic information (such as pointers into the symbol table)</p></li>
+<li><p>creates the intrinsic procedure table</p></li>
+<li><p>folds constant expressions</p></li>
+</ul>
+<p>At the end of semantic processing, all validation of the user’s program is complete.  This is the last detailed phase of analysis processing.</p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parse-tree</span> <span class="pre">src.f90</span></code> dumps the parse tree after semantic analysis</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-symbols</span> <span class="pre">src.f90</span></code> dumps the symbol table</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-all</span> <span class="pre">src.f90</span></code> dumps both the parse tree and the symbol table</p></li>
+</ul>
 </div>
-<div class="section" id="check-do-concurrent-constraints">
-<h2><a class="toc-backref" href="#id5">Check DO CONCURRENT Constraints</a><a class="headerlink" href="#check-do-concurrent-constraints" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Parse tree with names resolved.</p>
-<p><strong>Output:</strong> Parse tree with semantically correct DO CONCURRENT loops.</p>
 </div>
-<div class="section" id="write-module-files">
-<h2><a class="toc-backref" href="#id6">Write Module Files</a><a class="headerlink" href="#write-module-files" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Parse tree with names resolved.</p>
-<p><strong>Output:</strong> For each module and submodule, a <code class="docutils literal notranslate"><span class="pre">.mod</span></code> file containing a minimal
-Fortran representation suitable for compiling program units that depend on it.
-See <a class="reference internal" href="ModFiles.html"><span class="doc">ModFiles.md</span></a>.</p>
+<div class="section" id="lowering">
+<h1>Lowering<a class="headerlink" href="#lowering" title="Permalink to this headline">¶</a></h1>
+<p>Lowering takes the parse tree and symbol table produced by analysis and
+produces LLVM IR.</p>
+<div class="section" id="create-the-lowering-bridge">
+<h2>Create the lowering bridge<a class="headerlink" href="#create-the-lowering-bridge" title="Permalink to this headline">¶</a></h2>
+<p><strong>Inputs:</strong></p>
+<ul class="simple">
+<li><p>the parse tree</p></li>
+<li><p>the symbol table</p></li>
+<li><p>The default KINDs for intrinsic types (specified by default or command line option)</p></li>
+<li><p>The intrinsic procedure table (created in semantics processing)</p></li>
+<li><p>The target characteristics (created during semantics processing)</p></li>
+<li><p>The cooked character stream</p></li>
+<li><p>The target triple – CPU type, vendor, operating system</p></li>
+<li><p>The mapping between Fortran KIND values to FIR KIND values</p></li>
+</ul>
+<p>The lowering bridge is a container that holds all of the information needed for lowering.</p>
+<p><strong>Output:</strong> A container with all of the information needed for lowering</p>
+<p><strong>Entry point:</strong> lower::LoweringBridge::create</p>
 </div>
-<div class="section" id="analyze-expressions-and-assignments">
-<h2><a class="toc-backref" href="#id7">Analyze Expressions and Assignments</a><a class="headerlink" href="#analyze-expressions-and-assignments" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Parse tree with names resolved.</p>
-<p><strong>Output:</strong> Parse tree with <code class="docutils literal notranslate"><span class="pre">parser::Expr::typedExpr</span></code> filled in and semantic
-checks performed on all expressions and assignment statements.</p>
-<p><strong>Entry points</strong>: <code class="docutils literal notranslate"><span class="pre">semantics::AnalyzeExpressions</span></code>, <code class="docutils literal notranslate"><span class="pre">semantics::AnalyzeAssignments</span></code></p>
+<div class="section" id="initial-lowering">
+<h2>Initial lowering<a class="headerlink" href="#initial-lowering" title="Permalink to this headline">¶</a></h2>
+<p><strong>Input:</strong> the lowering bridge</p>
+<p><strong>Output:</strong> A Fortran IR (FIR) representation of the program.</p>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">lower::LoweringBridge::lower</span></code></p>
+<p>The compiler then takes the information in the lowering bridge and creates a
+pre-FIR tree or PFT.  The PFT is a list of programs and modules.  The programs
+and modules contain lists of function-like units.  The function-like units
+contain a list of evaluations.  All of these contain pointers back into the
+parse tree.  The compiler walks the PFT generating FIR.</p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-pft</span> <span class="pre">src.f90</span></code> dumps the pre-FIR tree</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-emit-mlir</span> <span class="pre">src.f90</span></code> dumps the FIR to the files src.mlir</p></li>
+</ul>
 </div>
-<div class="section" id="produce-the-intermediate-representation">
-<h2><a class="toc-backref" href="#id8">Produce the Intermediate Representation</a><a class="headerlink" href="#produce-the-intermediate-representation" title="Permalink to this headline">¶</a></h2>
-<p><strong>Input:</strong> Parse tree with names and labels resolved.</p>
-<p><strong>Output:</strong> An intermediate representation of the executable program.
-See <a class="reference internal" href="FortranIR.html"><span class="doc">FortranIR.md</span></a>.</p>
+<div class="section" id="transformation-passes">
+<h2>Transformation passes<a class="headerlink" href="#transformation-passes" title="Permalink to this headline">¶</a></h2>
+<p><strong>Input:</strong> initial version of the FIR code</p>
+<p><strong>Output:</strong> An LLVM IR representation of the program</p>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">mlir::PassManager::run</span></code></p>
+<p>The compiler then runs a series of passes over the FIR code.  The first is a
+verification pass.  It’s followed by a series of transformation passes that
+perform various optimizations and transformations.  The final pass creates an
+LLVM IR representation of the program.</p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-mmlir</span> <span class="pre">--mlir-print-ir-after-all</span> <span class="pre">-S</span> <span class="pre">src.f90</span></code> dumps the FIR code after each pass to standard error</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-emit-llvm</span> <span class="pre">src.f90</span></code> dumps the LLVM IR to src.ll</p></li>
+</ul>
 </div>
+</div>
+<div class="section" id="object-code-generation-and-linking">
+<h1>Object code generation and linking<a class="headerlink" href="#object-code-generation-and-linking" title="Permalink to this headline">¶</a></h1>
+<p>After the LLVM IR is created, the flang driver invokes LLVM’s existing
+infrastructure to generate object code and invoke a linker to create the
+executable file.</p>
 </div>
 
 
@@ -231,8 +293,8 @@ See <a class="reference internal" href="FortranIR.html"><span class="doc">Fortra
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2017-2022, The Flang Team.
-      Last updated on Aug 10, 2022.
+        &#169; Copyright 2017-2023, The Flang Team.
+      Last updated on Mar 18, 2023.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

@@ -5,7 +5,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
     <meta charset="utf-8" />
-    <title>Writing an LLVM Pass &#8212; LLVM 15.0.0 documentation</title>
+    <title>Writing an LLVM Pass &#8212; LLVM 16.0.0 documentation</title>
     <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
     <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
@@ -75,7 +75,7 @@
     <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
     <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
     <li><a href="https://llvm.org/pubs">Publications</a></li>
-    <li><a href="https://github.com/llvm/llvm-project//">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
 </ul>
   <div role="note" aria-label="source link">
     <h3>This Page</h3>
@@ -118,6 +118,7 @@
 <li><p><a class="reference internal" href="#faqs" id="id7">FAQs</a></p>
 <ul>
 <li><p><a class="reference internal" href="#required-passes" id="id8">Required passes</a></p></li>
+<li><p><a class="reference internal" href="#registering-passes-as-plugins" id="id9">Registering passes as plugins</a></p></li>
 </ul>
 </li>
 </ul>
@@ -307,6 +308,51 @@ function. Required passes will still be run on <code class="docutils literal not
 <p>For more implementation details, see
 <code class="docutils literal notranslate"><span class="pre">PassInstrumentation::runBeforePass()</span></code>.</p>
 </div>
+<div class="section" id="registering-passes-as-plugins">
+<h3><a class="toc-backref" href="#id9">Registering passes as plugins</a><a class="headerlink" href="#registering-passes-as-plugins" title="Permalink to this headline">¶</a></h3>
+<p>LLVM provides a mechanism to register pass plugins within various tools like
+<code class="docutils literal notranslate"><span class="pre">clang</span></code> or <code class="docutils literal notranslate"><span class="pre">opt</span></code>. A pass plugin can add passes to default optimization
+pipelines or to be manually run via tools like <code class="docutils literal notranslate"><span class="pre">opt</span></code>.  For more information,
+see <a class="reference internal" href="NewPassManager.html"><span class="doc">Using the New Pass Manager</span></a>.</p>
+<p>Create a CMake project at the root of the repo alongside
+other projects.  This project must contain the following minimal
+<code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>:</p>
+<div class="highlight-cmake notranslate"><div class="highlight"><pre><span></span><span class="nb">add_llvm_pass_plugin</span><span class="p">(</span><span class="s">MyPassName</span> <span class="s">source.cpp</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>See the definition of <code class="docutils literal notranslate"><span class="pre">add_llvm_pass_plugin</span></code> for more CMake details.</p>
+<p>The pass must provide at least one of two entry points for the new pass manager,
+one for static registration and one for dynamically loaded plugins:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">llvm::PassPluginLibraryInfo</span> <span class="pre">get##Name##PluginInfo();</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">extern</span> <span class="pre">&quot;C&quot;</span> <span class="pre">::llvm::PassPluginLibraryInfo</span> <span class="pre">llvmGetPassPluginInfo()</span> <span class="pre">LLVM_ATTRIBUTE_WEAK;</span></code></p></li>
+</ul>
+<p>Pass plugins are compiled and linked dynamically by default. Setting
+<code class="docutils literal notranslate"><span class="pre">LLVM_${NAME}_LINK_INTO_TOOLS</span></code> to <code class="docutils literal notranslate"><span class="pre">ON</span></code> turns the project into a statically
+linked extension.</p>
+<p>For an in-tree example, see <code class="docutils literal notranslate"><span class="pre">llvm/examples/Bye/</span></code>.</p>
+<p>To make <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> aware of statically linked pass plugins:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Declare plugin extension function declarations.</span>
+<span class="cp">#define HANDLE_EXTENSION(Ext) llvm::PassPluginLibraryInfo get##Ext##PluginInfo();</span>
+<span class="cp">#include</span> <span class="cpf">&quot;llvm/Support/Extension.def&quot;</span><span class="cp"></span>
+
+<span class="p">...</span>
+
+<span class="c1">// Register plugin extensions in PassBuilder.</span>
+<span class="cp">#define HANDLE_EXTENSION(Ext) get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);</span>
+<span class="cp">#include</span> <span class="cpf">&quot;llvm/Support/Extension.def&quot;</span><span class="cp"></span>
+</pre></div>
+</div>
+<p>To make <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> aware of dynamically linked pass plugins:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Load plugin dynamically.</span>
+<span class="k">auto</span> <span class="n">Plugin</span> <span class="o">=</span> <span class="n">PassPlugin</span><span class="o">::</span><span class="n">Load</span><span class="p">(</span><span class="n">PathToPlugin</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">Plugin</span><span class="p">)</span>
+  <span class="n">report_error</span><span class="p">();</span>
+<span class="c1">// Register plugin extensions in PassBuilder.</span>
+<span class="n">Plugin</span><span class="p">.</span><span class="n">registerPassBuilderCallbacks</span><span class="p">(</span><span class="n">PB</span><span class="p">);</span>
+</pre></div>
+</div>
+</div>
 </div>
 </div>
 
@@ -335,8 +381,8 @@ function. Required passes will still be run on <code class="docutils literal not
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2003-2022, LLVM Project.
-      Last updated on 2022-08-10.
+        &#169; Copyright 2003-2023, LLVM Project.
+      Last updated on 2023-03-18.
       Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
     </div>
   </body>

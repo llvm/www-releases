@@ -1,0 +1,475 @@
+
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Aliasing in Fortran &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm-theme.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://bugs.llvm.org/">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+<! TODO: Have the bots setup first>
+    <li><a href="#">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/Aliasing.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+--><div class="section" id="aliasing-in-fortran">
+<h1>Aliasing in Fortran<a class="headerlink" href="#aliasing-in-fortran" title="Permalink to this headline">¶</a></h1>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#dummy-arguments" id="id2">Dummy Arguments</a></p>
+<ul>
+<li><p><a class="reference internal" href="#basic-rule" id="id3">Basic rule</a></p></li>
+<li><p><a class="reference internal" href="#complications" id="id4">Complications</a></p></li>
+<li><p><a class="reference internal" href="#implications-for-inlining" id="id5">Implications for inlining</a></p></li>
+<li><p><a class="reference internal" href="#intent-in" id="id6"><code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#value" id="id7"><code class="docutils literal notranslate"><span class="pre">VALUE</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#pointers-and-targets" id="id8">Pointers and targets</a></p>
+<ul>
+<li><p><a class="reference internal" href="#the-target-hole-for-dummy-arguments" id="id9">The <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> hole for dummy arguments</a></p></li>
+<li><p><a class="reference internal" href="#valid-lifetimes-of-pointers-to-dummy-arguments" id="id10">Valid lifetimes of pointers to dummy arguments</a></p></li>
+<li><p><a class="reference internal" href="#lack-of-pointer-target-intent" id="id11">Lack of pointer target <code class="docutils literal notranslate"><span class="pre">INTENT</span></code></a></p></li>
+<li><p><a class="reference internal" href="#cray-pointers" id="id12">Cray pointers</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#type-considerations" id="id13">Type considerations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#shape-and-rank" id="id14">Shape and rank</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#selectors-in-associate-select-type-and-change-team" id="id15">Selectors in <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code>, <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code>, and <code class="docutils literal notranslate"><span class="pre">CHANGE</span> <span class="pre">TEAM</span></code></a></p></li>
+<li><p><a class="reference internal" href="#allocatables" id="id16">Allocatables</a></p></li>
+<li><p><a class="reference internal" href="#asynchronous-and-volatile" id="id17"><code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> and <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code></a></p></li>
+<li><p><a class="reference internal" href="#storage-assocation-via-equivalence" id="id18">Storage assocation via <code class="docutils literal notranslate"><span class="pre">EQUIVALENCE</span></code></a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id1">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>References to the ISO Fortran language standard here are given by subclause number
+or constraint number and pertain to Fortran 2018.</p>
+</div>
+<div class="section" id="dummy-arguments">
+<h2><a class="toc-backref" href="#id2">Dummy Arguments</a><a class="headerlink" href="#dummy-arguments" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="basic-rule">
+<h3><a class="toc-backref" href="#id3">Basic rule</a><a class="headerlink" href="#basic-rule" title="Permalink to this headline">¶</a></h3>
+<p>Fortran famously passes actual arguments by reference, and forbids callers
+from associating multiple arguments on a call to conflicting storage when
+doing so would cause the called subprogram to write to a bit of that
+storage by means of one dummy argument and read or write that same bit
+by means of another.
+For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>function f(a,b,j,k)
+  real a(*), b(*)
+  a(j) = 1.
+  b(k) = 2.
+  f = a(j) ! can optimize to: f = 1.
+end function
+</pre></div>
+</div>
+<p>This prohibition applies to programs (or programmers) and has been in place
+since Fortran acquired subroutines and functions in Fortran II.</p>
+<p>A Fortran compiler is free to assume that a program conforms with this rule
+when optimizing; and while obvious violations should of course be diagnosed,
+the programmer bears the responsibility to understand and comply with this rule.</p>
+<p>It should be noted that this restriction on dummy argument aliasing works
+“both ways”, in general.
+Modifications to a dummy argument cannot affect other names by which that
+bit of storage may be known;
+conversely, modifications to anything other than a dummy argument cannot
+affect that dummy argument.</p>
+<p>When a subprogram modifies storage by means of a particular dummy argument,
+Fortran’s prohibition against dummy argument aliasing is not limited just to other
+dummy arguments, but to any other name by which that storage might be visible.
+For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>module m
+  real x
+ contains
+  function f(y)
+    real y
+    x = 1.
+    y = 2.
+    f = x ! can optimize to: f = 1.
+  end function
+  subroutine bad
+    print *, f(x) ! nonconforming usage!
+  end subroutine
+end module
+</pre></div>
+</div>
+<p>Similar examples can be written using variables in <code class="docutils literal notranslate"><span class="pre">COMMON</span></code> blocks, host-association
+in internal subprograms, and so forth.</p>
+<p>Further, the general rule that a dummy argument by which some particular bit
+of storage has been modified must be the only means by which that storage is
+referenced during the lifetime of a subprogram extends to cover any associations
+with that dummy argument via pointer association, argument association in
+procedure references deeper on the call chain, and so on.</p>
+</div>
+<div class="section" id="complications">
+<h3><a class="toc-backref" href="#id4">Complications</a><a class="headerlink" href="#complications" title="Permalink to this headline">¶</a></h3>
+<p>Subclause 15.5.2.13 (“Restrictions on entities associated with dummy arguments”),
+which the reader is encouraged to try to understand despite its opacity,
+formalizes the rules for aliasing of dummy arguments.</p>
+<p>In addition to the “basic rule” above, Fortran imposes these additional
+requirements on programs.</p>
+<ol class="simple">
+<li><p>When a dummy argument is <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> or <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, it can be deallocated
+or reallocated only through the dummy argument during the life of the
+subprogram.</p></li>
+<li><p>When a dummy argument has a derived type with a component, possibly nested,
+that is <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> or <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, the same restriction applies.</p></li>
+<li><p>If a subprogram ever deallocates or reallocates a dummy argument or one of its
+components, the program cannot access that data by any other means, even
+before the change in allocation.</p></li>
+</ol>
+<p>That subclause also <em>relaxes</em> the rules against dummy argument aliasing in
+some situations.</p>
+<ol class="simple">
+<li><p>When a dummy argument is a <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, it is essentially treated like any
+other pointer for the purpose of alias analysis (see below), and its
+status as a dummy argument is reduced to being relevant only for
+deallocation and reallocation (see above).</p></li>
+<li><p>When a dummy argument is a <code class="docutils literal notranslate"><span class="pre">TARGET</span></code>, the actual argument is really
+a variable (not an expression or something that needs to be passed via
+a temporary), and that variable could be a valid data target in a pointer
+assignment statement, then the compiler has to worry about aliasing
+between that dummy argument and pointers if some other circumstances
+apply.  (See the standard, this one is weird and complicated!)</p></li>
+<li><p>Aliasing doesn’t extend its restrictions to what other images might do
+to a coarray dummy argument’s associated local storage during the lifetime
+of a subprogram – i.e., other images don’t have to worry about avoiding
+accesses to the local image’s storage when its coarray nature is explicit
+in the declaration of the dummy argument.
+(But when the local image’s storage is associated with a non-coarray dummy
+argument, the rules still apply.
+In other words, the compiler doesn’t have to worry about corrays unless
+it sees coarrays.)</p></li>
+</ol>
+</div>
+<div class="section" id="implications-for-inlining">
+<h3><a class="toc-backref" href="#id5">Implications for inlining</a><a class="headerlink" href="#implications-for-inlining" title="Permalink to this headline">¶</a></h3>
+<p>A naive implementation of inlining might rewrite a procedure reference
+something like this:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>module m
+ contains
+  function addto(x, y)
+    real, intent(in out) :: x
+    real, intent(in) :: y
+    x = x + y
+    addto = y
+  end function
+  function f(a,j,k)
+    real a(*)
+    a(k) = 1.
+    f = addto(a(j), a(k)) ! optimizable to 1.
+  end function
+end module
+</pre></div>
+</div>
+<p>becoming, after inline expansion at the Fortran language level,</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>function f(a,j,k)
+  real a(*)
+  a(k) = 1.
+  a(j) = a(j) + a(k)
+  f = a(k) ! no longer optimizable to 1.
+end function
+</pre></div>
+</div>
+<p>The problem for a compiler is this: at the Fortran language level, no
+language construct has the same useful guarantees against aliasing as
+dummy arguments have.
+A program transformation that changes dummy arguments into something
+else needs to implement in its internal or intermediate representations
+some kind of metadata that preserves assumptions against aliasing.</p>
+</div>
+<div class="section" id="intent-in">
+<h3><a class="toc-backref" href="#id6"><code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code></a><a class="headerlink" href="#intent-in" title="Permalink to this headline">¶</a></h3>
+<p>A dummy argument may have an<code class="docutils literal notranslate"><span class="pre">INTENT</span></code> attribute.
+The relevant case for alias analysis is <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code>, as constraint
+C844 prohibits the appearance of an <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> non-pointer dummy
+argument in any “variable definition context” (19.6.7), which is
+Fortran’s way of saying that it might be at risk of modification.</p>
+<p>It would be great if the compiler could assume that an actual argument
+that corresponds to an <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy argument is unchanged after
+the called subprogram returns.
+Unfortunately, the language has holes that admit ways by which an
+<code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy argument may change, even in a conforming program
+(paragraph 2 and note 4 in subclause 8.5.10 notwithstanding).
+In particular, Fortran nowhere states that a non-pointer <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code>
+dummy argument is not “definable”.</p>
+<ol class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> does not prevent the same variable from also being
+associated with another dummy argument in the same call <em>without</em>
+<code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> and being modified thereby, which is conforming so
+long as the subprogram never references the dummy argument that
+has <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code>.
+In other words, <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> is necessary but not sufficient to
+guarantee safety from modification.</p></li>
+<li><p>A dummy argument may have <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> and <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> attributes,
+and in a non-<code class="docutils literal notranslate"><span class="pre">PURE</span></code> subprogram this would allow modification of
+its effective argument by means of a local pointer.</p></li>
+<li><p>An <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy argument may be forwarded to another
+procedure’s dummy argument with no <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> attribute, and is
+susceptible to being modified during that call.
+This case includes references to procedures with implicit
+interfaces.</p></li>
+</ol>
+<p>So, for the purposes of use/def/kill analysis, associating a variable with
+a non-<code class="docutils literal notranslate"><span class="pre">PURE</span></code> procedure’s non-pointer dummy argument may be fraught
+even when <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> is present without <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>.</p>
+<p>Arguing the other side of this:
+an interoperable procedure’s <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy
+arguments are forbidden from being modified, and it would be odd
+for calls to foreign C functions to be safer than native calls (18.7).</p>
+</div>
+<div class="section" id="value">
+<h3><a class="toc-backref" href="#id7"><code class="docutils literal notranslate"><span class="pre">VALUE</span></code></a><a class="headerlink" href="#value" title="Permalink to this headline">¶</a></h3>
+<p>A dummy argument with the <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> attribute is effectively meant to
+be copied into a temporary for a call and not copied back into
+its original variable (if any).
+A <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> dummy argument is therefore as safe from aliasing as
+a local variable of the subprogram is.</p>
+</div>
+</div>
+<div class="section" id="pointers-and-targets">
+<h2><a class="toc-backref" href="#id8">Pointers and targets</a><a class="headerlink" href="#pointers-and-targets" title="Permalink to this headline">¶</a></h2>
+<p>Modern Fortran’s pointers can’t associate with arbitrary data.
+They can be pointed only at objects that have the explicit <code class="docutils literal notranslate"><span class="pre">TARGET</span></code>
+attribute, or at the targets of other pointers.</p>
+<p>A variable that does not have the <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> attribute is generally
+safe from aliasing with pointers (but see exceptions below).
+And generally, pointers must be assumed to alias all other pointers and
+all <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> data (perhaps reduced with data flow analysis).</p>
+<p>A <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> pointer can only point to a <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> target, and
+a non-<code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> pointer cannot.
+A clever programmer might try to exploit this requirement to
+clarify alias analysis, but I have not encountered such usage
+so far.</p>
+<div class="section" id="the-target-hole-for-dummy-arguments">
+<h3><a class="toc-backref" href="#id9">The <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> hole for dummy arguments</a><a class="headerlink" href="#the-target-hole-for-dummy-arguments" title="Permalink to this headline">¶</a></h3>
+<p>An actual argument that doesn’t have the <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> attribute can still be
+associated with a dummy argument that <em>is</em> a target.
+This allows a non-target variable to become a target during the lifetime
+of a call.
+In a non-<code class="docutils literal notranslate"><span class="pre">PURE</span></code> subprogram (15.7), a pointer may be assigned to such a
+dummy argument or to a portion of it.
+Such a pointer has a valid lifetime that ends when the subprogram does.</p>
+</div>
+<div class="section" id="valid-lifetimes-of-pointers-to-dummy-arguments">
+<h3><a class="toc-backref" href="#id10">Valid lifetimes of pointers to dummy arguments</a><a class="headerlink" href="#valid-lifetimes-of-pointers-to-dummy-arguments" title="Permalink to this headline">¶</a></h3>
+<p>The Fortran standard doesn’t mention compiler-generated and -populated
+temporary storage in the context of argument association in 15.5.2,
+apart from <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>, but instead tries to name all of the circumstances
+in which an actual argument’s value may have to be transmitted by means
+of a temporary in each of the paragraphs that constrain the usable
+lifetimes of a pointer that has been pointed to a dummy argument
+during a call.
+It would be more clear, I think, had the standard simply described
+the reasons for which an actual argument might have to occupy temporary
+storage, and then just said that pointers to temporaries must not be
+used once those temporaries no longer exist.</p>
+</div>
+<div class="section" id="lack-of-pointer-target-intent">
+<h3><a class="toc-backref" href="#id11">Lack of pointer target <code class="docutils literal notranslate"><span class="pre">INTENT</span></code></a><a class="headerlink" href="#lack-of-pointer-target-intent" title="Permalink to this headline">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">INTENT</span></code> attributes for dummy pointer arguments apply to the pointer
+itself, not to the data to which the pointer points.
+Fortran still has no means of declaring a read-only pointer.
+Fortran also has no rule against associating read-only data with a pointer.</p>
+</div>
+<div class="section" id="cray-pointers">
+<h3><a class="toc-backref" href="#id12">Cray pointers</a><a class="headerlink" href="#cray-pointers" title="Permalink to this headline">¶</a></h3>
+<p>Cray pointers are, or were, an extension that attempted to provide
+some of the capabilities of modern pointers and allocatables before those
+features were standardized.
+They had some aliasing restrictions; in particular, Cray pointers were
+not allowed to alias each other.</p>
+<p>They are now more or less obsolete and we have no plan in place to
+support them.</p>
+</div>
+</div>
+<div class="section" id="type-considerations">
+<h2><a class="toc-backref" href="#id13">Type considerations</a><a class="headerlink" href="#type-considerations" title="Permalink to this headline">¶</a></h2>
+<p>Pointers with distinct types may alias so long as their types are
+compatible in the sense of the standard.</p>
+<p>Pointers to derived types and <code class="docutils literal notranslate"><span class="pre">COMPLEX</span></code> may alias with pointers to the
+types of their components.
+For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>complex, pointer :: pz(:)
+real, pointer :: pa(:)
+pa =&gt; z(:)%re ! points to all of the real components
+</pre></div>
+</div>
+<div class="section" id="shape-and-rank">
+<h3><a class="toc-backref" href="#id14">Shape and rank</a><a class="headerlink" href="#shape-and-rank" title="Permalink to this headline">¶</a></h3>
+<p>Array rank is not a material consideration to alias analysis.
+Two pointers may alias even if their ranks or shapes differ.
+For example, a pointer may associate with a column in a matrix
+to which another pointer associates;
+or a matrix pointer with only one column or one row may associate
+with a vector.</p>
+<p>It is also possible in Fortran to “remap” target data by establishing
+a pointer of arbitrary rank as a view of a storage sequence.
+For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>real, target :: vector(100)
+real, pointer :: matrix(:,:)
+matrix(1:10,1:10) =&gt; v ! now vector&#39;s elements look like a matrix
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="selectors-in-associate-select-type-and-change-team">
+<h2><a class="toc-backref" href="#id15">Selectors in <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code>, <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code>, and <code class="docutils literal notranslate"><span class="pre">CHANGE</span> <span class="pre">TEAM</span></code></a><a class="headerlink" href="#selectors-in-associate-select-type-and-change-team" title="Permalink to this headline">¶</a></h2>
+<p>Selectors in <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code> and related constructs may associate with
+either expression values or variables.
+In the case of variables, the language imposes no restriction on
+aliasing during the lifetime of the construct, and the compiler must
+not assume that a selector works in a manner that is analogous to
+that of a dummy argument.</p>
+</div>
+<div class="section" id="allocatables">
+<h2><a class="toc-backref" href="#id16">Allocatables</a><a class="headerlink" href="#allocatables" title="Permalink to this headline">¶</a></h2>
+<p>There really isn’t anything special about <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> objects
+from the perspective of aliasing, apart from rules (above) that requiring
+<code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy arguments be (de)allocated only by way of the dummy
+argument.</p>
+<p>Because an <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy argument preserves the values of lower
+bounds and can be assumed to be contiguous, some programmers advocate
+the use of explicitly <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy arguments even when subprograms
+do not modify their allocation status.
+The usual aliasing restrictions still apply, even when the same <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>
+is associated with two or more dummy arguments on a call.</p>
+</div>
+<div class="section" id="asynchronous-and-volatile">
+<h2><a class="toc-backref" href="#id17"><code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> and <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code></a><a class="headerlink" href="#asynchronous-and-volatile" title="Permalink to this headline">¶</a></h2>
+<p>These attributes can, unlike any other, be scoped in Fortran by means of
+redeclaration in a <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> construct or nested procedure.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> data must be assumed to be read or written by some other
+agent during its lifetime.
+For example, Fortran’s asynchronous I/O capabilities might be implemented
+in a runtime support library by means of threading or explicitly asynchronous
+system calls.
+An MPI implementation might use <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> dummy arguments to indicate
+that data transfers may take place during program execution in some way that
+is not visible to the Fortran compiler.</p>
+<p>The optimizer must handle <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> and <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> data with great care.
+Reads and writes of <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> data cannot be moved across statements
+that might initiate or complete background operations.
+Reads and writes of <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> data should be treated like <code class="docutils literal notranslate"><span class="pre">volatile</span></code> in C:
+there are no “dead” writes, reads cannot be CSE’d, and both operations should
+be properly fenced.</p>
+</div>
+<div class="section" id="storage-assocation-via-equivalence">
+<h2><a class="toc-backref" href="#id18">Storage assocation via <code class="docutils literal notranslate"><span class="pre">EQUIVALENCE</span></code></a><a class="headerlink" href="#storage-assocation-via-equivalence" title="Permalink to this headline">¶</a></h2>
+<p>A non-allocatable object, or parts of one, may have multiple names in Fortran
+via <code class="docutils literal notranslate"><span class="pre">EQUIVALENCE</span></code>.
+These objects cannot be have the <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> or <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> attributes.
+Their offsets in static, stack, or <code class="docutils literal notranslate"><span class="pre">COMMON</span></code> storage is resolved by semantics
+prior to lowering.</p>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+ 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2017-2023, The Flang Team.
+      Last updated on Mar 18, 2023.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
