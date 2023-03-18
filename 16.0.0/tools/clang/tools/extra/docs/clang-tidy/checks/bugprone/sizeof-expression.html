@@ -1,0 +1,231 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>clang-tidy - bugprone-sizeof-expression &#8212; Extra Clang Tools 15.0.0 documentation</title>
+    <link rel="stylesheet" href="../../../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../../" src="../../../_static/documentation_options.js"></script>
+    <script type="text/javascript" src="../../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../../_static/doctools.js"></script>
+    <script type="text/javascript" src="../../../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="bugprone-spuriously-wake-up-functions" href="spuriously-wake-up-functions.html" />
+    <link rel="prev" title="bugprone-sizeof-container" href="sizeof-container.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 15.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - bugprone-sizeof-expression</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="sizeof-container.html">bugprone-sizeof-container</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="spuriously-wake-up-functions.html">bugprone-spuriously-wake-up-functions</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="bugprone-sizeof-expression">
+<h1>bugprone-sizeof-expression<a class="headerlink" href="#bugprone-sizeof-expression" title="Permalink to this headline">¶</a></h1>
+<p>The check finds usages of <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> expressions which are most likely errors.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> operator yields the size (in bytes) of its operand, which may be
+an expression or the parenthesized name of a type. Misuse of this operator may
+be leading to errors and possible software vulnerabilities.</p>
+<div class="section" id="suspicious-usage-of-sizeof-k">
+<h2>Suspicious usage of ‘sizeof(K)’<a class="headerlink" href="#suspicious-usage-of-sizeof-k" title="Permalink to this headline">¶</a></h2>
+<p>A common mistake is to query the <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> of an integer literal. This is
+equivalent to query the size of its type (probably <code class="docutils literal notranslate"><span class="pre">int</span></code>). The intent of the
+programmer was probably to simply get the integer and not its size.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#define BUFLEN 42</span>
+<span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="n">BUFLEN</span><span class="p">];</span>
+<span class="n">memset</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">BUFLEN</span><span class="p">));</span>  <span class="c1">// sizeof(42) ==&gt; sizeof(int)</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="suspicious-usage-of-sizeof-expr">
+<h2>Suspicious usage of ‘sizeof(expr)’<a class="headerlink" href="#suspicious-usage-of-sizeof-expr" title="Permalink to this headline">¶</a></h2>
+<p>In cases, where there is an enum or integer to represent a type, a common
+mistake is to query the <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> on the integer or enum that represents the
+type that should be used by <code class="docutils literal notranslate"><span class="pre">sizeof</span></code>. This results in the size of the integer
+and not of the type the integer represents:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">enum</span> <span class="n">data_type</span> <span class="p">{</span>
+  <span class="n">FLOAT_TYPE</span><span class="p">,</span>
+  <span class="n">DOUBLE_TYPE</span>
+<span class="p">};</span>
+
+<span class="k">struct</span> <span class="n">data</span> <span class="p">{</span>
+  <span class="n">data_type</span> <span class="n">type</span><span class="p">;</span>
+  <span class="kt">void</span><span class="o">*</span> <span class="n">buffer</span><span class="p">;</span>
+  <span class="n">data_type</span> <span class="nf">get_type</span><span class="p">()</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="n">type</span><span class="p">;</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kt">void</span> <span class="nf">f</span><span class="p">(</span><span class="n">data</span> <span class="n">d</span><span class="p">,</span> <span class="kt">int</span> <span class="n">numElements</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// should be sizeof(float) or sizeof(double), depending on d.get_type()</span>
+  <span class="kt">int</span> <span class="n">numBytes</span> <span class="o">=</span> <span class="n">numElements</span> <span class="o">*</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">d</span><span class="p">.</span><span class="n">get_type</span><span class="p">());</span>
+  <span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="suspicious-usage-of-sizeof-this">
+<h2>Suspicious usage of ‘sizeof(this)’<a class="headerlink" href="#suspicious-usage-of-sizeof-this" title="Permalink to this headline">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">this</span></code> keyword is evaluated to a pointer to an object of a given type.
+The expression <code class="docutils literal notranslate"><span class="pre">sizeof(this)</span></code> is returning the size of a pointer. The
+programmer most likely wanted the size of the object and not the size of the
+pointer.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span> <span class="nc">Point</span> <span class="p">{</span>
+  <span class="p">[...]</span>
+  <span class="kt">size_t</span> <span class="n">size</span><span class="p">()</span> <span class="p">{</span> <span class="k">return</span> <span class="k">sizeof</span><span class="p">(</span><span class="k">this</span><span class="p">);</span> <span class="p">}</span>  <span class="c1">// should probably be sizeof(*this)</span>
+  <span class="p">[...]</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="suspicious-usage-of-sizeof-char">
+<h2>Suspicious usage of ‘sizeof(char*)’<a class="headerlink" href="#suspicious-usage-of-sizeof-char" title="Permalink to this headline">¶</a></h2>
+<p>There is a subtle difference between declaring a string literal with
+<code class="docutils literal notranslate"><span class="pre">char*</span> <span class="pre">A</span> <span class="pre">=</span> <span class="pre">&quot;&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">A[]</span> <span class="pre">=</span> <span class="pre">&quot;&quot;</span></code>. The first case has the type <code class="docutils literal notranslate"><span class="pre">char*</span></code>
+instead of the aggregate type <code class="docutils literal notranslate"><span class="pre">char[]</span></code>. Using <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> on an object declared
+with <code class="docutils literal notranslate"><span class="pre">char*</span></code> type is returning the size of a pointer instead of the number of
+characters (bytes) in the string literal.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">const</span> <span class="kt">char</span><span class="o">*</span> <span class="n">kMessage</span> <span class="o">=</span> <span class="s">&quot;Hello World!&quot;</span><span class="p">;</span>      <span class="c1">// const char kMessage[] = &quot;...&quot;;</span>
+<span class="kt">void</span> <span class="nf">getMessage</span><span class="p">(</span><span class="kt">char</span><span class="o">*</span> <span class="n">buf</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">memcpy</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">kMessage</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">kMessage</span><span class="p">));</span>  <span class="c1">// sizeof(char*)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="suspicious-usage-of-sizeof-a">
+<h2>Suspicious usage of ‘sizeof(A*)’<a class="headerlink" href="#suspicious-usage-of-sizeof-a" title="Permalink to this headline">¶</a></h2>
+<p>A common mistake is to compute the size of a pointer instead of its pointee.
+These cases may occur because of explicit cast or implicit conversion.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="n">A</span><span class="p">[</span><span class="mi">10</span><span class="p">];</span>
+<span class="n">memset</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">A</span> <span class="o">+</span> <span class="mi">0</span><span class="p">));</span>
+
+<span class="k">struct</span> <span class="n">Point</span> <span class="n">point</span><span class="p">;</span>
+<span class="n">memset</span><span class="p">(</span><span class="n">point</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="o">&amp;</span><span class="n">point</span><span class="p">));</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="suspicious-usage-of-sizeof-sizeof">
+<h2>Suspicious usage of ‘sizeof(…)/sizeof(…)’<a class="headerlink" href="#suspicious-usage-of-sizeof-sizeof" title="Permalink to this headline">¶</a></h2>
+<p>Dividing <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> expressions is typically used to retrieve the number of
+elements of an aggregate. This check warns on incompatible or suspicious cases.</p>
+<p>In the following example, the entity has 10-bytes and is incompatible with the
+type <code class="docutils literal notranslate"><span class="pre">int</span></code> which has 4 bytes.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span> <span class="n">buf</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">9</span> <span class="p">};</span>  <span class="c1">// sizeof(buf) =&gt; 10</span>
+<span class="kt">void</span> <span class="nf">getMessage</span><span class="p">(</span><span class="kt">char</span><span class="o">*</span> <span class="n">dst</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">memcpy</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span> <span class="o">/</span> <span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">));</span>  <span class="c1">// sizeof(int) =&gt; 4  [incompatible sizes]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In the following example, the expression <code class="docutils literal notranslate"><span class="pre">sizeof(Values)</span></code> is returning the
+size of <code class="docutils literal notranslate"><span class="pre">char*</span></code>. One can easily be fooled by its declaration, but in parameter
+declaration the size ‘10’ is ignored and the function is receiving a <code class="docutils literal notranslate"><span class="pre">char*</span></code>.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span> <span class="n">OrderedValues</span><span class="p">[</span><span class="mi">10</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">9</span> <span class="p">};</span>
+<span class="k">return</span> <span class="nf">CompareArray</span><span class="p">(</span><span class="kt">char</span> <span class="n">Values</span><span class="p">[</span><span class="mi">10</span><span class="p">])</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">memcmp</span><span class="p">(</span><span class="n">OrderedValues</span><span class="p">,</span> <span class="n">Values</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">Values</span><span class="p">))</span> <span class="o">==</span> <span class="mi">0</span><span class="p">;</span>  <span class="c1">// sizeof(Values) ==&gt; sizeof(char*) [implicit cast to char*]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="suspicious-sizeof-by-sizeof-expression">
+<h2>Suspicious ‘sizeof’ by ‘sizeof’ expression<a class="headerlink" href="#suspicious-sizeof-by-sizeof-expression" title="Permalink to this headline">¶</a></h2>
+<p>Multiplying <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> expressions typically makes no sense and is probably a
+logic error. In the following example, the programmer used <code class="docutils literal notranslate"><span class="pre">*</span></code> instead of
+<code class="docutils literal notranslate"><span class="pre">/</span></code>.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">const</span> <span class="kt">char</span> <span class="n">kMessage</span><span class="p">[]</span> <span class="o">=</span> <span class="s">&quot;Hello World!&quot;</span><span class="p">;</span>
+<span class="kt">void</span> <span class="nf">getMessage</span><span class="p">(</span><span class="kt">char</span><span class="o">*</span> <span class="n">buf</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">memcpy</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">kMessage</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">kMessage</span><span class="p">)</span> <span class="o">*</span> <span class="k">sizeof</span><span class="p">(</span><span class="kt">char</span><span class="p">));</span>  <span class="c1">//  sizeof(kMessage) / sizeof(char)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This check may trigger on code using the arraysize macro. The following code is
+working correctly but should be simplified by using only the <code class="docutils literal notranslate"><span class="pre">sizeof</span></code>
+operator.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span> <span class="n">Object</span> <span class="n">objects</span><span class="p">[</span><span class="mi">100</span><span class="p">];</span>
+<span class="kt">void</span> <span class="nf">InitializeObjects</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">memset</span><span class="p">(</span><span class="n">objects</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">arraysize</span><span class="p">(</span><span class="n">objects</span><span class="p">)</span> <span class="o">*</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">Object</span><span class="p">));</span>  <span class="c1">// sizeof(objects)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="id1">
+<h2>Suspicious usage of ‘sizeof(sizeof(…))’<a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h2>
+<p>Getting the <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> of a <code class="docutils literal notranslate"><span class="pre">sizeof</span></code> makes no sense and is typically an error
+hidden through macros.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#define INT_SZ sizeof(int)</span>
+<span class="kt">int</span> <span class="n">buf</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">42</span> <span class="p">};</span>
+<span class="kt">void</span> <span class="nf">getInt</span><span class="p">(</span><span class="kt">int</span><span class="o">*</span> <span class="n">dst</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">memcpy</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">INT_SZ</span><span class="p">));</span>  <span class="c1">// sizeof(sizeof(int)) is suspicious.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="options">
+<h2>Options<a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h2>
+<dl class="option">
+<dt id="cmdoption-arg-warnonsizeofconstant">
+<code class="sig-name descname">WarnOnSizeOfConstant</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-warnonsizeofconstant" title="Permalink to this definition">¶</a></dt>
+<dd><p>When <cite>true</cite>, the check will warn on an expression like
+<code class="docutils literal notranslate"><span class="pre">sizeof(CONSTANT)</span></code>. Default is <cite>true</cite>.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-arg-warnonsizeofintegerexpression">
+<code class="sig-name descname">WarnOnSizeOfIntegerExpression</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-warnonsizeofintegerexpression" title="Permalink to this definition">¶</a></dt>
+<dd><p>When <cite>true</cite>, the check will warn on an expression like <code class="docutils literal notranslate"><span class="pre">sizeof(expr)</span></code>
+where the expression results in an integer. Default is <cite>false</cite>.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-arg-warnonsizeofthis">
+<code class="sig-name descname">WarnOnSizeOfThis</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-warnonsizeofthis" title="Permalink to this definition">¶</a></dt>
+<dd><p>When <cite>true</cite>, the check will warn on an expression like <code class="docutils literal notranslate"><span class="pre">sizeof(this)</span></code>.
+Default is <cite>true</cite>.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-arg-warnonsizeofcomparetoconstant">
+<code class="sig-name descname">WarnOnSizeOfCompareToConstant</code><code class="sig-prename descclassname"></code><a class="headerlink" href="#cmdoption-arg-warnonsizeofcomparetoconstant" title="Permalink to this definition">¶</a></dt>
+<dd><p>When <cite>true</cite>, the check will warn on an expression like
+<code class="docutils literal notranslate"><span class="pre">sizeof(expr)</span> <span class="pre">&lt;=</span> <span class="pre">k</span></code> for a suspicious constant <cite>k</cite> while <cite>k</cite> is <cite>0</cite> or
+greater than <cite>0x8000</cite>. Default is <cite>true</cite>.</p>
+</dd></dl>
+
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="sizeof-container.html">bugprone-sizeof-container</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="spuriously-wake-up-functions.html">bugprone-spuriously-wake-up-functions</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>

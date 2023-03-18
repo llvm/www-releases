@@ -1,0 +1,408 @@
+
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <title>Control Flow Integrity &#8212; Clang 15.0.0 documentation</title>
+    <link rel="stylesheet" href="_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script type="text/javascript" src="_static/jquery.js"></script>
+    <script type="text/javascript" src="_static/underscore.js"></script>
+    <script type="text/javascript" src="_static/doctools.js"></script>
+    <script type="text/javascript" src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Control Flow Integrity Design Documentation" href="ControlFlowIntegrityDesign.html" />
+    <link rel="prev" title="Sanitizer special case list" href="SanitizerSpecialCaseList.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 15.0.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Control Flow Integrity</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SanitizerSpecialCaseList.html">Sanitizer special case list</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ControlFlowIntegrityDesign.html">Control Flow Integrity Design Documentation</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <div class="section" id="control-flow-integrity">
+<h1>Control Flow Integrity<a class="headerlink" href="#control-flow-integrity" title="Permalink to this headline">¶</a></h1>
+<div class="toctree-wrapper compound">
+</div>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#available-schemes" id="id2">Available schemes</a></p></li>
+<li><p><a class="reference internal" href="#trapping-and-diagnostics" id="id3">Trapping and Diagnostics</a></p></li>
+<li><p><a class="reference internal" href="#forward-edge-cfi-for-virtual-calls" id="id4">Forward-Edge CFI for Virtual Calls</a></p>
+<ul>
+<li><p><a class="reference internal" href="#performance" id="id5">Performance</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#bad-cast-checking" id="id6">Bad Cast Checking</a></p></li>
+<li><p><a class="reference internal" href="#non-virtual-member-function-call-checking" id="id7">Non-Virtual Member Function Call Checking</a></p>
+<ul>
+<li><p><a class="reference internal" href="#strictness" id="id8">Strictness</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#indirect-function-call-checking" id="id9">Indirect Function Call Checking</a></p>
+<ul>
+<li><p><a class="reference internal" href="#fsanitize-cfi-icall-generalize-pointers" id="id10"><code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-icall-generalize-pointers</span></code></a></p></li>
+<li><p><a class="reference internal" href="#fsanitize-cfi-canonical-jump-tables" id="id11"><code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-canonical-jump-tables</span></code></a></p></li>
+<li><p><a class="reference internal" href="#fsanitize-cfi-icall-and-fsanitize-function" id="id12"><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#member-function-pointer-call-checking" id="id13">Member Function Pointer Call Checking</a></p></li>
+<li><p><a class="reference internal" href="#ignorelist" id="id14">Ignorelist</a></p></li>
+<li><p><a class="reference internal" href="#shared-library-support" id="id15">Shared library support</a></p></li>
+<li><p><a class="reference internal" href="#design" id="id16">Design</a></p></li>
+<li><p><a class="reference internal" href="#publications" id="id17">Publications</a></p></li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id1">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<p>Clang includes an implementation of a number of control flow integrity (CFI)
+schemes, which are designed to abort the program upon detecting certain forms
+of undefined behavior that can potentially allow attackers to subvert the
+program’s control flow. These schemes have been optimized for performance,
+allowing developers to enable them in release builds.</p>
+<p>To enable Clang’s available CFI schemes, use the flag <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi</span></code>.
+You can also enable a subset of available <a class="reference internal" href="#cfi-schemes"><span class="std std-ref">schemes</span></a>.
+As currently implemented, all schemes rely on link-time optimization (LTO);
+so it is required to specify <code class="docutils literal notranslate"><span class="pre">-flto</span></code>, and the linker used must support LTO,
+for example via the <a class="reference external" href="https://llvm.org/docs/GoldPlugin.html">gold plugin</a>.</p>
+<p>To allow the checks to be implemented efficiently, the program must
+be structured such that certain object files are compiled with CFI
+enabled, and are statically linked into the program. This may preclude
+the use of shared libraries in some cases.</p>
+<p>The compiler will only produce CFI checks for a class if it can infer hidden
+LTO visibility for that class. LTO visibility is a property of a class that
+is inferred from flags and attributes. For more details, see the documentation
+for <a class="reference internal" href="LTOVisibility.html"><span class="doc">LTO visibility</span></a>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-{vcall,nvcall,derived-cast,unrelated-cast}</span></code> flags
+require that a <code class="docutils literal notranslate"><span class="pre">-fvisibility=</span></code> flag also be specified. This is because the
+default visibility setting is <code class="docutils literal notranslate"><span class="pre">-fvisibility=default</span></code>, which would disable
+CFI checks for classes without visibility attributes. Most users will want
+to specify <code class="docutils literal notranslate"><span class="pre">-fvisibility=hidden</span></code>, which enables CFI checks for such classes.</p>
+<p>Experimental support for <a class="reference internal" href="#cfi-cross-dso"><span class="std std-ref">cross-DSO control flow integrity</span></a> exists that does not require classes to have hidden LTO
+visibility. This cross-DSO support has unstable ABI at this time.</p>
+</div>
+<div class="section" id="available-schemes">
+<span id="cfi-schemes"></span><h2><a class="toc-backref" href="#id2">Available schemes</a><a class="headerlink" href="#available-schemes" title="Permalink to this headline">¶</a></h2>
+<p>Available schemes are:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-cast-strict</span></code>: Enables <a class="reference internal" href="#cfi-strictness"><span class="std std-ref">strict cast checks</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-derived-cast</span></code>: Base-to-derived cast to the wrong
+dynamic type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-unrelated-cast</span></code>: Cast from <code class="docutils literal notranslate"><span class="pre">void*</span></code> or another
+unrelated type to the wrong dynamic type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-nvcall</span></code>: Non-virtual call via an object whose vptr is of
+the wrong dynamic type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-vcall</span></code>: Virtual call via an object whose vptr is of the
+wrong dynamic type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>: Indirect call of a function with wrong dynamic
+type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-mfcall</span></code>: Indirect call via a member function pointer with
+wrong dynamic type.</p></li>
+</ul>
+</div></blockquote>
+<p>You can use <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi</span></code> to enable all the schemes and use
+<code class="docutils literal notranslate"><span class="pre">-fno-sanitize</span></code> flag to narrow down the set of schemes as desired.
+For example, you can build your program with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi</span> <span class="pre">-fno-sanitize=cfi-nvcall,cfi-icall</span></code>
+to use all schemes except for non-virtual member function call and indirect call
+checking.</p>
+<p>Remember that you have to provide <code class="docutils literal notranslate"><span class="pre">-flto</span></code> or <code class="docutils literal notranslate"><span class="pre">-flto=thin</span></code> if at
+least one CFI scheme is enabled.</p>
+</div>
+<div class="section" id="trapping-and-diagnostics">
+<h2><a class="toc-backref" href="#id3">Trapping and Diagnostics</a><a class="headerlink" href="#trapping-and-diagnostics" title="Permalink to this headline">¶</a></h2>
+<p>By default, CFI will abort the program immediately upon detecting a control
+flow integrity violation. You can use the <a class="reference internal" href="UsersManual.html#controlling-code-generation"><span class="std std-ref">-fno-sanitize-trap=</span></a> flag to cause CFI to print a diagnostic
+similar to the one below before the program aborts.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">bad-cast.cpp:109:7: runtime error: control flow integrity check for type &#39;B&#39; failed during base-to-derived cast (vtable address 0x000000425a50)</span>
+<span class="go">0x000000425a50: note: vtable is of type &#39;A&#39;</span>
+<span class="go"> 00 00 00 00  f0 f1 41 00 00 00 00 00  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  20 5a 42 00</span>
+<span class="go">              ^</span>
+</pre></div>
+</div>
+<p>If diagnostics are enabled, you can also configure CFI to continue program
+execution instead of aborting by using the <a class="reference internal" href="UsersManual.html#controlling-code-generation"><span class="std std-ref">-fsanitize-recover=</span></a> flag.</p>
+</div>
+<div class="section" id="forward-edge-cfi-for-virtual-calls">
+<h2><a class="toc-backref" href="#id4">Forward-Edge CFI for Virtual Calls</a><a class="headerlink" href="#forward-edge-cfi-for-virtual-calls" title="Permalink to this headline">¶</a></h2>
+<p>This scheme checks that virtual calls take place using a vptr of the correct
+dynamic type; that is, the dynamic type of the called object must be a
+derived class of the static type of the object used to make the call.
+This CFI scheme can be enabled on its own using <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-vcall</span></code>.</p>
+<p>For this scheme to work, all translation units containing the definition
+of a virtual member function (whether inline or not), other than members
+of <a class="reference internal" href="#cfi-ignorelist"><span class="std std-ref">ignored</span></a> types or types with public <a class="reference internal" href="LTOVisibility.html"><span class="doc">LTO
+visibility</span></a>, must be compiled with <code class="docutils literal notranslate"><span class="pre">-flto</span></code> or <code class="docutils literal notranslate"><span class="pre">-flto=thin</span></code>
+enabled and be statically linked into the program.</p>
+<div class="section" id="performance">
+<h3><a class="toc-backref" href="#id5">Performance</a><a class="headerlink" href="#performance" title="Permalink to this headline">¶</a></h3>
+<p>A performance overhead of less than 1% has been measured by running the
+Dromaeo benchmark suite against an instrumented version of the Chromium
+web browser. Another good performance benchmark for this mechanism is the
+virtual-call-heavy SPEC 2006 xalancbmk.</p>
+<p>Note that this scheme has not yet been optimized for binary size; an increase
+of up to 15% has been observed for Chromium.</p>
+</div>
+</div>
+<div class="section" id="bad-cast-checking">
+<h2><a class="toc-backref" href="#id6">Bad Cast Checking</a><a class="headerlink" href="#bad-cast-checking" title="Permalink to this headline">¶</a></h2>
+<p>This scheme checks that pointer casts are made to an object of the correct
+dynamic type; that is, the dynamic type of the object must be a derived class
+of the pointee type of the cast. The checks are currently only introduced
+where the class being casted to is a polymorphic class.</p>
+<p>Bad casts are not in themselves control flow integrity violations, but they
+can also create security vulnerabilities, and the implementation uses many
+of the same mechanisms.</p>
+<p>There are two types of bad cast that may be forbidden: bad casts
+from a base class to a derived class (which can be checked with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-derived-cast</span></code>), and bad casts from a pointer of
+type <code class="docutils literal notranslate"><span class="pre">void*</span></code> or another unrelated type (which can be checked with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-unrelated-cast</span></code>).</p>
+<p>The difference between these two types of casts is that the first is defined
+by the C++ standard to produce an undefined value, while the second is not
+in itself undefined behavior (it is well defined to cast the pointer back
+to its original type) unless the object is uninitialized and the cast is a
+<code class="docutils literal notranslate"><span class="pre">static_cast</span></code> (see C++14 [basic.life]p5).</p>
+<p>If a program as a matter of policy forbids the second type of cast, that
+restriction can normally be enforced. However it may in some cases be necessary
+for a function to perform a forbidden cast to conform with an external API
+(e.g. the <code class="docutils literal notranslate"><span class="pre">allocate</span></code> member function of a standard library allocator). Such
+functions may be <a class="reference internal" href="#cfi-ignorelist"><span class="std std-ref">ignored</span></a>.</p>
+<p>For this scheme to work, all translation units containing the definition
+of a virtual member function (whether inline or not), other than members
+of <a class="reference internal" href="#cfi-ignorelist"><span class="std std-ref">ignored</span></a> types or types with public <a class="reference internal" href="LTOVisibility.html"><span class="doc">LTO
+visibility</span></a>, must be compiled with <code class="docutils literal notranslate"><span class="pre">-flto</span></code> or <code class="docutils literal notranslate"><span class="pre">-flto=thin</span></code>
+enabled and be statically linked into the program.</p>
+</div>
+<div class="section" id="non-virtual-member-function-call-checking">
+<h2><a class="toc-backref" href="#id7">Non-Virtual Member Function Call Checking</a><a class="headerlink" href="#non-virtual-member-function-call-checking" title="Permalink to this headline">¶</a></h2>
+<p>This scheme checks that non-virtual calls take place using an object of
+the correct dynamic type; that is, the dynamic type of the called object
+must be a derived class of the static type of the object used to make the
+call. The checks are currently only introduced where the object is of a
+polymorphic class type.  This CFI scheme can be enabled on its own using
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-nvcall</span></code>.</p>
+<p>For this scheme to work, all translation units containing the definition
+of a virtual member function (whether inline or not), other than members
+of <a class="reference internal" href="#cfi-ignorelist"><span class="std std-ref">ignored</span></a> types or types with public <a class="reference internal" href="LTOVisibility.html"><span class="doc">LTO
+visibility</span></a>, must be compiled with <code class="docutils literal notranslate"><span class="pre">-flto</span></code> or <code class="docutils literal notranslate"><span class="pre">-flto=thin</span></code>
+enabled and be statically linked into the program.</p>
+<div class="section" id="strictness">
+<span id="cfi-strictness"></span><h3><a class="toc-backref" href="#id8">Strictness</a><a class="headerlink" href="#strictness" title="Permalink to this headline">¶</a></h3>
+<p>If a class has a single non-virtual base and does not introduce or override
+virtual member functions or fields other than an implicitly defined virtual
+destructor, it will have the same layout and virtual function semantics as
+its base. By default, casts to such classes are checked as if they were made
+to the least derived such class.</p>
+<p>Casting an instance of a base class to such a derived class is technically
+undefined behavior, but it is a relatively common hack for introducing
+member functions on class instances with specific properties that works under
+most compilers and should not have security implications, so we allow it by
+default. It can be disabled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-cast-strict</span></code>.</p>
+</div>
+</div>
+<div class="section" id="indirect-function-call-checking">
+<h2><a class="toc-backref" href="#id9">Indirect Function Call Checking</a><a class="headerlink" href="#indirect-function-call-checking" title="Permalink to this headline">¶</a></h2>
+<p>This scheme checks that function calls take place using a function of the
+correct dynamic type; that is, the dynamic type of the function must match
+the static type used at the call. This CFI scheme can be enabled on its own
+using <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>.</p>
+<p>For this scheme to work, each indirect function call in the program, other
+than calls in <a class="reference internal" href="#cfi-ignorelist"><span class="std std-ref">ignored</span></a> functions, must call a
+function which was either compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> enabled,
+or whose address was taken by a function in a translation unit compiled with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>.</p>
+<p>If a function in a translation unit compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>
+takes the address of a function not compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>,
+that address may differ from the address taken by a function in a translation
+unit not compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>. This is technically a
+violation of the C and C++ standards, but it should not affect most programs.</p>
+<p>Each translation unit compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> must be
+statically linked into the program or shared library, and calls across
+shared library boundaries are handled as if the callee was not compiled with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>.</p>
+<p>This scheme is currently supported on a limited set of targets: x86,
+x86_64, arm, arch64 and wasm.</p>
+<div class="section" id="fsanitize-cfi-icall-generalize-pointers">
+<h3><a class="toc-backref" href="#id10"><code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-icall-generalize-pointers</span></code></a><a class="headerlink" href="#fsanitize-cfi-icall-generalize-pointers" title="Permalink to this headline">¶</a></h3>
+<p>Mismatched pointer types are a common cause of cfi-icall check failures.
+Translation units compiled with the <code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-icall-generalize-pointers</span></code>
+flag relax pointer type checking for call sites in that translation unit,
+applied across all functions compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>.</p>
+<p>Specifically, pointers in return and argument types are treated as equivalent as
+long as the qualifiers for the type they point to match. For example, <code class="docutils literal notranslate"><span class="pre">char*</span></code>,
+<code class="docutils literal notranslate"><span class="pre">char**</span></code>, and <code class="docutils literal notranslate"><span class="pre">int*</span></code> are considered equivalent types. However, <code class="docutils literal notranslate"><span class="pre">char*</span></code> and
+<code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">char*</span></code> are considered separate types.</p>
+<p><code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-icall-generalize-pointers</span></code> is not compatible with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-cross-dso</span></code>.</p>
+</div>
+<div class="section" id="fsanitize-cfi-canonical-jump-tables">
+<span id="cfi-canonical-jump-tables"></span><h3><a class="toc-backref" href="#id11"><code class="docutils literal notranslate"><span class="pre">-fsanitize-cfi-canonical-jump-tables</span></code></a><a class="headerlink" href="#fsanitize-cfi-canonical-jump-tables" title="Permalink to this headline">¶</a></h3>
+<p>The default behavior of Clang’s indirect function call checker will replace
+the address of each CFI-checked function in the output file’s symbol table
+with the address of a jump table entry which will pass CFI checks. We refer
+to this as making the jump table <cite>canonical</cite>. This property allows code that
+was not compiled with <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> to take a CFI-valid address
+of a function, but it comes with a couple of caveats that are especially
+relevant for users of cross-DSO CFI:</p>
+<ul class="simple">
+<li><p>There is a performance and code size overhead associated with each
+exported function, because each such function must have an associated
+jump table entry, which must be emitted even in the common case where the
+function is never address-taken anywhere in the program, and must be used
+even for direct calls between DSOs, in addition to the PLT overhead.</p></li>
+<li><p>There is no good way to take a CFI-valid address of a function written in
+assembly or a language not supported by Clang. The reason is that the code
+generator would need to insert a jump table in order to form a CFI-valid
+address for assembly functions, but there is no way in general for the
+code generator to determine the language of the function. This may be
+possible with LTO in the intra-DSO case, but in the cross-DSO case the only
+information available is the function declaration. One possible solution
+is to add a C wrapper for each assembly function, but these wrappers can
+present a significant maintenance burden for heavy users of assembly in
+addition to adding runtime overhead.</p></li>
+</ul>
+<p>For these reasons, we provide the option of making the jump table non-canonical
+with the flag <code class="docutils literal notranslate"><span class="pre">-fno-sanitize-cfi-canonical-jump-tables</span></code>. When the jump
+table is made non-canonical, symbol table entries point directly to the
+function body. Any instances of a function’s address being taken in C will
+be replaced with a jump table address.</p>
+<p>This scheme does have its own caveats, however. It does end up breaking
+function address equality more aggressively than the default behavior,
+especially in cross-DSO mode which normally preserves function address
+equality entirely.</p>
+<p>Furthermore, it is occasionally necessary for code not compiled with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> to take a function address that is valid
+for CFI. For example, this is necessary when a function’s address
+is taken by assembly code and then called by CFI-checking C code. The
+<code class="docutils literal notranslate"><span class="pre">__attribute__((cfi_canonical_jump_table))</span></code> attribute may be used to make
+the jump table entry of a specific function canonical so that the external
+code will end up taking an address for the function that will pass CFI checks.</p>
+</div>
+<div class="section" id="fsanitize-cfi-icall-and-fsanitize-function">
+<h3><a class="toc-backref" href="#id12"><code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code></a><a class="headerlink" href="#fsanitize-cfi-icall-and-fsanitize-function" title="Permalink to this headline">¶</a></h3>
+<p>This tool is similar to <code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code> in that both tools check
+the types of function calls. However, the two tools occupy different points
+on the design space; <code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code> is a developer tool designed
+to find bugs in local development builds, whereas <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code>
+is a security hardening mechanism designed to be deployed in release builds.</p>
+<p><code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code> has a higher space and time overhead due to a more
+complex type check at indirect call sites, as well as a need for run-time
+type information (RTTI), which may make it unsuitable for deployment. Because
+of the need for RTTI, <code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code> can only be used with C++
+programs, whereas <code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-icall</span></code> can protect both C and C++ programs.</p>
+<p>On the other hand, <code class="docutils literal notranslate"><span class="pre">-fsanitize=function</span></code> conforms more closely with the C++
+standard and user expectations around interaction with shared libraries;
+the identity of function pointers is maintained, and calls across shared
+library boundaries are no different from calls within a single program or
+shared library.</p>
+</div>
+</div>
+<div class="section" id="member-function-pointer-call-checking">
+<h2><a class="toc-backref" href="#id13">Member Function Pointer Call Checking</a><a class="headerlink" href="#member-function-pointer-call-checking" title="Permalink to this headline">¶</a></h2>
+<p>This scheme checks that indirect calls via a member function pointer
+take place using an object of the correct dynamic type. Specifically, we
+check that the dynamic type of the member function referenced by the member
+function pointer matches the “function pointer” part of the member function
+pointer, and that the member function’s class type is related to the base
+type of the member function. This CFI scheme can be enabled on its own using
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=cfi-mfcall</span></code>.</p>
+<p>The compiler will only emit a full CFI check if the member function pointer’s
+base type is complete. This is because the complete definition of the base
+type contains information that is necessary to correctly compile the CFI
+check. To ensure that the compiler always emits a full CFI check, it is
+recommended to also pass the flag <code class="docutils literal notranslate"><span class="pre">-fcomplete-member-pointers</span></code>, which
+enables a non-conforming language extension that requires member pointer
+base types to be complete if they may be used for a call.</p>
+<p>For this scheme to work, all translation units containing the definition
+of a virtual member function (whether inline or not), other than members
+of <a class="reference internal" href="#cfi-ignorelist"><span class="std std-ref">ignored</span></a> types or types with public <a class="reference internal" href="LTOVisibility.html"><span class="doc">LTO
+visibility</span></a>, must be compiled with <code class="docutils literal notranslate"><span class="pre">-flto</span></code> or <code class="docutils literal notranslate"><span class="pre">-flto=thin</span></code>
+enabled and be statically linked into the program.</p>
+<p>This scheme is currently not compatible with cross-DSO CFI or the
+Microsoft ABI.</p>
+</div>
+<div class="section" id="ignorelist">
+<span id="cfi-ignorelist"></span><h2><a class="toc-backref" href="#id14">Ignorelist</a><a class="headerlink" href="#ignorelist" title="Permalink to this headline">¶</a></h2>
+<p>A <a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a> can be used to relax CFI checks for certain
+source files, functions and types using the <code class="docutils literal notranslate"><span class="pre">src</span></code>, <code class="docutils literal notranslate"><span class="pre">fun</span></code> and <code class="docutils literal notranslate"><span class="pre">type</span></code>
+entity types. Specific CFI modes can be be specified using <code class="docutils literal notranslate"><span class="pre">[section]</span></code>
+headers.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Suppress all CFI checking for code in a file.</span>
+src:bad_file.cpp
+src:bad_header.h
+<span class="c1"># Ignore all functions with names containing MyFooBar.</span>
+fun:*MyFooBar*
+<span class="c1"># Ignore all types in the standard library.</span>
+type:std::*
+<span class="c1"># Disable only unrelated cast checks for this function</span>
+<span class="o">[</span>cfi-unrelated-cast<span class="o">]</span>
+fun:*UnrelatedCast*
+<span class="c1"># Disable CFI call checks for this function without affecting cast checks</span>
+<span class="o">[</span>cfi-vcall<span class="p">|</span>cfi-nvcall<span class="p">|</span>cfi-icall<span class="o">]</span>
+fun:*BadCall*
+</pre></div>
+</div>
+</div>
+<div class="section" id="shared-library-support">
+<span id="cfi-cross-dso"></span><h2><a class="toc-backref" href="#id15">Shared library support</a><a class="headerlink" href="#shared-library-support" title="Permalink to this headline">¶</a></h2>
+<p>Use <strong>-f[no-]sanitize-cfi-cross-dso</strong> to enable the cross-DSO control
+flow integrity mode, which allows all CFI schemes listed above to
+apply across DSO boundaries. As in the regular CFI, each DSO must be
+built with <code class="docutils literal notranslate"><span class="pre">-flto</span></code> or <code class="docutils literal notranslate"><span class="pre">-flto=thin</span></code>.</p>
+<p>Normally, CFI checks will only be performed for classes that have hidden LTO
+visibility. With this flag enabled, the compiler will emit cross-DSO CFI
+checks for all classes, except for those which appear in the CFI ignorelist
+or which use a <code class="docutils literal notranslate"><span class="pre">no_sanitize</span></code> attribute.</p>
+</div>
+<div class="section" id="design">
+<h2><a class="toc-backref" href="#id16">Design</a><a class="headerlink" href="#design" title="Permalink to this headline">¶</a></h2>
+<p>Please refer to the <a class="reference internal" href="ControlFlowIntegrityDesign.html"><span class="doc">design document</span></a>.</p>
+</div>
+<div class="section" id="publications">
+<h2><a class="toc-backref" href="#id17">Publications</a><a class="headerlink" href="#publications" title="Permalink to this headline">¶</a></h2>
+<p><a class="reference external" href="https://research.microsoft.com/pubs/64250/ccs05.pdf">Control-Flow Integrity: Principles, Implementations, and Applications</a>.
+Martin Abadi, Mihai Budiu, Úlfar Erlingsson, Jay Ligatti.</p>
+<p><a class="reference external" href="http://www.pcc.me.uk/~peter/acad/usenix14.pdf">Enforcing Forward-Edge Control-Flow Integrity in GCC &amp; LLVM</a>.
+Caroline Tice, Tom Roeder, Peter Collingbourne, Stephen Checkoway,
+Úlfar Erlingsson, Luis Lozano, Geoff Pike.</p>
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SanitizerSpecialCaseList.html">Sanitizer special case list</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ControlFlowIntegrityDesign.html">Control Flow Integrity Design Documentation</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+        &#169; Copyright 2007-2022, The Clang Team.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 2.2.2.
+    </div>
+  </body>
+</html>
