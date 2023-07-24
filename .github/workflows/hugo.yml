@@ -1,14 +1,23 @@
 name: Hugo
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 on:
   push:
     branches:
       - main  # Set a branch to deploy
   pull_request:
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  deploy:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
@@ -20,16 +29,25 @@ jobs:
           hugo-version: '0.103.0'
           extended: true
 
-      - name: Run Hugo
-        run: hugo -D --minify
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v3
 
-      - name: rsync deploy
-        uses: burnett01/rsync-deployments@5.2.1
+      - name: Run Hugo
+        run: hugo -D --minify --baseURL "${{ steps.pages.outputs.base_url }}"
+
+      - name: Upload artifacts
+        uses: actions/upload-pages-artifact@v2
         with:
-          switches: -avzr --delete
-          path: public/
-          remote_path: /home/tobias/test_releases
-          remote_host: 80.216.249.16
-          remote_port: 2222
-          remote_user: tobias
-          remote_key: ${{ secrets.DEPLOY_KEY }}
+          path: ./public
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
