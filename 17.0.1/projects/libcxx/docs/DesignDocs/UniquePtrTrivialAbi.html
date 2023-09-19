@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>Enable std::unique_ptr [[clang::trivial_abi]] &#8212; libc++  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b849a4e9" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css?v=e491ac2d" />
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Unspecified Behavior Randomization" href="UnspecifiedBehaviorRandomization.html" />
+    <link rel="prev" title="Threading Support API" href="ThreadingSupportAPI.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../index.html">
+          <span>libc++  documentation</span></a></h1>
+        <h2 class="heading"><span>Enable std::unique_ptr [[clang::trivial_abi]]</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ThreadingSupportAPI.html">Threading Support API</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="UnspecifiedBehaviorRandomization.html">Unspecified Behavior Randomization</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="enable-std-unique-ptr-clang-trivial-abi">
+<h1>Enable std::unique_ptr [[clang::trivial_abi]]<a class="headerlink" href="#enable-std-unique-ptr-clang-trivial-abi" title="Link to this heading">¶</a></h1>
+<section id="background">
+<h2>Background<a class="headerlink" href="#background" title="Link to this heading">¶</a></h2>
+<p>Consider the follow snippets</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">raw_func</span><span class="p">(</span><span class="n">Foo</span><span class="o">*</span><span class="w"> </span><span class="n">raw_arg</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">smart_func</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="w"> </span><span class="n">smart_arg</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span>
+
+<span class="n">Foo</span><span class="o">*</span><span class="w"> </span><span class="nf">raw_ptr_retval</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span>
+<span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">smart_ptr_retval</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>The argument <code class="docutils literal notranslate"><span class="pre">raw_arg</span></code> could be passed in a register but <code class="docutils literal notranslate"><span class="pre">smart_arg</span></code> could not, due to current
+implementation.</p>
+<p>Specifically, in the <code class="docutils literal notranslate"><span class="pre">smart_arg</span></code> case, the caller secretly constructs a temporary <code class="docutils literal notranslate"><span class="pre">std::unique_ptr</span></code>
+in its stack-frame, and then passes a pointer to it to the callee in a hidden parameter.
+Similarly, the return value from <code class="docutils literal notranslate"><span class="pre">smart_ptr_retval</span></code> is secretly allocated in the caller and
+passed as a secret reference to the callee.</p>
+</section>
+<section id="goal">
+<h2>Goal<a class="headerlink" href="#goal" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">std::unique_ptr</span></code> is passed directly in a register.</p>
+</section>
+<section id="design">
+<h2>Design<a class="headerlink" href="#design" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Annotate the two definitions of <code class="docutils literal notranslate"><span class="pre">std::unique_ptr</span></code>  with <code class="docutils literal notranslate"><span class="pre">clang::trivial_abi</span></code> attribute.</p></li>
+<li><p>Put the attribute behind a flag because this change has potential compilation and runtime breakages.</p></li>
+</ul>
+<p>This comes with some side effects:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">std::unique_ptr</span></code> parameters will now be destroyed by callees, rather than callers.
+It is worth noting that destruction by callee is not unique to the use of trivial_abi attribute.
+In most Microsoft’s ABIs, arguments are always destroyed by the callee.</p>
+<p>Consequently, this may change the destruction order for function parameters to an order that is non-conforming to the standard.
+For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">A</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">~</span><span class="n">A</span><span class="p">();</span><span class="w"> </span><span class="p">};</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">B</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">~</span><span class="n">B</span><span class="p">();</span><span class="w"> </span><span class="p">};</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">C</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">C</span><span class="p">(</span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">B</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="p">};</span>
+<span class="n">C</span><span class="w"> </span><span class="n">c</span><span class="p">{{},</span><span class="w"> </span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">B</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="p">{}};</span>
+</pre></div>
+</div>
+<p>In a conforming implementation, the destruction order for C::C’s parameters is required to be <code class="docutils literal notranslate"><span class="pre">~A(),</span> <span class="pre">~B(),</span> <span class="pre">~A()</span></code> but with this mode enabled, we’ll instead see <code class="docutils literal notranslate"><span class="pre">~B(),</span> <span class="pre">~A(),</span> <span class="pre">~A()</span></code>.</p>
+</li>
+<li><p>Reduced code-size.</p></li>
+</ul>
+<section id="performance-impact">
+<h3>Performance impact<a class="headerlink" href="#performance-impact" title="Link to this heading">¶</a></h3>
+<p>Google has measured performance improvements of up to 1.6% on some large server macrobenchmarks, and a small reduction in binary sizes.</p>
+<p>This also affects null pointer optimization</p>
+<p>Clang’s optimizer can now figure out when a <cite>std::unique_ptr</cite> is known to contain <em>non</em>-null.
+(Actually, this has been a <em>missed</em> optimization all along.)</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="o">~</span><span class="n">Foo</span><span class="p">();</span>
+<span class="p">};</span>
+<span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="w"> </span><span class="n">make_foo</span><span class="p">();</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">do_nothing</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Foo</span><span class="o">&amp;</span><span class="p">)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">bar</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">make_foo</span><span class="p">();</span>
+<span class="w">  </span><span class="n">do_nothing</span><span class="p">(</span><span class="o">*</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>With this change, <code class="docutils literal notranslate"><span class="pre">~Foo()</span></code> will be called even if <code class="docutils literal notranslate"><span class="pre">make_foo</span></code> returns <code class="docutils literal notranslate"><span class="pre">unique_ptr&lt;Foo&gt;(nullptr)</span></code>.
+The compiler can now assume that <code class="docutils literal notranslate"><span class="pre">x.get()</span></code> cannot be null by the end of <code class="docutils literal notranslate"><span class="pre">bar()</span></code>, because
+the deference of <code class="docutils literal notranslate"><span class="pre">x</span></code> would be UB if it were <code class="docutils literal notranslate"><span class="pre">nullptr</span></code>. (This dereference would not have caused
+a segfault, because no load is generated for dereferencing a pointer to a reference. This can be detected with <code class="docutils literal notranslate"><span class="pre">-fsanitize=null</span></code>).</p>
+</section>
+<section id="potential-breakages">
+<h3>Potential breakages<a class="headerlink" href="#potential-breakages" title="Link to this heading">¶</a></h3>
+<p>The following breakages were discovered by enabling this change and fixing the resulting issues in a large code base.</p>
+<ul class="simple">
+<li><p>Compilation failures</p></li>
+</ul>
+<blockquote>
+<div><ul>
+<li><p>Function definitions now require complete type <code class="docutils literal notranslate"><span class="pre">T</span></code> for parameters with type <code class="docutils literal notranslate"><span class="pre">std::unique_ptr&lt;T&gt;</span></code>. The following code will no longer compile.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="p">;</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">func</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="w"> </span><span class="n">arg</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* never use `arg` directly */</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p>Fix: Remove forward-declaration of <code class="docutils literal notranslate"><span class="pre">Foo</span></code> and include its proper header.</p></li>
+</ul>
+</div></blockquote>
+<ul class="simple">
+<li><p>Runtime Failures</p></li>
+</ul>
+<blockquote>
+<div><ul>
+<li><p>Lifetime of <code class="docutils literal notranslate"><span class="pre">std::unique_ptr&lt;&gt;</span></code> arguments end earlier (at the end of the callee’s body, rather than at the end of the full expression containing the call).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">util</span><span class="o">::</span><span class="n">Status</span><span class="w"> </span><span class="nf">run_worker</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="w"> </span><span class="n">smart_foo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span>
+<span class="w">   </span><span class="n">Foo</span><span class="o">*</span><span class="w"> </span><span class="n">owned_foo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">smart_foo</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="w">   </span><span class="c1">// Currently, the following would &quot;work&quot; because the argument to run_worker() is deleted at the end of func()</span>
+<span class="w">   </span><span class="c1">// With the new calling convention, it will be deleted at the end of run_worker(),</span>
+<span class="w">   </span><span class="c1">// making this an access to freed memory.</span>
+<span class="w">   </span><span class="n">owned_foo</span><span class="o">-&gt;</span><span class="n">Bar</span><span class="p">(</span><span class="n">run_worker</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">smart_foo</span><span class="p">)));</span>
+<span class="w">             </span><span class="o">^</span>
+<span class="w">            </span><span class="c1">// &lt;&lt;&lt;Crash expected here</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+<li><p>Lifetime of local <em>returned</em> <code class="docutils literal notranslate"><span class="pre">std::unique_ptr&lt;&gt;</span></code> ends earlier.</p>
+<p>Spot the bug:</p>
+<blockquote>
+<div><div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="w"> </span><span class="n">create_and_subscribe</span><span class="p">(</span><span class="n">Bar</span><span class="o">*</span><span class="w"> </span><span class="n">subscriber</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">foo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">  </span><span class="n">subscriber</span><span class="o">-&gt;</span><span class="n">sub</span><span class="p">([</span><span class="o">&amp;</span><span class="n">foo</span><span class="p">]</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">foo</span><span class="o">-&gt;</span><span class="n">do_thing</span><span class="p">();}</span><span class="w"> </span><span class="p">);</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">foo</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div></blockquote>
+<p>One could point out this is an obvious stack-use-after return bug.
+With the current calling convention, running this code with ASAN enabled, however, would not yield any “issue”.
+So is this a bug in ASAN? (Spoiler: No)</p>
+<p>This currently would “work” only because the storage for <code class="docutils literal notranslate"><span class="pre">foo</span></code> is in the caller’s stackframe.
+In other words, <code class="docutils literal notranslate"><span class="pre">&amp;foo</span></code> in callee and <code class="docutils literal notranslate"><span class="pre">&amp;foo</span></code> in the caller are the same address.</p>
+</li>
+</ul>
+</div></blockquote>
+<p>ASAN can be used to detect both of these.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ThreadingSupportAPI.html">Threading Support API</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="UnspecifiedBehaviorRandomization.html">Unspecified Behavior Randomization</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2023, LLVM Project.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.5.
+    </div>
+  </body>
+</html>

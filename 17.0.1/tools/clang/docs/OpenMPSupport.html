@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>OpenMP Support &#8212; Clang 17.0.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b849a4e9" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=08e2baec"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="SYCL Compiler and Runtime architecture design" href="SYCLSupport.html" />
+    <link rel="prev" title="OpenCL Support" href="OpenCLSupport.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 17.0.1 documentation</span></a></h1>
+        <h2 class="heading"><span>OpenMP Support</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenCLSupport.html">OpenCL Support</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SYCLSupport.html">SYCL Compiler and Runtime architecture design</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <style type="text/css">
+  .none { background-color: #FFCCCC }
+  .part { background-color: #FFFF99 }
+  .good { background-color: #CCFF99 }
+</style><nav class="contents local" id="contents" role="doc-toc">
+<ul class="simple">
+<li><p><a class="reference internal" href="#openmp-support" id="id1">OpenMP Support</a></p></li>
+<li><p><a class="reference internal" href="#general-improvements" id="id2">General improvements</a></p></li>
+<li><p><a class="reference internal" href="#cuda-devices-support" id="id3">Cuda devices support</a></p>
+<ul>
+<li><p><a class="reference internal" href="#directives-execution-modes" id="id4">Directives execution modes</a></p></li>
+<li><p><a class="reference internal" href="#data-sharing-modes" id="id5">Data-sharing modes</a></p></li>
+<li><p><a class="reference internal" href="#features-not-supported-or-with-limited-support-for-cuda-devices" id="id6">Features not supported or with limited support for Cuda devices</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#openmp-5-0-implementation-details" id="id7">OpenMP 5.0 Implementation Details</a></p></li>
+<li><p><a class="reference internal" href="#openmp-5-1-implementation-details" id="id8">OpenMP 5.1 Implementation Details</a></p></li>
+<li><p><a class="reference internal" href="#openmp-extensions" id="id9">OpenMP Extensions</a></p></li>
+</ul>
+</nav>
+<section id="openmp-support">
+<h1><a class="toc-backref" href="#id1" role="doc-backlink">OpenMP Support</a><a class="headerlink" href="#openmp-support" title="Link to this heading">¶</a></h1>
+<p>Clang fully supports OpenMP 4.5. Clang supports offloading to X86_64, AArch64,
+PPC64[LE] and has <a class="reference internal" href="#basic-support-for-cuda-devices">basic support for Cuda devices</a>.</p>
+<ul class="simple">
+<li><p>#pragma omp declare simd: <span class="part">Partial</span>.  We support parsing/semantic
+analysis + generation of special attributes for X86 target, but still
+missing the LLVM pass for vectorization.</p></li>
+</ul>
+<p>In addition, the LLVM OpenMP runtime <cite>libomp</cite> supports the OpenMP Tools
+Interface (OMPT) on x86, x86_64, AArch64, and PPC64 on Linux, Windows, and macOS.</p>
+<p>For the list of supported features from OpenMP 5.0 see <a class="reference internal" href="#openmp-implementation-details">OpenMP implementation details</a>.</p>
+</section>
+<section id="general-improvements">
+<h1><a class="toc-backref" href="#id2" role="doc-backlink">General improvements</a><a class="headerlink" href="#general-improvements" title="Link to this heading">¶</a></h1>
+<ul class="simple">
+<li><p>New collapse clause scheme to avoid expensive remainder operations.
+Compute loop index variables after collapsing a loop nest via the
+collapse clause by replacing the expensive remainder operation with
+multiplications and additions.</p></li>
+<li><p>The default schedules for the <cite>distribute</cite> and <cite>for</cite> constructs in a
+parallel region and in SPMD mode have changed to ensure coalesced
+accesses. For the <cite>distribute</cite> construct, a static schedule is used
+with a chunk size equal to the number of threads per team (default
+value of threads or as specified by the <cite>thread_limit</cite> clause if
+present). For the <cite>for</cite> construct, the schedule is static with chunk
+size of one.</p></li>
+<li><p>Simplified SPMD code generation for <cite>distribute parallel for</cite> when
+the new default schedules are applicable.</p></li>
+<li><p>When using the collapse clause on a loop nest the default behavior
+is to automatically extend the representation of the loop counter to
+64 bits for the cases where the sizes of the collapsed loops are not
+known at compile time. To prevent this conservative choice and use
+at most 32 bits, compile your program with the
+<cite>-fopenmp-optimistic-collapse</cite>.</p></li>
+</ul>
+</section>
+<section id="cuda-devices-support">
+<span id="basic-support-for-cuda-devices"></span><h1><a class="toc-backref" href="#id3" role="doc-backlink">Cuda devices support</a><a class="headerlink" href="#cuda-devices-support" title="Link to this heading">¶</a></h1>
+<section id="directives-execution-modes">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Directives execution modes</a><a class="headerlink" href="#directives-execution-modes" title="Link to this heading">¶</a></h2>
+<p>Clang code generation for target regions supports two modes: the SPMD and
+non-SPMD modes. Clang chooses one of these two modes automatically based on the
+way directives and clauses on those directives are used. The SPMD mode uses a
+simplified set of runtime functions thus increasing performance at the cost of
+supporting some OpenMP features. The non-SPMD mode is the most generic mode and
+supports all currently available OpenMP features. The compiler will always
+attempt to use the SPMD mode wherever possible. SPMD mode will not be used if:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>The target region contains user code (other than OpenMP-specific
+directives) in between the <cite>target</cite> and the <cite>parallel</cite> directives.</p></li>
+</ul>
+</div></blockquote>
+</section>
+<section id="data-sharing-modes">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Data-sharing modes</a><a class="headerlink" href="#data-sharing-modes" title="Link to this heading">¶</a></h2>
+<p>Clang supports two data-sharing models for Cuda devices: <cite>Generic</cite> and <cite>Cuda</cite>
+modes. The default mode is <cite>Generic</cite>. <cite>Cuda</cite> mode can give an additional
+performance and can be activated using the <cite>-fopenmp-cuda-mode</cite> flag. In
+<cite>Generic</cite> mode all local variables that can be shared in the parallel regions
+are stored in the global memory. In <cite>Cuda</cite> mode local variables are not shared
+between the threads and it is user responsibility to share the required data
+between the threads in the parallel regions.</p>
+</section>
+<section id="features-not-supported-or-with-limited-support-for-cuda-devices">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Features not supported or with limited support for Cuda devices</a><a class="headerlink" href="#features-not-supported-or-with-limited-support-for-cuda-devices" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Cancellation constructs are not supported.</p></li>
+<li><p>Doacross loop nest is not supported.</p></li>
+<li><p>User-defined reductions are supported only for trivial types.</p></li>
+<li><p>Nested parallelism: inner parallel regions are executed sequentially.</p></li>
+<li><p>Automatic translation of math functions in target regions to device-specific
+math functions is not implemented yet.</p></li>
+<li><p>Debug information for OpenMP target regions is supported, but sometimes it may
+be required to manually specify the address class of the inspected variables.
+In some cases the local variables are actually allocated in the global memory,
+but the debug info may be not aware of it.</p></li>
+</ul>
+</section>
+</section>
+<section id="openmp-5-0-implementation-details">
+<span id="openmp-implementation-details"></span><h1><a class="toc-backref" href="#id7" role="doc-backlink">OpenMP 5.0 Implementation Details</a><a class="headerlink" href="#openmp-5-0-implementation-details" title="Link to this heading">¶</a></h1>
+<p>The following table provides a quick overview over various OpenMP 5.0 features
+and their implementation status. Please post on the
+<a class="reference external" href="https://discourse.llvm.org/c/runtimes/openmp/35">Discourse forums (Runtimes - OpenMP category)</a> for more
+information or if you want to help with the
+implementation.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Category</p></th>
+<th class="head"><p>Feature</p></th>
+<th class="head"><p>Status</p></th>
+<th class="head"><p>Reviews</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>loop</p></td>
+<td><p>support != in the canonical loop form</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D54441</p></td>
+</tr>
+<tr class="row-odd"><td><p>loop</p></td>
+<td><p>#pragma omp loop (directive)</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>loop</p></td>
+<td><p>#pragma omp loop bind</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>loop</p></td>
+<td><p>collapse imperfectly nested loop</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>loop</p></td>
+<td><p>collapse non-rectangular nested loop</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>loop</p></td>
+<td><p>C++ range-base for loop</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>loop</p></td>
+<td><p>clause: if for SIMD directives</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>loop</p></td>
+<td><p>inclusive scan (matching C++17 PSTL)</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>memory management</p></td>
+<td><p>memory allocators</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>r341687,r357929</p></td>
+</tr>
+<tr class="row-odd"><td><p>memory management</p></td>
+<td><p>allocate directive and allocate clause</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>r355614,r335952</p></td>
+</tr>
+<tr class="row-even"><td><p>OMPD</p></td>
+<td><p>OMPD interfaces</p></td>
+<td><p><span class="part">not upstream</span></p></td>
+<td><p><a class="reference external" href="https://github.com/OpenMPToolsInterface/LLVM-openmp/tree/ompd-tests">https://github.com/OpenMPToolsInterface/LLVM-openmp/tree/ompd-tests</a></p></td>
+</tr>
+<tr class="row-odd"><td><p>OMPT</p></td>
+<td><p>OMPT interfaces</p></td>
+<td><p><span class="part">mostly done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>thread affinity</p></td>
+<td><p>thread affinity</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>taskloop reduction</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>task</p></td>
+<td><p>task affinity</p></td>
+<td><p><span class="part">not upstream</span></p></td>
+<td><p><a class="reference external" href="https://github.com/jklinkenberg/openmp/tree/task-affinity">https://github.com/jklinkenberg/openmp/tree/task-affinity</a></p></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>clause: depend on the taskwait construct</p></td>
+<td><p><span class="part">mostly done</span></p></td>
+<td><p>D113540 (regular codegen only)</p></td>
+</tr>
+<tr class="row-even"><td><p>task</p></td>
+<td><p>depend objects and detachable tasks</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>mutexinoutset dependence-type for tasks</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D53380,D57576</p></td>
+</tr>
+<tr class="row-even"><td><p>task</p></td>
+<td><p>combined taskloop constructs</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>master taskloop</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>task</p></td>
+<td><p>parallel master taskloop</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>master taskloop simd</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>task</p></td>
+<td><p>parallel master taskloop simd</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>SIMD</p></td>
+<td><p>atomic and simd constructs inside SIMD code</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>SIMD</p></td>
+<td><p>SIMD nontemporal</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>infer target functions from initializers</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>infer target variables from initializers</p></td>
+<td><p><span class="part">done</span></p></td>
+<td><p>D146418</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>OMP_TARGET_OFFLOAD environment variable</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D50522</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>support full ‘defaultmap’ functionality</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D69204</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>device specific functions</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>clause: device_type</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>clause: extended device</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>clause: uses_allocators clause</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>clause: in_reduction</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td><p>r308768</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>omp_get_device_num()</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D54342,D128347</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>structure mapping of references</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>nested target declare</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D51378</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>implicitly map ‘this’ (this[:1])</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D55982</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>allow access to the reference count (omp_target_is_present)</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>requires directive</p></td>
+<td><p><span class="part">partial</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>clause: unified_shared_memory</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D52625,D52359</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>clause: unified_address</p></td>
+<td><p><span class="part">partial</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>clause: reverse_offload</p></td>
+<td><p><span class="part">partial</span></p></td>
+<td><p>D52780,D155003</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>clause: atomic_default_mem_order</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D53513</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>clause: dynamic_allocators</p></td>
+<td><p><span class="part">unclaimed parts</span></p></td>
+<td><p>D53079</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>user-defined mappers</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td><p>D56326,D58638,D58523,D58074,D60972,D59474</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>mapping lambda expression</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D51107</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>clause: use_device_addr for target data</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>support close modifier on map clause</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D55719,D55892</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>teams construct on the host device</p></td>
+<td><p><span class="part">done</span></p></td>
+<td><p>r371553</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>support non-contiguous array sections for target update</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>pointer attachment</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>map clause reordering based on map types</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>atomic</p></td>
+<td><p>hints for the atomic construct</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D51233</p></td>
+</tr>
+<tr class="row-even"><td><p>base language</p></td>
+<td><p>C11 support</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>base language</p></td>
+<td><p>C++11/14/17 support</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>base language</p></td>
+<td><p>lambda support</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>array shaping</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D74144</p></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>library shutdown (omp_pause_resource[_all])</p></td>
+<td><p><span class="none">unclaimed parts</span></p></td>
+<td><p>D55078</p></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>metadirectives</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td><p>D91944</p></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>conditional modifier for lastprivate clause</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>iterator and multidependences</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>depobj directive and depobj dependency kind</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>user-defined function variants</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td><p>D67294, D64095, D71847, D71830, D109635</p></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>pointer/reference to pointer based array reductions</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>prevent new type definitions in clauses</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>memory model</p></td>
+<td><p>memory model update (seq_cst, acq_rel, release, acquire,…)</p></td>
+<td><p><span class="good">done</span></p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="openmp-5-1-implementation-details">
+<h1><a class="toc-backref" href="#id8" role="doc-backlink">OpenMP 5.1 Implementation Details</a><a class="headerlink" href="#openmp-5-1-implementation-details" title="Link to this heading">¶</a></h1>
+<p>The following table provides a quick overview over various OpenMP 5.1 features
+and their implementation status, as defined in the technical report 8 (TR8).
+Please post on the
+<a class="reference external" href="https://discourse.llvm.org/c/runtimes/openmp/35">Discourse forums (Runtimes - OpenMP category)</a> for more
+information or if you want to help with the
+implementation.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Category</p></th>
+<th class="head"><p>Feature</p></th>
+<th class="head"><p>Status</p></th>
+<th class="head"><p>Reviews</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>atomic</p></td>
+<td><p>‘compare’ clause on atomic construct</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D120290, D120007, D118632, D120200, D116261, D118547, D116637</p></td>
+</tr>
+<tr class="row-odd"><td><p>atomic</p></td>
+<td><p>‘fail’ clause on atomic construct</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>base language</p></td>
+<td><p>C++ attribute specifier syntax</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D105648</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>‘present’ map type modifier</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D83061, D83062, D84422</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>‘present’ motion modifier</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D84711, D84712</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>‘present’ in defaultmap clause</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D92427</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>map clause reordering reordering based on ‘present’ modifier</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>device-specific environment variables</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>omp_target_is_accessible routine</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>omp_get_mapped_ptr routine</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D141545</p></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>new async target memory copy routines</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D136103</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>thread_limit clause on target construct</p></td>
+<td><p><span class="none">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>has_device_addr clause on target construct</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>iterators in map clause or motion clauses</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>indirect clause on declare target directive</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>allow virtual functions calls for mapped object on device</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>device</p></td>
+<td><p>interop construct</p></td>
+<td><p><span class="part">partial</span></p></td>
+<td><p>parsing/sema done: D98558, D98834, D98815</p></td>
+</tr>
+<tr class="row-odd"><td><p>device</p></td>
+<td><p>assorted routines for querying interoperable properties</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>loop</p></td>
+<td><p>Loop tiling transformation</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D76342</p></td>
+</tr>
+<tr class="row-odd"><td><p>loop</p></td>
+<td><p>Loop unrolling transformation</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D99459</p></td>
+</tr>
+<tr class="row-even"><td><p>loop</p></td>
+<td><p>‘reproducible’/’unconstrained’ modifiers in ‘order’ clause</p></td>
+<td><p><span class="part">partial</span></p></td>
+<td><p>D127855</p></td>
+</tr>
+<tr class="row-odd"><td><p>memory management</p></td>
+<td><p>alignment for allocate directive and clause</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>memory management</p></td>
+<td><p>new memory management routines</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>memory management</p></td>
+<td><p>changes to omp_alloctrait_key enum</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>memory model</p></td>
+<td><p>seq_cst clause on flush construct</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>‘omp_all_memory’ keyword and use in ‘depend’ clause</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D125828, D126321</p></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>error directive</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>scope construct</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>routines for controlling and querying team regions</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>changes to ompt_scope_endpoint_t enum</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>omp_display_env routine</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>extended OMP_PLACES syntax</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>OMP_NUM_TEAMS and OMP_TEAMS_THREAD_LIMIT env vars</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D138769</p></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>‘target_device’ selector in context specifier</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>begin/end declare variant</p></td>
+<td><p><span class="good">done</span></p></td>
+<td><p>D71179</p></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>dispatch construct and function variant argument adjustment</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td><p>D99537, D99679</p></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>assume and assumes directives</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>nothing directive</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>misc</p></td>
+<td><p>masked construct and related combined constructs</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td><p>D99995, D100514</p></td>
+</tr>
+<tr class="row-odd"><td><p>misc</p></td>
+<td><p>default(firstprivate) &amp; default(private)</p></td>
+<td><p><span class="part">partial</span></p></td>
+<td><p>firstprivate done: D75591</p></td>
+</tr>
+<tr class="row-even"><td><p>other</p></td>
+<td><p>deprecating master construct</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>OMPT</p></td>
+<td><p>new barrier types added to ompt_sync_region_t enum</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>OMPT</p></td>
+<td><p>async data transfers added to ompt_target_data_op_t enum</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>OMPT</p></td>
+<td><p>new barrier state values added to ompt_state_t enum</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>OMPT</p></td>
+<td><p>new ‘emi’ callbacks for external monitoring interfaces</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>‘strict’ modifier for taskloop construct</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>task</p></td>
+<td><p>inoutset in depend clause</p></td>
+<td><p><span class="none">unclaimed</span></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>task</p></td>
+<td><p>nowait clause on taskwait</p></td>
+<td><p><span class="part">worked on</span></p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="openmp-extensions">
+<h1><a class="toc-backref" href="#id9" role="doc-backlink">OpenMP Extensions</a><a class="headerlink" href="#openmp-extensions" title="Link to this heading">¶</a></h1>
+<p>The following table provides a quick overview over various OpenMP
+extensions and their implementation status.  These extensions are not
+currently defined by any standard, so links to associated LLVM
+documentation are provided.  As these extensions mature, they will be
+considered for standardization. Please post on the
+<a class="reference external" href="https://discourse.llvm.org/c/runtimes/openmp/35">Discourse forums (Runtimes - OpenMP category)</a> to provide feedback.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Category</p></th>
+<th class="head"><p>Feature</p></th>
+<th class="head"><p>Status</p></th>
+<th class="head"><p>Reviews</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>atomic extension</p></td>
+<td><p><a class="reference external" href="https://openmp.llvm.org/docs/openacc/OpenMPExtensions.html#atomicWithinTeams">‘atomic’ strictly nested within ‘teams’</a></p></td>
+<td><p><span class="good">prototyped</span></p></td>
+<td><p>D126323</p></td>
+</tr>
+<tr class="row-odd"><td><p>device extension</p></td>
+<td><p><a class="reference external" href="https://openmp.llvm.org/docs/openacc/OpenMPExtensions.html#ompx-hold">‘ompx_hold’ map type modifier</a></p></td>
+<td><p><span class="good">prototyped</span></p></td>
+<td><p>D106509, D106510</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenCLSupport.html">OpenCL Support</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SYCLSupport.html">SYCL Compiler and Runtime architecture design</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2023, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.5.
+    </div>
+  </body>
+</html>

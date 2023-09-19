@@ -1,0 +1,448 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>Legalizer &#8212; LLVM 17.0.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b849a4e9" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm-theme.css?v=be84393e" />
+    <script src="../_static/documentation_options.js?v=08e2baec"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="RegBankSelect" href="RegBankSelect.html" />
+    <link rel="prev" title="IRTranslator" href="IRTranslator.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="../index.html">
+    <img src="../_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="RegBankSelect.html" title="RegBankSelect"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="IRTranslator.html" title="IRTranslator"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../Reference.html" >Reference</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >Global Instruction Selection</a> &#187;</li>
+          <li class="nav-item nav-item-3"><a href="Pipeline.html" accesskey="U">Core Pipeline</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Legalizer</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/GlobalISel/Legalizer.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="legalizer">
+<span id="milegalizer"></span><h1>Legalizer<a class="headerlink" href="#legalizer" title="Link to this heading">¶</a></h1>
+<p>This pass transforms the generic machine instructions such that they are legal.</p>
+<p>A legal instruction is defined as:</p>
+<ul class="simple">
+<li><p><strong>selectable</strong> — the target will later be able to select it to a
+target-specific (non-generic) instruction. This doesn’t necessarily mean that
+<a class="reference internal" href="InstructionSelect.html"><span class="doc">InstructionSelect</span></a> has to handle it though. It just means that
+<strong>something</strong> must handle it.</p></li>
+<li><p>operating on <strong>vregs that can be loaded and stored</strong> – if necessary, the
+target can select a <code class="docutils literal notranslate"><span class="pre">G_LOAD</span></code>/<code class="docutils literal notranslate"><span class="pre">G_STORE</span></code> of each gvreg operand.</p></li>
+</ul>
+<p>As opposed to SelectionDAG, there are no legalization phases.  In particular,
+‘type’ and ‘operation’ legalization are not separate.</p>
+<p>Legalization is iterative, and all state is contained in GMIR.  To maintain the
+validity of the intermediate code, instructions are introduced:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">G_MERGE_VALUES</span></code> — concatenate multiple registers of the same
+size into a single wider register.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">G_UNMERGE_VALUES</span></code> — extract multiple registers of the same size
+from a single wider register.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">G_EXTRACT</span></code> — extract a simple register (as contiguous sequences of bits)
+from a single wider register.</p></li>
+</ul>
+<p>As they are expected to be temporary byproducts of the legalization process,
+they are combined at the end of the <a class="reference internal" href="#milegalizer"><span class="std std-ref">Legalizer</span></a> pass.
+If any remain, they are expected to always be selectable, using loads and stores
+if necessary.</p>
+<p>The legality of an instruction may only depend on the instruction itself and
+must not depend on any context in which the instruction is used. However, after
+deciding that an instruction is not legal, using the context of the instruction
+to decide how to legalize the instruction is permitted. As an example, if we
+have a <code class="docutils literal notranslate"><span class="pre">G_FOO</span></code> instruction of the form:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">1</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_CONSTANT</span> <span class="n">i32</span> <span class="mi">1</span>
+<span class="o">%</span><span class="mi">2</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_FOO</span> <span class="o">%</span><span class="mi">0</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">),</span> <span class="o">%</span><span class="mi">1</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>it’s impossible to say that G_FOO is legal iff %1 is a <code class="docutils literal notranslate"><span class="pre">G_CONSTANT</span></code> with
+value <code class="docutils literal notranslate"><span class="pre">1</span></code>. However, the following:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">2</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_FOO</span> <span class="o">%</span><span class="mi">0</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">),</span> <span class="n">i32</span> <span class="mi">1</span>
+</pre></div>
+</div>
+<p>can say that it’s legal iff operand 2 is an immediate with value <code class="docutils literal notranslate"><span class="pre">1</span></code> because
+that information is entirely contained within the single instruction.</p>
+<section id="api-legalizerinfo">
+<span id="id1"></span><h2>API: LegalizerInfo<a class="headerlink" href="#api-legalizerinfo" title="Link to this heading">¶</a></h2>
+<p>The recommended <a class="footnote-reference brackets" href="#legalizer-legacy-footnote" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> API looks like this:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">getActionDefinitionsBuilder</span><span class="p">({</span><span class="n">G_ADD</span><span class="p">,</span> <span class="n">G_SUB</span><span class="p">,</span> <span class="n">G_MUL</span><span class="p">,</span> <span class="n">G_AND</span><span class="p">,</span> <span class="n">G_OR</span><span class="p">,</span> <span class="n">G_XOR</span><span class="p">,</span> <span class="n">G_SHL</span><span class="p">})</span>
+    <span class="o">.</span><span class="n">legalFor</span><span class="p">({</span><span class="n">s32</span><span class="p">,</span> <span class="n">s64</span><span class="p">,</span> <span class="n">v2s32</span><span class="p">,</span> <span class="n">v4s32</span><span class="p">,</span> <span class="n">v2s64</span><span class="p">})</span>
+    <span class="o">.</span><span class="n">clampScalar</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">s32</span><span class="p">,</span> <span class="n">s64</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">widenScalarToNextPow2</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">clampNumElements</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">v2s32</span><span class="p">,</span> <span class="n">v4s32</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">clampNumElements</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">v2s64</span><span class="p">,</span> <span class="n">v2s64</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">moreElementsToNextPow2</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>and describes a set of rules by which we can either declare an instruction legal
+or decide which action to take to make it more legal.</p>
+<p>At the core of this ruleset is the <code class="docutils literal notranslate"><span class="pre">LegalityQuery</span></code> which describes the
+instruction. We use a description rather than the instruction to both allow other
+passes to determine legality without having to create an instruction and also to
+limit the information available to the predicates to that which is safe to rely
+on. Currently, the information available to the predicates that determine
+legality contains:</p>
+<ul class="simple">
+<li><p>The opcode for the instruction</p></li>
+<li><p>The type of each type index (see <code class="docutils literal notranslate"><span class="pre">type0</span></code>, <code class="docutils literal notranslate"><span class="pre">type1</span></code>, etc.)</p></li>
+<li><p>The size in bytes and atomic ordering for each MachineMemOperand</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>An alternative worth investigating is to generalize the API to represent
+actions using <code class="docutils literal notranslate"><span class="pre">std::function</span></code> that implements the action, instead of explicit
+enum tokens (<code class="docutils literal notranslate"><span class="pre">Legal</span></code>, <code class="docutils literal notranslate"><span class="pre">WidenScalar</span></code>, …) that instruct it to call a
+function. This would have some benefits, most notable being that Custom could
+be removed.</p>
+</div>
+<p class="rubric">Footnotes</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="legalizer-legacy-footnote" role="note">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>
+<p>An API is broadly similar to
+SelectionDAG/TargetLowering is available but is not recommended as a more
+powerful API is available.</p>
+</aside>
+</aside>
+<section id="rule-processing-and-declaring-rules">
+<h3>Rule Processing and Declaring Rules<a class="headerlink" href="#rule-processing-and-declaring-rules" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">getActionDefinitionsBuilder</span></code> function generates a ruleset for the given
+opcode(s) that rules can be added to. If multiple opcodes are given, they are
+all permanently bound to the same ruleset. The rules in a ruleset are executed
+from top to bottom and will start again from the top if an instruction is
+legalized as a result of the rules. If the ruleset is exhausted without
+satisfying any rule, then it is considered unsupported.</p>
+<p>When it doesn’t declare the instruction legal, each pass over the rules may
+request that one type changes to another type. Sometimes this can cause multiple
+types to change but we avoid this as much as possible as making multiple changes
+can make it difficult to avoid infinite loops where, for example, narrowing one
+type causes another to be too small and widening that type causes the first one
+to be too big.</p>
+<p>In general, it’s advisable to declare instructions legal as close to the top of
+the rule as possible and to place any expensive rules as low as possible. This
+helps with performance as testing for legality happens more often than
+legalization and legalization can require multiple passes over the rules.</p>
+<p>As a concrete example, consider the rule:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">getActionDefinitionsBuilder</span><span class="p">({</span><span class="n">G_ADD</span><span class="p">,</span> <span class="n">G_SUB</span><span class="p">,</span> <span class="n">G_MUL</span><span class="p">,</span> <span class="n">G_AND</span><span class="p">,</span> <span class="n">G_OR</span><span class="p">,</span> <span class="n">G_XOR</span><span class="p">,</span> <span class="n">G_SHL</span><span class="p">})</span>
+    <span class="o">.</span><span class="n">legalFor</span><span class="p">({</span><span class="n">s32</span><span class="p">,</span> <span class="n">s64</span><span class="p">,</span> <span class="n">v2s32</span><span class="p">,</span> <span class="n">v4s32</span><span class="p">,</span> <span class="n">v2s64</span><span class="p">})</span>
+    <span class="o">.</span><span class="n">clampScalar</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">s32</span><span class="p">,</span> <span class="n">s64</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">widenScalarToNextPow2</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>and the instruction:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">2</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s7</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_ADD</span> <span class="o">%</span><span class="mi">0</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s7</span><span class="p">),</span> <span class="o">%</span><span class="mi">1</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s7</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>this doesn’t meet the predicate for the <a class="reference internal" href="#legalfor"><span class="std std-ref">.legalFor()</span></a> as <code class="docutils literal notranslate"><span class="pre">s7</span></code>
+is not one of the listed types so it falls through to the
+<a class="reference internal" href="#clampscalar"><span class="std std-ref">.clampScalar()</span></a>. It does meet the predicate for this rule
+as the type is smaller than the <code class="docutils literal notranslate"><span class="pre">s32</span></code> and this rule instructs the legalizer
+to change type 0 to <code class="docutils literal notranslate"><span class="pre">s32</span></code>. It then restarts from the top. This time it does
+satisfy <code class="docutils literal notranslate"><span class="pre">.legalFor()</span></code> and the resulting output is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">3</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_ANYEXT</span> <span class="o">%</span><span class="mi">0</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s7</span><span class="p">)</span>
+<span class="o">%</span><span class="mi">4</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_ANYEXT</span> <span class="o">%</span><span class="mi">1</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s7</span><span class="p">)</span>
+<span class="o">%</span><span class="mi">5</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_ADD</span> <span class="o">%</span><span class="mi">3</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">),</span> <span class="o">%</span><span class="mi">4</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span>
+<span class="o">%</span><span class="mi">2</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s7</span><span class="p">)</span> <span class="o">=</span> <span class="n">G_TRUNC</span> <span class="o">%</span><span class="mi">5</span><span class="p">:</span><span class="n">_</span><span class="p">(</span><span class="n">s32</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>where the <code class="docutils literal notranslate"><span class="pre">G_ADD</span></code> is legal and the other instructions are scheduled for
+processing by the legalizer.</p>
+</section>
+<section id="rule-actions">
+<h3>Rule Actions<a class="headerlink" href="#rule-actions" title="Link to this heading">¶</a></h3>
+<p>There are various rule factories that append rules to a ruleset but they have a
+few actions in common:</p>
+<ul class="simple" id="legalfor">
+<li><p><code class="docutils literal notranslate"><span class="pre">legalIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">legalFor()</span></code>, etc. declare an instruction to be legal if the
+predicate is satisfied.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">narrowScalarIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">narrowScalarFor()</span></code>, etc. declare an instruction to be illegal
+if the predicate is satisfied and indicates that narrowing the scalars in one
+of the types to a specific type would make it more legal. This action supports
+both scalars and vectors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">widenScalarIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">widenScalarFor()</span></code>, etc. declare an instruction to be illegal
+if the predicate is satisfied and indicates that widening the scalars in one
+of the types to a specific type would make it more legal. This action supports
+both scalars and vectors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fewerElementsIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">fewerElementsFor()</span></code>, etc. declare an instruction to be
+illegal if the predicate is satisfied and indicates reducing the number of
+vector elements in one of the types to a specific type would make it more
+legal. This action supports vectors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">moreElementsIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">moreElementsFor()</span></code>, etc. declare an instruction to be illegal
+if the predicate is satisfied and indicates increasing the number of vector
+elements in one of the types to a specific type would make it more legal.
+This action supports vectors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">lowerIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">lowerFor()</span></code>, etc. declare an instruction to be
+illegal if the predicate is satisfied and indicates that replacing
+it with equivalent instruction(s) would make it more legal. Support
+for this action differs for each opcode. These may provide an
+optional LegalizeMutation containing a type to attempt to perform
+the expansion in a different type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">libcallIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">libcallFor()</span></code>, etc. declare an instruction to be illegal if the
+predicate is satisfied and indicates that replacing it with a libcall would
+make it more legal. Support for this action differs for
+each opcode.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">customIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">customFor()</span></code>, etc. declare an instruction to be illegal if the
+predicate is satisfied and indicates that the backend developer will supply
+a means of making it more legal.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">unsupportedIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">unsupportedFor()</span></code>, etc. declare an instruction to be illegal
+if the predicate is satisfied and indicates that there is no way to make it
+legal and the compiler should fail.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fallback()</span></code> falls back on an older API and should only be used while porting
+existing code from that API.</p></li>
+</ul>
+</section>
+<section id="rule-predicates">
+<h3>Rule Predicates<a class="headerlink" href="#rule-predicates" title="Link to this heading">¶</a></h3>
+<p>The rule factories also have predicates in common:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">legal()</span></code>, <code class="docutils literal notranslate"><span class="pre">lower()</span></code>, etc. are always satisfied.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">legalIf()</span></code>, <code class="docutils literal notranslate"><span class="pre">narrowScalarIf()</span></code>, etc. are satisfied if the user-supplied
+<code class="docutils literal notranslate"><span class="pre">LegalityPredicate</span></code> function returns true. This predicate has access to the
+information in the <code class="docutils literal notranslate"><span class="pre">LegalityQuery</span></code> to make its decision.
+User-supplied predicates can also be combined using <code class="docutils literal notranslate"><span class="pre">all(P0,</span> <span class="pre">P1,</span> <span class="pre">...)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">legalFor()</span></code>, <code class="docutils literal notranslate"><span class="pre">narrowScalarFor()</span></code>, etc. are satisfied if the type matches one in
+a given set of types. For example <code class="docutils literal notranslate"><span class="pre">.legalFor({s16,</span> <span class="pre">s32})</span></code> declares the
+instruction legal if type 0 is either s16 or s32. Additional versions for two
+and three type indices are generally available. For these, all the type
+indices considered together must match all the types in one of the tuples. So
+<code class="docutils literal notranslate"><span class="pre">.legalFor({{s16,</span> <span class="pre">s32},</span> <span class="pre">{s32,</span> <span class="pre">s64}})</span></code> will only accept <code class="docutils literal notranslate"><span class="pre">{s16,</span> <span class="pre">s32}</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">{s32,</span> <span class="pre">s64}</span></code> but will not accept <code class="docutils literal notranslate"><span class="pre">{s16,</span> <span class="pre">s64}</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">legalForTypesWithMemSize()</span></code>, <code class="docutils literal notranslate"><span class="pre">narrowScalarForTypesWithMemSize()</span></code>, etc. are
+similar to <code class="docutils literal notranslate"><span class="pre">legalFor()</span></code>, <code class="docutils literal notranslate"><span class="pre">narrowScalarFor()</span></code>, etc. but additionally require a
+MachineMemOperand to have a given size in each tuple.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">legalForCartesianProduct()</span></code>, <code class="docutils literal notranslate"><span class="pre">narrowScalarForCartesianProduct()</span></code>, etc. are
+satisfied if each type index matches one element in each of the independent
+sets. So <code class="docutils literal notranslate"><span class="pre">.legalForCartesianProduct({s16,</span> <span class="pre">s32},</span> <span class="pre">{s32,</span> <span class="pre">s64})</span></code> will accept
+<code class="docutils literal notranslate"><span class="pre">{s16,</span> <span class="pre">s32}</span></code>, <code class="docutils literal notranslate"><span class="pre">{s16,</span> <span class="pre">s64}</span></code>, <code class="docutils literal notranslate"><span class="pre">{s32,</span> <span class="pre">s32}</span></code>, and <code class="docutils literal notranslate"><span class="pre">{s32,</span> <span class="pre">s64}</span></code>.</p></li>
+</ul>
+</section>
+<section id="composite-rules">
+<h3>Composite Rules<a class="headerlink" href="#composite-rules" title="Link to this heading">¶</a></h3>
+<p>There are some composite rules for common situations built out of the above facilities:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">widenScalarToNextPow2()</span></code> is like <code class="docutils literal notranslate"><span class="pre">widenScalarIf()</span></code> but is satisfied iff the type
+size in bits is not a power of 2 and selects a target type that is the next
+largest power of 2.</p></li>
+</ul>
+<ul class="simple" id="clampscalar">
+<li><p><code class="docutils literal notranslate"><span class="pre">minScalar()</span></code> is like <code class="docutils literal notranslate"><span class="pre">widenScalarIf()</span></code> but is satisfied iff the type
+size in bits is smaller than the given minimum and selects the minimum as the
+target type. Similarly, there is also a <code class="docutils literal notranslate"><span class="pre">maxScalar()</span></code> for the maximum and a
+<code class="docutils literal notranslate"><span class="pre">clampScalar()</span></code> to do both at once.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">minScalarSameAs()</span></code> is like <code class="docutils literal notranslate"><span class="pre">minScalar()</span></code> but the minimum is taken from another
+type index.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">moreElementsToNextMultiple()</span></code> is like <code class="docutils literal notranslate"><span class="pre">moreElementsToNextPow2()</span></code> but is based on
+multiples of X rather than powers of 2.</p></li>
+</ul>
+</section>
+</section>
+<section id="minimum-rule-set">
+<span id="min-legalizerinfo"></span><h2>Minimum Rule Set<a class="headerlink" href="#minimum-rule-set" title="Link to this heading">¶</a></h2>
+<p>GlobalISel’s legalizer has a great deal of flexibility in how a given target
+shapes the GMIR that the rest of the backend must handle. However, there are
+a small number of requirements that all targets must meet.</p>
+<p>Before discussing the minimum requirements, we’ll need some terminology:</p>
+<dl class="simple">
+<dt>Producer Type Set</dt><dd><p>The set of types which is the union of all possible types produced by at
+least one legal instruction.</p>
+</dd>
+<dt>Consumer Type Set</dt><dd><p>The set of types which is the union of all possible types consumed by at
+least one legal instruction.</p>
+</dd>
+</dl>
+<p>Both sets are often identical but there’s no guarantee of that. For example,
+it’s not uncommon to be unable to consume s64 but still be able to produce it
+for a few specific instructions.</p>
+<section id="minimum-rules-for-scalars">
+<h3>Minimum Rules For Scalars<a class="headerlink" href="#minimum-rules-for-scalars" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>G_ANYEXT must be legal for all inputs from the producer type set and all larger
+outputs from the consumer type set.</p></li>
+<li><p>G_TRUNC must be legal for all inputs from the producer type set and all
+smaller outputs from the consumer type set.</p></li>
+</ul>
+<p>G_ANYEXT, and G_TRUNC have mandatory legality since the GMIR requires a means to
+connect operations with different type sizes. They are usually trivial to support
+since G_ANYEXT doesn’t define the value of the additional bits and G_TRUNC is
+discarding bits. The other conversions can be lowered into G_ANYEXT/G_TRUNC
+with some additional operations that are subject to further legalization. For
+example, G_SEXT can lower to:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">1</span> <span class="o">=</span> <span class="n">G_ANYEXT</span> <span class="o">%</span><span class="mi">0</span>
+<span class="o">%</span><span class="mi">2</span> <span class="o">=</span> <span class="n">G_CONSTANT</span> <span class="o">...</span>
+<span class="o">%</span><span class="mi">3</span> <span class="o">=</span> <span class="n">G_SHL</span> <span class="o">%</span><span class="mi">1</span><span class="p">,</span> <span class="o">%</span><span class="mi">2</span>
+<span class="o">%</span><span class="mi">4</span> <span class="o">=</span> <span class="n">G_ASHR</span> <span class="o">%</span><span class="mi">3</span><span class="p">,</span> <span class="o">%</span><span class="mi">2</span>
+</pre></div>
+</div>
+<p>and the G_CONSTANT/G_SHL/G_ASHR can further lower to other operations or target
+instructions. Similarly, G_FPEXT has no legality requirement since it can lower
+to a G_ANYEXT followed by a target instruction.</p>
+<p>G_MERGE_VALUES and G_UNMERGE_VALUES do not have legality requirements since the
+former can lower to G_ANYEXT and some other legalizable instructions, while the
+latter can lower to some legalizable instructions followed by G_TRUNC.</p>
+</section>
+<section id="minimum-legality-for-vectors">
+<h3>Minimum Legality For Vectors<a class="headerlink" href="#minimum-legality-for-vectors" title="Link to this heading">¶</a></h3>
+<p>Within the vector types, there aren’t any defined conversions in LLVM IR as
+vectors are often converted by reinterpreting the bits or by decomposing the
+vector and reconstituting it as a different type. As such, G_BITCAST is the
+only operation to account for. We generally don’t require that it’s legal
+because it can usually be lowered to COPY (or to nothing using
+replaceAllUses()). However, there are situations where G_BITCAST is non-trivial
+(e.g. little-endian vectors of big-endian data such as on big-endian MIPS MSA and
+big-endian ARM NEON, see <cite>_i_bitcast</cite>). To account for this G_BITCAST must be
+legal for all type combinations that change the bit pattern in the value.</p>
+<p>There are no legality requirements for G_BUILD_VECTOR, or G_BUILD_VECTOR_TRUNC
+since these can be handled by:
+* Declaring them legal.
+* Scalarizing them.
+* Lowering them to G_TRUNC+G_ANYEXT and some legalizable instructions.
+* Lowering them to target instructions which are legal by definition.</p>
+<p>The same reasoning also allows G_UNMERGE_VALUES to lack legality requirements
+for vector inputs.</p>
+</section>
+<section id="minimum-legality-for-pointers">
+<h3>Minimum Legality for Pointers<a class="headerlink" href="#minimum-legality-for-pointers" title="Link to this heading">¶</a></h3>
+<p>There are no minimum rules for pointers since G_INTTOPTR and G_PTRTOINT can
+be selected to a COPY from register class to another by the legalizer.</p>
+</section>
+<section id="minimum-legality-for-operations">
+<h3>Minimum Legality For Operations<a class="headerlink" href="#minimum-legality-for-operations" title="Link to this heading">¶</a></h3>
+<p>The rules for G_ANYEXT, G_MERGE_VALUES, G_BITCAST, G_BUILD_VECTOR,
+G_BUILD_VECTOR_TRUNC, G_CONCAT_VECTORS, G_UNMERGE_VALUES, G_PTRTOINT, and
+G_INTTOPTR have already been noted above. In addition to those, the following
+operations have requirements:</p>
+<ul class="simple">
+<li><p>At least one G_IMPLICIT_DEF must be legal. This is usually trivial as it
+requires no code to be selected.</p></li>
+<li><p>G_PHI must be legal for all types in the producer and consumer typesets. This
+is usually trivial as it requires no code to be selected.</p></li>
+<li><p>At least one G_FRAME_INDEX must be legal</p></li>
+<li><p>At least one G_BLOCK_ADDR must be legal</p></li>
+</ul>
+<p>There are many other operations you’d expect to have legality requirements but
+they can be lowered to target instructions which are legal by definition.</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="RegBankSelect.html" title="RegBankSelect"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="IRTranslator.html" title="IRTranslator"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../Reference.html" >Reference</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >Global Instruction Selection</a> &#187;</li>
+          <li class="nav-item nav-item-3"><a href="Pipeline.html" >Core Pipeline</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Legalizer</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2023, LLVM Project.
+      Last updated on 2023-09-19.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.5.
+    </div>
+  </body>
+</html>

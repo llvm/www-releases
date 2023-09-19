@@ -1,0 +1,360 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+    <title>Fortran Preprocessing &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script src="_static/documentation_options.js?v=7f41d439"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Runtime Descriptors" href="RuntimeDescriptor.html" />
+    <link rel="prev" title="The F18 Parser" href="Parsing.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="RuntimeDescriptor.html" title="Runtime Descriptors"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Parsing.html" title="The F18 Parser"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Fortran Preprocessing</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/issues">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+    <li><a href="https://flang.llvm.org/doxygen/">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/Preprocessing.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+--><section id="fortran-preprocessing">
+<h1>Fortran Preprocessing<a class="headerlink" href="#fortran-preprocessing" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#behavior-common-to-nearly-all-compilers" id="id1">Behavior common to (nearly) all compilers:</a></p></li>
+<li><p><a class="reference internal" href="#behavior-that-is-not-consistent-over-all-extant-compilers-but-which-probably-should-be-uncontroversial" id="id2">Behavior that is not consistent over all extant compilers but which probably should be uncontroversial:</a></p></li>
+<li><p><a class="reference internal" href="#judgement-calls-where-precedents-are-unclear" id="id3">Judgement calls, where precedents are unclear:</a></p></li>
+<li><p><a class="reference internal" href="#behavior-that-few-compilers-properly-support-or-none-but-should" id="id4">Behavior that few compilers properly support (or none), but should:</a></p></li>
+<li><p><a class="reference internal" href="#in-short-a-fortran-preprocessor-should-work-as-if" id="id5">In short, a Fortran preprocessor should work as if:</a></p></li>
+<li><p><a class="reference internal" href="#appendix" id="id6">Appendix</a></p></li>
+</ul>
+</nav>
+<section id="behavior-common-to-nearly-all-compilers">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Behavior common to (nearly) all compilers:</a><a class="headerlink" href="#behavior-common-to-nearly-all-compilers" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Macro and argument names are sensitive to case.</p></li>
+<li><p>Fixed form right margin clipping after column 72 (or 132)
+has precedence over macro name recognition, and also over
+recognition of function-like parentheses and arguments.</p></li>
+<li><p>Fixed form right margin clipping does not apply to directive lines.</p></li>
+<li><p>Macro names are not recognized as such when spaces are inserted
+into their invocations in fixed form.
+This includes spaces at the ends of lines that have been clipped
+at column 72 (or whatever).</p></li>
+<li><p>Text is rescanned after expansion of macros and arguments.</p></li>
+<li><p>Macros are not expanded within quoted character literals or
+quoted FORMAT edit descriptors.</p></li>
+<li><p>Macro expansion occurs before any effective token pasting via fixed form
+space removal.</p></li>
+<li><p>C-like line continuations with backslash-newline are allowed in
+directives, including the definitions of macro bodies.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/*</span> <span class="pre">Old</span> <span class="pre">style</span> <span class="pre">C</span> <span class="pre">comments</span> <span class="pre">*/</span></code> are ignored in directives and
+removed from the bodies of macro definitions.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//</span> <span class="pre">New</span> <span class="pre">style</span> <span class="pre">C</span> <span class="pre">comments</span></code> are not removed, since Fortran has OPERATOR(//).</p></li>
+<li><p>C-like line continuations with backslash-newline can appear in
+old-style C comments in directives.</p></li>
+<li><p>After <code class="docutils literal notranslate"><span class="pre">#define</span> <span class="pre">FALSE</span> <span class="pre">TRUE</span></code>, <code class="docutils literal notranslate"><span class="pre">.FALSE.</span></code> is replaced by <code class="docutils literal notranslate"><span class="pre">.TRUE.</span></code>;
+i.e., tokenization does not hide the names of operators or logical constants.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">#define</span> <span class="pre">KWM</span> <span class="pre">c</span></code> allows the use of <code class="docutils literal notranslate"><span class="pre">KWM</span></code> in column 1 as a fixed form comment
+line indicator.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">#define</span></code> directive intermixed with continuation lines can’t
+define a macro that’s invoked earlier in the same continued statement.</p></li>
+</ul>
+</section>
+<section id="behavior-that-is-not-consistent-over-all-extant-compilers-but-which-probably-should-be-uncontroversial">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Behavior that is not consistent over all extant compilers but which probably should be uncontroversial:</a><a class="headerlink" href="#behavior-that-is-not-consistent-over-all-extant-compilers-but-which-probably-should-be-uncontroversial" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Invoked macro names can straddle a Fortran line continuation.</p></li>
+<li><p>… unless implicit fixed form card padding intervenes; i.e.,
+in fixed form, a continued macro name has to be split at column
+72 (or 132).</p></li>
+<li><p>Comment lines may appear with continuations in a split macro names.</p></li>
+<li><p>Function-like macro invocations can straddle a Fortran fixed form line
+continuation between the name and the left parenthesis, and comment and
+directive lines can be there too.</p></li>
+<li><p>Function-like macro invocations can straddle a Fortran fixed form line
+continuation between the parentheses, and comment lines can be there too.</p></li>
+<li><p>Macros are not expanded within Hollerith constants or Hollerith
+FORMAT edit descriptors.</p></li>
+<li><p>Token pasting with <code class="docutils literal notranslate"><span class="pre">##</span></code> works in function-like macros.</p></li>
+<li><p>Argument stringization with <code class="docutils literal notranslate"><span class="pre">#</span></code> works in function-like macros.</p></li>
+<li><p>Directives can be capitalized (e.g., <code class="docutils literal notranslate"><span class="pre">#DEFINE</span></code>) in fixed form.</p></li>
+<li><p>Fixed form clipping after column 72 or 132 is done before macro expansion,
+not after.</p></li>
+<li><p>C-like line continuation with backslash-newline can appear in the name of
+a keyword-like macro definition.</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">#</span></code> is in column 6 in fixed form, it’s a continuation marker, not a
+directive indicator.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">#define</span> <span class="pre">KWM</span> <span class="pre">!</span></code> allows KWM to signal a comment.</p></li>
+</ul>
+</section>
+<section id="judgement-calls-where-precedents-are-unclear">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Judgement calls, where precedents are unclear:</a><a class="headerlink" href="#judgement-calls-where-precedents-are-unclear" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Expressions in <code class="docutils literal notranslate"><span class="pre">#if</span></code> and <code class="docutils literal notranslate"><span class="pre">#elif</span></code> should support both Fortran and C
+operators; e.g., <code class="docutils literal notranslate"><span class="pre">#if</span> <span class="pre">2</span> <span class="pre">.LT.</span> <span class="pre">3</span></code> should work.</p></li>
+<li><p>If a function-like macro does not close its parentheses, line
+continuation should be assumed.</p></li>
+<li><p>… However, the leading parenthesis has to be on the same line as
+the name of the function-like macro, or on a continuation line thereof.</p></li>
+<li><p>If macros expand to text containing <code class="docutils literal notranslate"><span class="pre">&amp;</span></code>, it doesn’t work as a free form
+line continuation marker.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">#define</span> <span class="pre">c</span> <span class="pre">1</span></code> does not allow a <code class="docutils literal notranslate"><span class="pre">c</span></code> in column 1 to be used as a label
+in fixed form, rather than as a comment line indicator.</p></li>
+<li><p>IBM claims to be ISO C compliant and therefore recognizes trigraph sequences.</p></li>
+<li><p>Fortran comments in macro actual arguments should be respected, on
+the principle that a macro call should work like a function reference.</p></li>
+<li><p>If a <code class="docutils literal notranslate"><span class="pre">#define</span></code> or <code class="docutils literal notranslate"><span class="pre">#undef</span></code> directive appears among continuation
+lines, it may or may not affect text in the continued statement that
+appeared before the directive.</p></li>
+</ul>
+</section>
+<section id="behavior-that-few-compilers-properly-support-or-none-but-should">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Behavior that few compilers properly support (or none), but should:</a><a class="headerlink" href="#behavior-that-few-compilers-properly-support-or-none-but-should" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>A macro invocation can straddle free form continuation lines in all of their
+forms, with continuation allowed in the name, before the arguments, and
+within the arguments.</p></li>
+<li><p>Directives can be capitalized in free form, too.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__VA_ARGS__</span></code> and <code class="docutils literal notranslate"><span class="pre">__VA_OPT__</span></code> work in variadic function-like macros.</p></li>
+</ul>
+</section>
+<section id="in-short-a-fortran-preprocessor-should-work-as-if">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">In short, a Fortran preprocessor should work as if:</a><a class="headerlink" href="#in-short-a-fortran-preprocessor-should-work-as-if" title="Link to this heading">¶</a></h2>
+<ol class="simple">
+<li><p>Fixed form lines are padded up to column 72 (or 132) and clipped thereafter.</p></li>
+<li><p>Fortran comments are removed.</p></li>
+<li><p>C-style line continuations are processed in preprocessing directives.</p></li>
+<li><p>C old-style comments are removed from directives.</p></li>
+<li><p>Fortran line continuations are processed (outside preprocessing directives).
+Line continuation rules depend on source form.
+Comment lines that are enabled compiler directives have their line
+continuations processed.
+Conditional compilation preprocessing directives (e.g., <code class="docutils literal notranslate"><span class="pre">#if</span></code>) may be
+appear among continuation lines, and have their usual effects upon them.</p></li>
+<li><p>Other preprocessing directives are processed and macros expanded.
+Along the way, Fortran <code class="docutils literal notranslate"><span class="pre">INCLUDE</span></code> lines and preprocessor <code class="docutils literal notranslate"><span class="pre">#include</span></code> directives
+are expanded, and all these steps applied recursively to the introduced text.</p></li>
+<li><p>Any Fortran comments created by macro replacement are removed.</p></li>
+</ol>
+<p>Steps 5 and 6 are interleaved with respect to the preprocessing state.
+Conditional compilation preprocessing directives always reflect only the macro
+definition state produced by the active <code class="docutils literal notranslate"><span class="pre">#define</span></code> and <code class="docutils literal notranslate"><span class="pre">#undef</span></code> preprocessing directives
+that precede them.</p>
+<p>If the source form is changed by means of a compiler directive (i.e.,
+<code class="docutils literal notranslate"><span class="pre">!DIR$</span> <span class="pre">FIXED</span></code> or <code class="docutils literal notranslate"><span class="pre">FREE</span></code>) in an included source file, its effects cease
+at the end of that file.</p>
+<p>Last, if the preprocessor is not integrated into the Fortran compiler,
+new Fortran continuation line markers should be introduced into the final
+text.</p>
+<p>OpenMP-style directives that look like comments are not addressed by
+this scheme but are obvious extensions.</p>
+</section>
+<section id="appendix">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Appendix</a><a class="headerlink" href="#appendix" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">N</span></code> in the table below means “not supported”; this doesn’t
+mean a bug, it just means that a particular behavior was
+not observed.
+<code class="docutils literal notranslate"><span class="pre">E</span></code> signifies “error reported”.</p>
+<p>The abbreviation <code class="docutils literal notranslate"><span class="pre">KWM</span></code> stands for “keyword macro” and <code class="docutils literal notranslate"><span class="pre">FLM</span></code> means
+“function-like macro”.</p>
+<p>The first block of tests (<code class="docutils literal notranslate"><span class="pre">pp0*.F</span></code>) are all fixed-form source files;
+the second block (<code class="docutils literal notranslate"><span class="pre">pp1*.F90</span></code>) are free-form source files.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>f18
+| pgfortran
+| | ifort
+| | | gfortran
+| | | | xlf
+| | | | | nagfor
+| | | | | |
+. . . . . .   pp001.F  keyword macros
+. . . . . .   pp002.F  #undef
+. . . . . .   pp003.F  function-like macros
+. . . . . .   pp004.F  KWMs case-sensitive
+. N . N N .   pp005.F  KWM split across continuation, implicit padding
+. N . N N .   pp006.F  ditto, but with intervening *comment line
+N N N N N N   pp007.F  KWM split across continuation, clipped after column 72
+. . . . . .   pp008.F  KWM with spaces in name at invocation NOT replaced
+. N . N N .   pp009.F  FLM call split across continuation, implicit padding
+. N . N N .   pp010.F  ditto, but with intervening *comment line
+N N N N N N   pp011.F  FLM call name split across continuation, clipped
+. N . N N .   pp012.F  FLM call name split across continuation
+. E . N N .   pp013.F  FLM call split between name and (
+. N . N N .   pp014.F  FLM call split between name and (, with intervening *comment
+. E . N N .   pp015.F  FLM call split between name and (, clipped
+. E . N N .   pp016.F  FLM call split between name and ( and in argument
+. . . . . .   pp017.F  KLM rescan
+. . . . . .   pp018.F  KLM rescan with #undef (so rescan is after expansion)
+. . . . . .   pp019.F  FLM rescan
+. . . . . .   pp020.F  FLM expansion of argument
+. . . . . .   pp021.F  KWM NOT expanded in &#39;literal&#39;
+. . . . . .   pp022.F  KWM NOT expanded in &quot;literal&quot;
+. . E E . E   pp023.F  KWM NOT expanded in 9HHOLLERITH literal
+. . . E . .   pp024.F  KWM NOT expanded in Hollerith in FORMAT
+. . . . . .   pp025.F  KWM expansion is before token pasting due to fixed-form space removal
+. . . E . E   pp026.F  ## token pasting works in FLM
+E . . E E .   pp027.F  #DEFINE works in fixed form
+. N . N N .   pp028.F  fixed-form clipping done before KWM expansion on source line
+. . . . . .   pp029.F  \ newline allowed in #define
+. . . . . .   pp030.F  /* C comment */ erased from #define
+E E E E E E   pp031.F   // C++ comment NOT erased from #define
+. . . . . .   pp032.F  /* C comment */ \ newline erased from #define
+. . . . . .   pp033.F  /* C comment \ newline */ erased from #define
+. . . . . N   pp034.F  \ newline allowed in name on KWM definition
+. E . E E .   pp035.F  #if 2 .LT. 3 works
+. . . . . .   pp036.F  #define FALSE TRUE ...  .FALSE. -&gt; .TRUE.
+N N N N N N   pp037.F  fixed-form clipping NOT applied to #define
+. . E . E E   pp038.F  FLM call with closing &#39;)&#39; on next line (not a continuation)
+E . E . E E   pp039.F  FLM call with &#39;(&#39; on next line (not a continuation)
+. . . . . .   pp040.F  #define KWM c, then KWM works as comment line initiator
+E . E . . E   pp041.F  use KWM expansion as continuation indicators
+N N N . . N   pp042.F  #define c 1, then use c as label in fixed-form
+. . . . N .   pp043.F  #define with # in column 6 is a continuation line in fixed-form
+E . . . . .   pp044.F  #define directive amid continuations
+. . . . . .   pp101.F90  keyword macros
+. . . . . .   pp102.F90  #undef
+. . . . . .   pp103.F90  function-like macros
+. . . . . .   pp104.F90  KWMs case-sensitive
+. N N N N N   pp105.F90  KWM call name split across continuation, with leading &amp;
+. N N N N N   pp106.F90  ditto, with &amp; ! comment
+N N E E N .   pp107.F90  KWM call name split across continuation, no leading &amp;, with &amp; ! comment
+N N E E N .   pp108.F90  ditto, but without &amp; ! comment
+. N N N N N   pp109.F90  FLM call name split with leading &amp;
+. N N N N N   pp110.F90  ditto, with &amp; ! comment
+N N E E N .   pp111.F90  FLM call name split across continuation, no leading &amp;, with &amp; ! comment
+N N E E N .   pp112.F90  ditto, but without &amp; ! comment
+. N N N N E   pp113.F90  FLM call split across continuation between name and (, leading &amp;
+. N N N N E   pp114.F90  ditto, with &amp; ! comment, leading &amp;
+N N N N N .   pp115.F90  ditto, with &amp; ! comment, no leading &amp;
+N N N N N .   pp116.F90  FLM call split between name and (, no leading &amp;
+. . . . . .   pp117.F90  KWM rescan
+. . . . . .   pp118.F90  KWM rescan with #undef, proving rescan after expansion
+. . . . . .   pp119.F90  FLM rescan
+. . . . . .   pp120.F90  FLM expansion of argument
+. . . . . .   pp121.F90  KWM NOT expanded in &#39;literal&#39;
+. . . . . .   pp122.F90  KWM NOT expanded in &quot;literal&quot;
+. . E E . E   pp123.F90  KWM NOT expanded in Hollerith literal
+. . E E . E   pp124.F90  KWM NOT expanded in Hollerith in FORMAT
+E . . E E .   pp125.F90  #DEFINE works in free form
+. . . . . .   pp126.F90  \ newline works in #define
+N . E . E E   pp127.F90  FLM call with closing &#39;)&#39; on next line (not a continuation)
+E . E . E E   pp128.F90  FLM call with &#39;(&#39; on next line (not a continuation)
+. . N . . N   pp129.F90  #define KWM !, then KWM works as comment line initiator
+E . E . . E   pp130.F90  #define KWM &amp;, use for continuation w/o pasting (ifort and nag seem to continue #define)
+</pre></div>
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="RuntimeDescriptor.html" title="Runtime Descriptors"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Parsing.html" title="The F18 Parser"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Fortran Preprocessing</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2023, The Flang Team.
+      Last updated on Sep 19, 2023.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.5.
+    </div>
+  </body>
+</html>
