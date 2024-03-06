@@ -1,0 +1,435 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Design: FIR Array operations &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=bc9a48f6"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="FIR Language Reference" href="FIRLangRef.html" />
+    <link rel="prev" title="A first take on Fortran 202X features for LLVM Flang" href="F202X.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="FIRLangRef.html" title="FIR Language Reference"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="F202X.html" title="A first take on Fortran 202X features for LLVM Flang"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Design: FIR Array operations</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/issues">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+    <li><a href="https://flang.llvm.org/doxygen/">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/FIRArrayOperations.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="design-fir-array-operations">
+<h1>Design: FIR Array operations<a class="headerlink" href="#design-fir-array-operations" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#general" id="id1">General</a></p></li>
+<li><p><a class="reference internal" href="#array-load" id="id2">array_load</a></p></li>
+</ul>
+</nav>
+<section id="general">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">General</a><a class="headerlink" href="#general" title="Permalink to this heading">¶</a></h2>
+<p>The array operations in FIR model the copy-in/copy-out semantics over Fortran
+statements.</p>
+<p>Fortran language semantics sometimes require the compiler to make a temporary
+copy of an array or array slice. Situations where this can occur include:</p>
+<ul class="simple">
+<li><p>Passing a non-contiguous array to a procedure that does not declare it as
+assumed-shape.</p></li>
+<li><p>Array expressions, especially those involving <code class="docutils literal notranslate"><span class="pre">RESHAPE</span></code>, <code class="docutils literal notranslate"><span class="pre">PACK</span></code>, and <code class="docutils literal notranslate"><span class="pre">MERGE</span></code>.</p></li>
+<li><p>Assignments of arrays where the array appears on both the left and right-hand
+sides of the assignment.</p></li>
+<li><p>Assignments of <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> arrays.</p></li>
+</ul>
+<p>There are currently the following operations:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.array_load</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.array_merge_store</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.array_fetch</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.array_update</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.array_access</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.array_amend</span></code></p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">array_load</span></code>(s) and <code class="docutils literal notranslate"><span class="pre">array_merge_store</span></code> are a pairing that brackets the lifetime
+of the array copies.</p>
+<p><code class="docutils literal notranslate"><span class="pre">array_fetch</span></code> and <code class="docutils literal notranslate"><span class="pre">array_update</span></code> are defined to work as getter/setter pairs on
+values of elements from loaded array copies. These have “GEP-like” syntax and
+semantics.</p>
+<p>Fortran arrays are implicitly memory bound as are some other Fortran type/kind
+entities. For entities that can be atomically promoted to the value domain,
+we use <code class="docutils literal notranslate"><span class="pre">array_fetch</span></code> and <code class="docutils literal notranslate"><span class="pre">array_update</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">array_access</span></code> and <code class="docutils literal notranslate"><span class="pre">array_amend</span></code> are defined to work as getter/setter pairs on
+references to elements in loaded array copies. <code class="docutils literal notranslate"><span class="pre">array_access</span></code> has “GEP-like”
+syntax. <code class="docutils literal notranslate"><span class="pre">array_amend</span></code> annotates which loaded array copy is being written to.
+It is invalid to update an array copy without <code class="docutils literal notranslate"><span class="pre">array_amend</span></code>; doing so will
+result in undefined behavior.
+For those type/kinds that cannot be promoted to values, we must leave them in a
+memory reference domain, and we use <code class="docutils literal notranslate"><span class="pre">array_access</span></code> and <code class="docutils literal notranslate"><span class="pre">array_amend</span></code>.</p>
+</section>
+<section id="array-load">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">array_load</a><a class="headerlink" href="#array-load" title="Permalink to this heading">¶</a></h2>
+<p>This operation taken with <code class="docutils literal notranslate"><span class="pre">array_merge_store</span></code> captures Fortran’s
+copy-in/copy-out semantics. One way to think of this is that array_load
+creates a snapshot copy of the entire array. This copy can then be used
+as the “original value” of the array while the array’s new value is
+computed. The <code class="docutils literal notranslate"><span class="pre">array_merge_store</span></code> operation is the copy-out semantics, which
+merge the updates with the original array value to produce the final array
+result. This abstracts the copy operations as opposed to always creating
+copies or requiring dependence analysis be performed on the syntax trees
+and before lowering to the IR.</p>
+<p>Load an entire array as a single SSA value.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">o</span><span class="p">:</span><span class="n">n</span><span class="p">,</span><span class="n">p</span><span class="p">:</span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="p">...</span>
+</pre></div>
+</div>
+<p>One can use <code class="docutils literal notranslate"><span class="pre">fir.array_load</span></code> to produce an ssa-value that captures an
+immutable value of the entire array <code class="docutils literal notranslate"><span class="pre">a</span></code>, as in the Fortran array expression
+shown above. Subsequent changes to the memory containing the array do not
+alter its composite value. This operation lets one load an array as a
+value while applying a runtime shape, shift, or slice to the memory
+reference, and its semantics guarantee immutability.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%s = fir.shape_shift %lb1, %ex1, %lb2, %ex2 : (index, index, index, index) -&gt; !fir.shapeshift&lt;2&gt;
+// load the entire array &#39;a&#39;
+%v = fir.array_load %a(%s) : (!fir.ref&lt;!fir.array&lt;?x?xf32&gt;&gt;, !fir.shapeshift&lt;2&gt;) -&gt; !fir.array&lt;?x?xf32&gt;
+// a fir.store here into array %a does not change %v
+</pre></div>
+</div>
+</section>
+</section>
+<section id="array-merge-store">
+<h1>array_merge_store<a class="headerlink" href="#array-merge-store" title="Permalink to this heading">¶</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">array_merge_store</span></code> operation stores a merged array value to memory.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+</pre></div>
+</div>
+<p>One can use <code class="docutils literal notranslate"><span class="pre">fir.array_merge_store</span></code> to merge/copy the value of <code class="docutils literal notranslate"><span class="pre">a</span></code> in an
+array expression as shown above.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  %v = fir.array_load %a(%shape) : ...
+  %r = fir.array_update %v, %f, %i, %j : (!fir.array&lt;?x?xf32&gt;, f32, index, index) -&gt; !fir.array&lt;?x?xf32&gt;
+  fir.array_merge_store %v, %r to %a : !fir.ref&lt;!fir.array&lt;?x?xf32&gt;&gt;
+</pre></div>
+</div>
+<p>This operation merges the original loaded array value, <code class="docutils literal notranslate"><span class="pre">%v</span></code>, with the
+chained updates, <code class="docutils literal notranslate"><span class="pre">%r</span></code>, and stores the result to the array at address, <code class="docutils literal notranslate"><span class="pre">%a</span></code>.</p>
+<p>This operation taken with <code class="docutils literal notranslate"><span class="pre">array_load</span></code>’s captures Fortran’s
+copy-in/copy-out semantics. The first operands of <code class="docutils literal notranslate"><span class="pre">array_merge_store</span></code> is the
+result of the initial <code class="docutils literal notranslate"><span class="pre">array_load</span></code> operation. While this value could be
+retrieved by reference chasing through the different array operations it is
+useful to have it on hand directly for analysis passes since this directly
+defines the “bounds” of the Fortran statement represented by these operations.
+The intention is to allow copy-in/copy-out regions to be easily delineated,
+analyzed, and optimized.</p>
+<section id="array-fetch">
+<h2>array_fetch<a class="headerlink" href="#array-fetch" title="Permalink to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">array_fetch</span></code> operation fetches the value of an element in an array value.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">r</span><span class="p">,</span><span class="n">s</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">...</span>
+</pre></div>
+</div>
+<p>One can use <code class="docutils literal notranslate"><span class="pre">fir.array_fetch</span></code> to fetch the (implied) value of <code class="docutils literal notranslate"><span class="pre">a(i,j)</span></code> in
+an array expression as shown above. It can also be used to extract the
+element <code class="docutils literal notranslate"><span class="pre">a(r,s+1)</span></code> in the second expression.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  %s = fir.shape %n, %m : (index, index) -&gt; !fir.shape&lt;2&gt;
+  // load the entire array &#39;a&#39;
+  %v = fir.array_load %a(%s) : (!fir.ref&lt;!fir.array&lt;?x?xf32&gt;&gt;, !fir.shape&lt;2&gt;) -&gt; !fir.array&lt;?x?xf32&gt;
+  // fetch the value of one of the array value&#39;s elements
+  %1 = fir.array_fetch %v, %i, %j : (!fir.array&lt;?x?xf32&gt;, index, index) -&gt; f32
+</pre></div>
+</div>
+<p>It is only possible to use <code class="docutils literal notranslate"><span class="pre">array_fetch</span></code> on an <code class="docutils literal notranslate"><span class="pre">array_load</span></code> result value or a
+value that can be trace back transitively to an <code class="docutils literal notranslate"><span class="pre">array_load</span></code> as the dominating
+source. Other array operation such as <code class="docutils literal notranslate"><span class="pre">array_update</span></code> can be in between.</p>
+</section>
+<section id="array-update">
+<h2>array_update<a class="headerlink" href="#array-update" title="Permalink to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">array_update</span></code> operation is used to update the value of an element in an
+array value. A new array value is returned where all element values of the input
+array are identical except for the selected element which is the value passed in
+the update.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+</pre></div>
+</div>
+<p>One can use <code class="docutils literal notranslate"><span class="pre">fir.array_update</span></code> to update the (implied) value of <code class="docutils literal notranslate"><span class="pre">a(i,j)</span></code>
+in an array expression as shown above.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  %s = fir.shape %n, %m : (index, index) -&gt; !fir.shape&lt;2&gt;
+  // load the entire array &#39;a&#39;
+  %v = fir.array_load %a(%s) : (!fir.ref&lt;!fir.array&lt;?x?xf32&gt;&gt;, !fir.shape&lt;2&gt;) -&gt; !fir.array&lt;?x?xf32&gt;
+  // update the value of one of the array value&#39;s elements
+  // %r_{ij} = %f  if (i,j) = (%i,%j),   %v_{ij} otherwise
+  %r = fir.array_update %v, %f, %i, %j : (!fir.array&lt;?x?xf32&gt;, f32, index, index) -&gt; !fir.array&lt;?x?xf32&gt;
+  fir.array_merge_store %v, %r to %a : !fir.ref&lt;!fir.array&lt;?x?xf32&gt;&gt;
+</pre></div>
+</div>
+<p>An array value update behaves as if a mapping function from the indices
+to the new value has been added, replacing the previous mapping. These
+mappings can be added to the ssa-value, but will not be materialized in
+memory until the <code class="docutils literal notranslate"><span class="pre">fir.array_merge_store</span></code> is performed.
+<code class="docutils literal notranslate"><span class="pre">fir.array_update</span></code> can be seen as an array access with a notion that the array
+will be changed at the accessed position when <code class="docutils literal notranslate"><span class="pre">fir.array_merge_store</span></code> is
+performed.</p>
+</section>
+<section id="array-access">
+<h2>array_access<a class="headerlink" href="#array-access" title="Permalink to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">array_access</span></code> provides a reference to a single element from an array value.
+This is <em>not</em> a view in the immutable array, otherwise it couldn’t be stored to.
+It can be see as a logical copy of the element and its position in the array.
+Tis reference can be written to and modified withoiut changing the original
+array.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">array_access</span></code> operation is used to fetch the memory reference of an element
+in an array value.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">r</span><span class="p">,</span><span class="n">s</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">...</span>
+</pre></div>
+</div>
+<p>One can use <code class="docutils literal notranslate"><span class="pre">fir.array_access</span></code> to recover the implied memory reference to
+the element <code class="docutils literal notranslate"><span class="pre">a(i,j)</span></code> in an array expression <code class="docutils literal notranslate"><span class="pre">a</span></code> as shown above. It can also
+be used to recover the reference element <code class="docutils literal notranslate"><span class="pre">a(r,s+1)</span></code> in the second
+expression.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  %s = fir.shape %n, %m : (index, index) -&gt; !fir.shape&lt;2&gt;
+  // load the entire array &#39;a&#39;
+  %v = fir.array_load %a(%s) : (!fir.ref&lt;!fir.array&lt;?x?xf32&gt;&gt;, !fir.shape&lt;2&gt;) -&gt; !fir.array&lt;?x?xf32&gt;
+  // fetch the value of one of the array value&#39;s elements
+  %1 = fir.array_access %v, %i, %j : (!fir.array&lt;?x?xf32&gt;, index, index) -&gt; !fir.ref&lt;f32&gt;
+</pre></div>
+</div>
+<p>It is only possible to use <code class="docutils literal notranslate"><span class="pre">array_access</span></code> on an <code class="docutils literal notranslate"><span class="pre">array_load</span></code> result value or a
+value that can be trace back transitively to an <code class="docutils literal notranslate"><span class="pre">array_load</span></code> as the dominating
+source. Other array operation such as <code class="docutils literal notranslate"><span class="pre">array_amend</span></code> can be in between.</p>
+<p><code class="docutils literal notranslate"><span class="pre">array_access</span></code> if mainly used with <code class="docutils literal notranslate"><span class="pre">character</span></code>’s arrays and arrays of derived
+types where because they might have a non-compile time sizes that would be
+useless too load entirely or too big to load.</p>
+<p>Here is a simple example with a <code class="docutils literal notranslate"><span class="pre">character</span></code> array assignment.</p>
+<p>Fortran</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">subroutine</span> <span class="n">foo</span><span class="p">(</span><span class="n">c1</span><span class="p">,</span> <span class="n">c2</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+  <span class="n">integer</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span> <span class="p">::</span> <span class="n">n</span>
+  <span class="n">character</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="p">::</span> <span class="n">c1</span><span class="p">(:),</span> <span class="n">c2</span><span class="p">(:)</span>
+  <span class="n">c1</span> <span class="o">=</span> <span class="n">c2</span>
+<span class="n">end</span> <span class="n">subroutine</span>
+</pre></div>
+</div>
+<p>It results in this cleaned-up FIR:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func @_QPfoo(%arg0: !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, %arg1: !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, %arg2: !fir.ref&lt;i64&gt;) {
+    %0 = fir.load %arg2 : !fir.ref&lt;i64&gt;
+    %c0 = arith.constant 0 : index
+    %1:3 = fir.box_dims %arg0, %c0 : (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, index) -&gt; (index, index, index)
+    %2 = fir.array_load %arg0 : (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;) -&gt; !fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;
+    %3 = fir.array_load %arg1 : (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;) -&gt; !fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;
+    %c1 = arith.constant 1 : index
+    %4 = arith.subi %1#1, %c1 : index
+    %5 = fir.do_loop %arg3 = %c0 to %4 step %c1 unordered iter_args(%arg4 = %2) -&gt; (!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;) {
+      %6 = fir.array_access %3, %arg3 : (!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;, index) -&gt; !fir.ref&lt;!fir.char&lt;1,?&gt;&gt;
+      %7 = fir.array_access %arg4, %arg3 : (!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;, index) -&gt; !fir.ref&lt;!fir.char&lt;1,?&gt;&gt;
+      %false = arith.constant false
+      %8 = fir.convert %7 : (!fir.ref&lt;!fir.char&lt;1,?&gt;&gt;) -&gt; !fir.ref&lt;i8&gt;
+      %9 = fir.convert %6 : (!fir.ref&lt;!fir.char&lt;1,?&gt;&gt;) -&gt; !fir.ref&lt;i8&gt;
+      fir.call @llvm.memmove.p0i8.p0i8.i64(%8, %9, %0, %false) : (!fir.ref&lt;i8&gt;, !fir.ref&lt;i8&gt;, i64, i1) -&gt; ()
+      %10 = fir.array_amend %arg4, %7 : (!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;, !fir.ref&lt;!fir.char&lt;1,?&gt;&gt;) -&gt; !fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;
+      fir.result %10 : !fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;
+    }
+    fir.array_merge_store %2, %5 to %arg0 : !fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;, !fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;, !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;
+    return
+  }
+  func private @llvm.memmove.p0i8.p0i8.i64(!fir.ref&lt;i8&gt;, !fir.ref&lt;i8&gt;, i64, i1)
+}
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">fir.array_access</span></code> and <code class="docutils literal notranslate"><span class="pre">fir.array_amend</span></code> split the two purposes of
+<code class="docutils literal notranslate"><span class="pre">fir.array_update</span></code> into two distinct operations to work on type/kind that must
+reside in the memory reference domain. <code class="docutils literal notranslate"><span class="pre">fir.array_access</span></code> captures the array
+access semantics and <code class="docutils literal notranslate"><span class="pre">fir.array_amend</span></code> denotes which <code class="docutils literal notranslate"><span class="pre">fir.array_access</span></code> is the
+lhs.</p>
+<p>We do not want to start loading the entire <code class="docutils literal notranslate"><span class="pre">!fir.ref&lt;!fir.char&lt;1,?&gt;&gt;</span></code> here since
+it has dynamic length, and even if constant, could be too long to do so.</p>
+</section>
+<section id="array-amend">
+<h2>array_amend<a class="headerlink" href="#array-amend" title="Permalink to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">array_amend</span></code> operation marks an array value as having been changed via a
+reference obtain by an <code class="docutils literal notranslate"><span class="pre">array_access</span></code>. It acts as a logical transaction log
+that is used to merge the final result back with an <code class="docutils literal notranslate"><span class="pre">array_merge_store</span></code>
+operation.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  // fetch the value of one of the array value&#39;s elements
+  %1 = fir.array_access %v, %i, %j : (!fir.array&lt;?x?xT&gt;, index, index) -&gt; !fir.ref&lt;T&gt;
+  // modify the element by storing data using %1 as a reference
+  %2 = ... %1 ...
+  // mark the array value
+  %new_v = fir.array_amend %v, %2 : (!fir.array&lt;?x?xT&gt;, !fir.ref&lt;T&gt;) -&gt; !fir.array&lt;?x?xT&gt;
+</pre></div>
+</div>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Permalink to this heading">¶</a></h2>
+<p>Here is an example of a FIR code using several array operations together. The
+example below is a simplified version of the FIR code comiing from the
+following Fortran code snippet.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">s</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="n">l</span><span class="p">,</span><span class="n">u</span><span class="p">)</span>
+<span class="w">  </span><span class="k">type </span><span class="n">t</span>
+<span class="w">    </span><span class="kt">integer </span><span class="n">m</span>
+<span class="w">  </span><span class="k">end type </span><span class="n">t</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(:)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l</span><span class="p">,</span><span class="w"> </span><span class="n">u</span>
+<span class="w">  </span><span class="k">forall</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="n">l</span><span class="p">:</span><span class="n">u</span><span class="p">)</span>
+<span class="w">    </span><span class="n">a</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="n">u</span><span class="o">-</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end forall</span>
+<span class="k">end</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func @_QPs(%arg0: !fir.box&lt;!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;&gt;, %arg1: !fir.ref&lt;i32&gt;, %arg2: !fir.ref&lt;i32&gt;) {
+  %l = fir.load %arg1 : !fir.ref&lt;i32&gt;
+  %l_index = fir.convert %l : (i32) -&gt; index
+  %u = fir.load %arg2 : !fir.ref&lt;i32&gt;
+  %u_index = fir.convert %u : (i32) -&gt; index
+  %c1 = arith.constant 1 : index
+  // This is the &quot;copy-in&quot; array used on the RHS of the expression. It will be indexed into and loaded at each iteration.
+  %array_a_src = fir.array_load %arg0 : (!fir.box&lt;!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;&gt;) -&gt; !fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+
+  // This is the &quot;seed&quot; for the &quot;copy-out&quot; array on the LHS. It&#39;ll flow from iteration to iteration and gets
+  // updated at each iteration.
+  %array_a_dest_init = fir.array_load %arg0 : (!fir.box&lt;!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;&gt;) -&gt; !fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+
+  %array_a_final = fir.do_loop %i = %l_index to %u_index step %c1 unordered iter_args(%array_a_dest = %array_a_dest_init) -&gt; (!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;) {
+    // Compute indexing for the RHS and array the element.
+    %u_minus_i = arith.subi %u_index, %i : index // u-i
+    %u_minus_i_plus_one = arith.addi %u_minus_i, %c1: index // u-i+1
+    %a_src_ref = fir.array_access %array_a_src, %u_minus_i_plus_one {Fortran.offsets} : (!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;, index) -&gt; !fir.ref&lt;!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+    %a_src_elt = fir.load %a_src_ref : !fir.ref&lt;!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+
+    // Get the reference to the element in the array on the LHS
+    %a_dst_ref = fir.array_access %array_a_dest, %i {Fortran.offsets} : (!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;, index) -&gt; !fir.ref&lt;!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+
+    // Store the value, and update the array
+    fir.store %a_src_elt to %a_dst_ref : !fir.ref&lt;!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+    %updated_array_a = fir.array_amend %array_a_dest, %a_dst_ref : (!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;, !fir.ref&lt;!fir.type&lt;_QFsTt{m:i32}&gt;&gt;) -&gt; !fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+
+    // Forward the current updated array to the next iteration.
+    fir.result %updated_array_a : !fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;
+  }
+  // Store back the result by merging the initial value loaded before the loop
+  // with the final one produced by the loop.
+  fir.array_merge_store %array_a_dest_init, %array_a_final to %arg0 : !fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;, !fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;, !fir.box&lt;!fir.array&lt;?x!fir.type&lt;_QFsTt{m:i32}&gt;&gt;&gt;
+  return
+}
+</pre></div>
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="FIRLangRef.html" title="FIR Language Reference"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="F202X.html" title="A first take on Fortran 202X features for LLVM Flang"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Design: FIR Array operations</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2024, The Flang Team.
+      Last updated on Mar 06, 2024.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

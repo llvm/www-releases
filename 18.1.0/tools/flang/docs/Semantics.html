@@ -1,0 +1,335 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Semantic Analysis &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=bc9a48f6"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Fortran 2018 Grammar" href="f2018-grammar.html" />
+    <link rel="prev" title="The derived type runtime information table" href="RuntimeTypeInfo.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="f2018-grammar.html" title="Fortran 2018 Grammar"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="RuntimeTypeInfo.html" title="The derived type runtime information table"
+             accesskey="P">previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Semantic Analysis</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/issues">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+    <li><a href="https://flang.llvm.org/doxygen/">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/Semantics.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+-->
+<section id="semantic-analysis">
+<h1>Semantic Analysis<a class="headerlink" href="#semantic-analysis" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#phases-of-semantic-analysis" id="id1">Phases of Semantic Analysis</a></p>
+<ul>
+<li><p><a class="reference internal" href="#validate-labels" id="id2">Validate labels</a></p></li>
+<li><p><a class="reference internal" href="#rewrite-do-loops" id="id3">Rewrite DO loops</a></p></li>
+<li><p><a class="reference internal" href="#name-resolution" id="id4">Name resolution</a></p></li>
+<li><p><a class="reference internal" href="#rewrite-parse-tree" id="id5">Rewrite parse tree</a></p></li>
+<li><p><a class="reference internal" href="#expression-analysis" id="id6">Expression analysis</a></p></li>
+<li><p><a class="reference internal" href="#statement-semantics" id="id7">Statement semantics</a></p></li>
+<li><p><a class="reference internal" href="#initialization-processing" id="id8">Initialization processing</a></p></li>
+<li><p><a class="reference internal" href="#declaration-checking" id="id9">Declaration checking</a></p></li>
+<li><p><a class="reference internal" href="#write-module-files" id="id10">Write module files</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<p>The semantic analysis pass determines if a syntactically correct Fortran
+program is is legal by enforcing the constraints of the language.</p>
+<p>The input is a parse tree with a <code class="docutils literal notranslate"><span class="pre">Program</span></code> node at the root;
+and a “cooked” character stream, a contiguous stream of characters
+containing a normalized form of the Fortran source.</p>
+<p>The semantic analysis pass takes a parse tree for a syntactically
+correct Fortran program and determines whether it is legal by enforcing
+the constraints of the language.</p>
+<p>If the program is not legal, the results of the semantic pass will be a list of
+errors associated with the program.</p>
+<p>If the program is legal, the semantic pass will produce a (possibly modified)
+parse tree for the semantically correct program with each name mapped to a symbol
+and each expression fully analyzed.</p>
+<p>All user errors are detected either prior to or during semantic analysis.
+After it completes successfully the program should compile with no error messages.
+There may still be warnings or informational messages.</p>
+<section id="phases-of-semantic-analysis">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Phases of Semantic Analysis</a><a class="headerlink" href="#phases-of-semantic-analysis" title="Permalink to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#validate-labels">Validate labels</a> -
+Check all constraints on labels and branches</p></li>
+<li><p><a class="reference internal" href="#rewrite-do-loops">Rewrite DO loops</a> -
+Convert all occurrences of <code class="docutils literal notranslate"><span class="pre">LabelDoStmt</span></code> to <code class="docutils literal notranslate"><span class="pre">DoConstruct</span></code>.</p></li>
+<li><p><a class="reference internal" href="#name-resolution">Name resolution</a> -
+Analyze names and declarations, build a tree of Scopes containing Symbols,
+and fill in the <code class="docutils literal notranslate"><span class="pre">Name::symbol</span></code> data member in the parse tree</p></li>
+<li><p><a class="reference internal" href="#rewrite-parse-tree">Rewrite parse tree</a> -
+Fix incorrect parses based on symbol information</p></li>
+<li><p><a class="reference internal" href="#expression-analysis">Expression analysis</a> -
+Analyze all expressions in the parse tree and fill in <code class="docutils literal notranslate"><span class="pre">Expr::typedExpr</span></code> and
+<code class="docutils literal notranslate"><span class="pre">Variable::typedExpr</span></code> with analyzed expressions; fix incorrect parses
+based on the result of this analysis</p></li>
+<li><p><a class="reference internal" href="#statement-semantics">Statement semantics</a> -
+Perform remaining semantic checks on the execution parts of subprograms</p></li>
+<li><p><a class="reference internal" href="#write-module-files">Write module files</a> -
+If no errors have occurred, write out <code class="docutils literal notranslate"><span class="pre">.mod</span></code> files for modules and submodules</p></li>
+</ol>
+<p>If phase 1 or phase 2 encounter an error on any of the program units,
+compilation terminates. Otherwise, phases 3-6 are all performed even if
+errors occur.
+Module files are written (phase 7) only if there are no errors.</p>
+<section id="validate-labels">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink">Validate labels</a><a class="headerlink" href="#validate-labels" title="Permalink to this heading">¶</a></h3>
+<p>Perform semantic checks related to labels and branches:</p>
+<ul class="simple">
+<li><p>check that any labels that are referenced are defined and in scope</p></li>
+<li><p>check branches into loop bodies</p></li>
+<li><p>check that labeled <code class="docutils literal notranslate"><span class="pre">DO</span></code> loops are properly nested</p></li>
+<li><p>check labels in data transfer statements</p></li>
+</ul>
+</section>
+<section id="rewrite-do-loops">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Rewrite DO loops</a><a class="headerlink" href="#rewrite-do-loops" title="Permalink to this heading">¶</a></h3>
+<p>This phase normalizes the parse tree by removing all unstructured <code class="docutils literal notranslate"><span class="pre">DO</span></code> loops
+and replacing them with <code class="docutils literal notranslate"><span class="pre">DO</span></code> constructs.</p>
+</section>
+<section id="name-resolution">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Name resolution</a><a class="headerlink" href="#name-resolution" title="Permalink to this heading">¶</a></h3>
+<p>The name resolution phase walks the parse tree and constructs the symbol table.</p>
+<p>The symbol table consists of a tree of <code class="docutils literal notranslate"><span class="pre">Scope</span></code> objects rooted at the global scope.
+The global scope is owned by the <code class="docutils literal notranslate"><span class="pre">SemanticsContext</span></code> object.
+It contains a <code class="docutils literal notranslate"><span class="pre">Scope</span></code> for each program unit in the compilation.</p>
+<p>Each <code class="docutils literal notranslate"><span class="pre">Scope</span></code> in the scope tree contains child scopes representing other scopes
+lexically nested in it.
+Each <code class="docutils literal notranslate"><span class="pre">Scope</span></code> also contains a map of <code class="docutils literal notranslate"><span class="pre">CharBlock</span></code> to <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> representing names
+declared in that scope. (All names in the symbol table are represented as
+<code class="docutils literal notranslate"><span class="pre">CharBlock</span></code> objects, i.e. as substrings of the cooked character stream.)</p>
+<p>All <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> objects are owned by the symbol table data structures.
+They should be accessed as <code class="docutils literal notranslate"><span class="pre">Symbol</span> <span class="pre">*</span></code> or <code class="docutils literal notranslate"><span class="pre">Symbol</span> <span class="pre">&amp;</span></code> outside of the symbol
+table classes as they can’t be created, copied, or moved.
+The <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> class has functions and data common across all symbols, and a
+<code class="docutils literal notranslate"><span class="pre">details</span></code> field that contains more information specific to that type of symbol.
+Many symbols also have types, represented by <code class="docutils literal notranslate"><span class="pre">DeclTypeSpec</span></code>.
+Types are also owned by scopes.</p>
+<p>Name resolution happens on the parse tree in this order:</p>
+<ol class="arabic simple">
+<li><p>Process the specification of a program unit:</p>
+<ol class="arabic simple">
+<li><p>Create a new scope for the unit</p></li>
+<li><p>Create a symbol for each contained subprogram containing just the name</p></li>
+<li><p>Process the opening statement of the unit (<code class="docutils literal notranslate"><span class="pre">ModuleStmt</span></code>, <code class="docutils literal notranslate"><span class="pre">FunctionStmt</span></code>, etc.)</p></li>
+<li><p>Process the specification part of the unit</p></li>
+</ol>
+</li>
+<li><p>Apply the same process recursively to nested subprograms</p></li>
+<li><p>Process the execution part of the program unit</p></li>
+<li><p>Process the execution parts of nested subprograms recursively</p></li>
+</ol>
+<p>After the completion of this phase, every <code class="docutils literal notranslate"><span class="pre">Name</span></code> corresponds to a <code class="docutils literal notranslate"><span class="pre">Symbol</span></code>
+unless an error occurred.</p>
+</section>
+<section id="rewrite-parse-tree">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Rewrite parse tree</a><a class="headerlink" href="#rewrite-parse-tree" title="Permalink to this heading">¶</a></h3>
+<p>The parser cannot build a completely correct parse tree without symbol information.
+This phase corrects mis-parses based on symbols:</p>
+<ul class="simple">
+<li><p>Array element assignments may be parsed as statement functions: <code class="docutils literal notranslate"><span class="pre">a(i)</span> <span class="pre">=</span> <span class="pre">...</span></code></p></li>
+<li><p>Namelist group names without <code class="docutils literal notranslate"><span class="pre">NML=</span></code> may be parsed as format expressions</p></li>
+<li><p>A file unit number expression may be parsed as a character variable</p></li>
+</ul>
+<p>This phase also produces an internal error if it finds a <code class="docutils literal notranslate"><span class="pre">Name</span></code> that does not
+have its <code class="docutils literal notranslate"><span class="pre">symbol</span></code> data member filled in. This error is suppressed if other
+errors have occurred because in that case a <code class="docutils literal notranslate"><span class="pre">Name</span></code> corresponding to an erroneous
+symbol may not be resolved.</p>
+</section>
+<section id="expression-analysis">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Expression analysis</a><a class="headerlink" href="#expression-analysis" title="Permalink to this heading">¶</a></h3>
+<p>Expressions that occur in the specification part are analyzed during name
+resolution, for example, initial values, array bounds, type parameters.
+Any remaining expressions are analyzed in this phase.</p>
+<p>For each <code class="docutils literal notranslate"><span class="pre">Variable</span></code> and top-level <code class="docutils literal notranslate"><span class="pre">Expr</span></code> (i.e. one that is not nested below
+another <code class="docutils literal notranslate"><span class="pre">Expr</span></code> in the parse tree) the analyzed form of the expression is saved
+in the <code class="docutils literal notranslate"><span class="pre">typedExpr</span></code> data member. After this phase has completed, the analyzed
+expression can be accessed using <code class="docutils literal notranslate"><span class="pre">semantics::GetExpr()</span></code>.</p>
+<p>This phase also corrects mis-parses based on the result of expression analysis:</p>
+<ul class="simple">
+<li><p>An expression like <code class="docutils literal notranslate"><span class="pre">a(b)</span></code> is parsed as a function reference but may need
+to be rewritten to an array element reference (if <code class="docutils literal notranslate"><span class="pre">a</span></code> is an object entity)
+or to a structure constructor (if <code class="docutils literal notranslate"><span class="pre">a</span></code> is a derive type)</p></li>
+<li><p>An expression like <code class="docutils literal notranslate"><span class="pre">a(b:c)</span></code> is parsed as an array section but may need to be
+rewritten as a substring if <code class="docutils literal notranslate"><span class="pre">a</span></code> is an object with type CHARACTER</p></li>
+</ul>
+</section>
+<section id="statement-semantics">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Statement semantics</a><a class="headerlink" href="#statement-semantics" title="Permalink to this heading">¶</a></h3>
+<p>Multiple independent checkers driven by the <code class="docutils literal notranslate"><span class="pre">SemanticsVisitor</span></code> framework
+perform the remaining semantic checks.
+By this phase, all names and expressions that can be successfully resolved
+have been. But there may be names without symbols or expressions without
+analyzed form if errors occurred earlier.</p>
+</section>
+<section id="initialization-processing">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Initialization processing</a><a class="headerlink" href="#initialization-processing" title="Permalink to this heading">¶</a></h3>
+<p>Fortran supports many means of specifying static initializers for variables,
+object pointers, and procedure pointers, as well as default initializers for
+derived type object components, pointers, and type parameters.</p>
+<p>Non-pointer static initializers of variables and named constants are
+scanned, analyzed, folded, scalar-expanded, and validated as they are
+traversed during declaration processing in name resolution.
+So are the default initializers of non-pointer object components in
+non-parameterized derived types.
+Name constant arrays with implied shapes take their actual shape from
+the initialization expression.</p>
+<p>Default initializers of non-pointer components and type parameters
+in distinct parameterized
+derived type instantiations are similarly processed as those instances
+are created, as their expressions may depend on the values of type
+parameters.
+Error messages produced during parameterized derived type instantiation
+are decorated with contextual attachments that point to the declarations
+or other type specifications that caused the instantiation.</p>
+<p>Static initializations in <code class="docutils literal notranslate"><span class="pre">DATA</span></code> statements are collected, validated,
+and converted into static initialization in the symbol table, as if
+the initialized objects had used the newer style of static initialization
+in their entity declarations.</p>
+<p>All statically initialized pointers, and default component initializers for
+pointers, are processed late in name resolution after all specification parts
+have been traversed.
+This allows for forward references even in the presence of <code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">NONE</span></code>.
+Object pointer initializers in parameterized derived type instantiations are
+also cloned and folded at this late stage.
+Validation of pointer initializers takes place later in declaration
+checking (below).</p>
+</section>
+<section id="declaration-checking">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Declaration checking</a><a class="headerlink" href="#declaration-checking" title="Permalink to this heading">¶</a></h3>
+<p>Whenever possible, the enforcement of constraints and “shalls” pertaining to
+properties of symbols is deferred to a single read-only pass over the symbol table
+that takes place after all name resolution and typing is complete.</p>
+</section>
+<section id="write-module-files">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Write module files</a><a class="headerlink" href="#write-module-files" title="Permalink to this heading">¶</a></h3>
+<p>Separate compilation information is written out on successful compilation
+of modules and submodules. These are used as input to name resolution
+in program units that <code class="docutils literal notranslate"><span class="pre">USE</span></code> the modules.</p>
+<p>Module files are stripped down Fortran source for the module.
+Parts that aren’t needed to compile dependent program units (e.g. action statements)
+are omitted.</p>
+<p>The module file for module <code class="docutils literal notranslate"><span class="pre">m</span></code> is named <code class="docutils literal notranslate"><span class="pre">m.mod</span></code> and the module file for
+submodule <code class="docutils literal notranslate"><span class="pre">s</span></code> of module <code class="docutils literal notranslate"><span class="pre">m</span></code> is named <code class="docutils literal notranslate"><span class="pre">m-s.mod</span></code>.</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="f2018-grammar.html" title="Fortran 2018 Grammar"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="RuntimeTypeInfo.html" title="The derived type runtime information table"
+             >previous</a> |</li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Semantic Analysis</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2024, The Flang Team.
+      Last updated on Mar 06, 2024.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

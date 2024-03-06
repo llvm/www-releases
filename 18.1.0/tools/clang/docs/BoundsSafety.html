@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>-fbounds-safety: Enforcing bounds safety for C &#8212; Clang 18.1.0rc documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=f0e7387b"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Implementation plans for -fbounds-safety" href="BoundsSafetyImplPlans.html" />
+    <link rel="prev" title="Sanitizer special case list" href="SanitizerSpecialCaseList.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.0rc documentation</span></a></h1>
+        <h2 class="heading"><span>-fbounds-safety: Enforcing bounds safety for C</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SanitizerSpecialCaseList.html">Sanitizer special case list</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BoundsSafetyImplPlans.html">Implementation plans for <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code></a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="fbounds-safety-enforcing-bounds-safety-for-c">
+<h1><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>: Enforcing bounds safety for C<a class="headerlink" href="#fbounds-safety-enforcing-bounds-safety-for-c" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id3">Overview</a></p></li>
+<li><p><a class="reference internal" href="#programming-model" id="id4">Programming Model</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id1" id="id5">Overview</a></p></li>
+<li><p><a class="reference internal" href="#bounds-annotations" id="id6">Bounds annotations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#annotation-for-pointers-to-a-single-object" id="id7">Annotation for pointers to a single object</a></p></li>
+<li><p><a class="reference internal" href="#external-bounds-annotations" id="id8">External bounds annotations</a></p></li>
+<li><p><a class="reference internal" href="#internal-bounds-annotations" id="id9">Internal bounds annotations</a></p></li>
+<li><p><a class="reference internal" href="#annotations-for-sentinel-delimited-arrays" id="id10">Annotations for sentinel-delimited arrays</a></p></li>
+<li><p><a class="reference internal" href="#annotation-for-interoperating-with-bounds-unsafe-code" id="id11">Annotation for interoperating with bounds-unsafe code</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#default-pointer-types" id="id12">Default pointer types</a></p>
+<ul>
+<li><p><a class="reference internal" href="#abi-visibility-and-default-annotations" id="id13">ABI visibility and default annotations</a></p></li>
+<li><p><a class="reference internal" href="#abi-implications-of-default-bounds-annotations" id="id14">ABI implications of default bounds annotations</a></p></li>
+<li><p><a class="reference internal" href="#default-pointer-types-in-typeof" id="id15">Default pointer types in <code class="docutils literal notranslate"><span class="pre">typeof()</span></code></a></p></li>
+<li><p><a class="reference internal" href="#default-pointer-types-in-sizeof" id="id16">Default pointer types in <code class="docutils literal notranslate"><span class="pre">sizeof()</span></code></a></p></li>
+<li><p><a class="reference internal" href="#default-pointer-types-in-alignof" id="id17">Default pointer types in <code class="docutils literal notranslate"><span class="pre">alignof()</span></code></a></p></li>
+<li><p><a class="reference internal" href="#default-pointer-types-used-in-c-style-casts" id="id18">Default pointer types used in C-style casts</a></p></li>
+<li><p><a class="reference internal" href="#default-pointer-types-in-typedef" id="id19">Default pointer types in typedef</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#array-to-pointer-promotion-to-secure-arrays-including-vlas" id="id20">Array to pointer promotion to secure arrays (including VLAs)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#arrays-on-function-prototypes" id="id21">Arrays on function prototypes</a></p></li>
+<li><p><a class="reference internal" href="#array-references" id="id22">Array references</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#maintaining-correctness-of-bounds-annotations" id="id23">Maintaining correctness of bounds annotations</a></p></li>
+<li><p><a class="reference internal" href="#cast-rules" id="id24">Cast rules</a></p></li>
+<li><p><a class="reference internal" href="#portability-with-toolchains-that-do-not-support-the-extension" id="id25">Portability with toolchains that do not support the extension</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#other-potential-applications-of-bounds-annotations" id="id26">Other potential applications of bounds annotations</a></p></li>
+<li><p><a class="reference internal" href="#limitations" id="id27">Limitations</a></p></li>
+</ul>
+</nav>
+<section id="overview">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Permalink to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> is a C extension to enforce bounds safety to prevent
+out-of-bounds (OOB) memory accesses, which remain a major source of security
+vulnerabilities in C. <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> aims to eliminate this class of bugs
+by turning OOB accesses into deterministic traps.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> extension offers bounds annotations that programmers can
+use to attach bounds to pointers. For example, programmers can add the
+<code class="docutils literal notranslate"><span class="pre">__counted_by(N)</span></code> annotation to parameter <code class="docutils literal notranslate"><span class="pre">ptr</span></code>, indicating that the pointer
+has <code class="docutils literal notranslate"><span class="pre">N</span></code> valid elements:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">N</span><span class="p">)</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">N</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Using this bounds information, the compiler inserts bounds checks on every
+pointer dereference, ensuring that the program does not access memory outside
+the specified bounds. The compiler requires programmers to provide enough bounds
+information so that the accesses can be checked at either run time or compile
+time — and it rejects code if it cannot.</p>
+<p>The most important contribution of <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> is how it reduces the
+programmer’s annotation burden by reconciling bounds annotations at ABI
+boundaries with the use of implicit wide pointers (a.k.a. “fat” pointers) that
+carry bounds information on local variables without the need for annotations. We
+designed this model so that it preserves ABI compatibility with C while
+minimizing adoption effort.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> extension has been adopted on millions of lines of
+production C code and proven to work in a consumer operating system setting. The
+extension was designed to enable incremental adoption — a key requirement in
+real-world settings where modifying an entire project and its dependencies all
+at once is often not possible. It also addresses multiple of other practical
+challenges that have made existing approaches to safer C dialects difficult to
+adopt, offering these properties that make it widely adoptable in practice:</p>
+<ul class="simple">
+<li><p>It is designed to preserve the Application Binary Interface (ABI).</p></li>
+<li><p>It interoperates well with plain C code.</p></li>
+<li><p>It can be adopted partially and incrementally while still providing safety
+benefits.</p></li>
+<li><p>It is a conforming extension to C.</p></li>
+<li><p>Consequently, source code that adopts the extension can continue to be
+compiled by toolchains that do not support the extension (CAVEAT: this still
+requires inclusion of a header file macro-defining bounds annotations to
+empty).</p></li>
+<li><p>It has a relatively low adoption cost.</p></li>
+</ul>
+<p>This document discusses the key designs of <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>. The document is
+subject to be actively updated with a more detailed specification. The
+implementation plan can be found in <a class="reference internal" href="BoundsSafetyImplPlans.html"><span class="doc">Implementation plans for -fbounds-safety</span></a>.</p>
+</section>
+<section id="programming-model">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Programming Model</a><a class="headerlink" href="#programming-model" title="Permalink to this heading">¶</a></h2>
+<section id="id1">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Overview</a><a class="headerlink" href="#id1" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> ensures that pointers are not used to access memory beyond
+their bounds by performing bounds checking. If a bounds check fails, the program
+will deterministically trap before out-of-bounds memory is accessed.</p>
+<p>In our model, every pointer has an explicit or implicit bounds attribute that
+determines its bounds and ensures guaranteed bounds checking. Consider the
+example below where the <code class="docutils literal notranslate"><span class="pre">__counted_by(count)</span></code> annotation indicates that
+parameter <code class="docutils literal notranslate"><span class="pre">p</span></code> points to a buffer of integers containing <code class="docutils literal notranslate"><span class="pre">count</span></code> elements. An
+off-by-one error is present in the loop condition, leading to <code class="docutils literal notranslate"><span class="pre">p[i]</span></code> being
+out-of-bounds access during the loop’s final iteration. The compiler inserts a
+bounds check before <code class="docutils literal notranslate"><span class="pre">p</span></code> is dereferenced to ensure that the access remains
+within the specified bounds.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">fill_array_with_indices</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// off-by-one error (i &lt; count)</span>
+<span class="w">   </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="c1">// bounds check inserted:</span>
+<span class="w">      </span><span class="c1">//   if (i &gt;= count) trap();</span>
+<span class="w">      </span><span class="n">p</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="w">   </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>A bounds annotation defines an invariant for the pointer type, and the model
+ensures that this invariant remains true. In the example below, pointer <code class="docutils literal notranslate"><span class="pre">p</span></code>
+annotated with <code class="docutils literal notranslate"><span class="pre">__counted_by(count)</span></code> must always point to a memory buffer
+containing at least <code class="docutils literal notranslate"><span class="pre">count</span></code> elements of the pointee type. Changing the value
+of <code class="docutils literal notranslate"><span class="pre">count</span></code>, like in the example below, may violate this invariant and permit
+out-of-bounds access to the pointer. To avoid this, the compiler employs
+compile-time restrictions and emits run-time checks as necessary to ensure the
+new count value doesn’t exceed the actual length of the buffer. Section
+<a class="reference internal" href="#maintaining-correctness-of-bounds-annotations">Maintaining correctness of bounds annotations</a> provides more details about
+this programming model.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">g</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">count</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// may violate the invariant of __counted_by</span>
+<span class="w">   </span><span class="n">count</span><span class="o">--</span><span class="p">;</span><span class="w"> </span><span class="c1">// may violate the invariant of __counted_by if count was 0.</span>
+<span class="w">   </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">g</span><span class="p">;</span><span class="w"> </span><span class="c1">// may violate the invariant of __counted_by</span>
+<span class="w">              </span><span class="c1">// depending on the value of `g`.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The requirement to annotate all pointers with explicit bounds information could
+present a significant adoption burden. To tackle this issue, the model
+incorporates the concept of a “wide pointer” (a.k.a. fat pointer) – a larger
+pointer that carries bounds information alongside the pointer value. Utilizing
+wide pointers can potentially reduce the adoption burden, as it contains bounds
+information internally and eliminates the need for explicit bounds annotations.
+However, wide pointers differ from standard C pointers in their data layout,
+which may result in incompatibilities with the application binary interface
+(ABI). Breaking the ABI complicates interoperability with external code that has
+not adopted the same programming model.</p>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> harmonizes the wide pointer and the bounds annotation
+approaches to reduce the adoption burden while maintaining the ABI. In this
+model, local variables of pointer type are implicitly treated as wide pointers,
+allowing them to carry bounds information without requiring explicit bounds
+annotations. Please note that this approach doesn’t apply to function parameters
+which are considered ABI-visible. As local variables are typically hidden from
+the ABI, this approach has a marginal impact on it. In addition,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> employs compile-time restrictions to prevent implicit wide
+pointers from silently breaking the ABI (see <a class="reference internal" href="#abi-implications-of-default-bounds-annotations">ABI implications of default bounds
+annotations</a>). Pointers associated with any other variables, including function
+parameters, are treated as single object pointers (i.e., <code class="docutils literal notranslate"><span class="pre">__single</span></code>), ensuring
+that they always have the tightest bounds by default and offering a strong
+bounds safety guarantee.</p>
+<p>By implementing default bounds annotations based on ABI visibility, a
+considerable portion of C code can operate without modifications within this
+programming model, reducing the adoption burden.</p>
+<p>The rest of the section will discuss individual bounds annotations and the
+programming model in more detail.</p>
+</section>
+<section id="bounds-annotations">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Bounds annotations</a><a class="headerlink" href="#bounds-annotations" title="Permalink to this heading">¶</a></h3>
+<section id="annotation-for-pointers-to-a-single-object">
+<h4><a class="toc-backref" href="#id7" role="doc-backlink">Annotation for pointers to a single object</a><a class="headerlink" href="#annotation-for-pointers-to-a-single-object" title="Permalink to this heading">¶</a></h4>
+<p>The C language allows pointer arithmetic on arbitrary pointers and this has been
+a source of many bounds safety issues. In practice, many pointers are merely
+pointing to a single object and incrementing or decrementing such a pointer
+immediately makes the pointer go out-of-bounds. To prevent this unsafety,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> provides the annotation <code class="docutils literal notranslate"><span class="pre">__single</span></code> that causes pointer
+arithmetic on annotated pointers to be a compile time error.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">__single</span></code> : indicates that the pointer is either pointing to a single
+object or null. Hence, pointers with <code class="docutils literal notranslate"><span class="pre">__single</span></code> do not permit pointer
+arithmetic nor being subscripted with a non-zero index. Dereferencing a
+<code class="docutils literal notranslate"><span class="pre">__single</span></code> pointer is allowed but it requires a null check. Upper and lower
+bounds checks are not required because the <code class="docutils literal notranslate"><span class="pre">__single</span></code> pointer should point
+to a valid object unless it’s null.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">__single</span></code> is the default annotation for ABI-visible pointers. This
+gives strong security guarantees in that these pointers cannot be incremented or
+decremented unless they have an explicit, overriding bounds annotation that can
+be used to verify the safety of the operation. The compiler issues an error when
+a <code class="docutils literal notranslate"><span class="pre">__single</span></code> pointer is utilized for pointer arithmetic or array access, as
+these operations would immediately cause the pointer to exceed its bounds.
+Consequently, this prompts programmers to provide sufficient bounds information
+to pointers. In the following example, the pointer on parameter p is
+single-by-default, and is employed for array access. As a result, the compiler
+generates an error suggesting to add <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code> to the pointer.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">fill_array_with_indices</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">p</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span><span class="w"> </span><span class="c1">// error</span>
+<span class="w">   </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="external-bounds-annotations">
+<h4><a class="toc-backref" href="#id8" role="doc-backlink">External bounds annotations</a><a class="headerlink" href="#external-bounds-annotations" title="Permalink to this heading">¶</a></h4>
+<p>“External” bounds annotations provide a way to express a relationship between a
+pointer variable and another variable (or expression) containing the bounds
+information of the pointer. In the following example, <code class="docutils literal notranslate"><span class="pre">__counted_by(count)</span></code>
+annotation expresses the bounds of parameter p using another parameter count.
+This model works naturally with many C interfaces and structs because the bounds
+of a pointer is often available adjacent to the pointer itself, e.g., at another
+parameter of the same function prototype, or at another field of the same struct
+declaration.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">fill_array_with_indices</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// off-by-one error</span>
+<span class="w">   </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">count</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">      </span><span class="n">p</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>External bounds annotations include <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>, <code class="docutils literal notranslate"><span class="pre">__sized_by</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">__ended_by</span></code>. These annotations do not change the pointer representation,
+meaning they do not have ABI implications.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">__counted_by(N)</span></code> : The pointer points to memory that contains <code class="docutils literal notranslate"><span class="pre">N</span></code>
+elements of pointee type. <code class="docutils literal notranslate"><span class="pre">N</span></code> is an expression of integer type which can be
+a simple reference to declaration, a constant including calls to constant
+functions, or an arithmetic expression that does not have side effect. The
+<code class="docutils literal notranslate"><span class="pre">__counted_by</span></code> annotation cannot apply to pointers to incomplete types or
+types without size such as <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*</span></code>. Instead, <code class="docutils literal notranslate"><span class="pre">__sized_by</span></code> can be used to
+describe the byte count.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__sized_by(N)</span></code> : The pointer points to memory that contains <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes.
+Just like the argument of <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>, <code class="docutils literal notranslate"><span class="pre">N</span></code> is an expression of integer
+type which can be a constant, a simple reference to a declaration, or an
+arithmetic expression that does not have side effects. This is mainly used for
+pointers to incomplete types or types without size such as <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__ended_by(P)</span></code> : The pointer has the upper bound of value <code class="docutils literal notranslate"><span class="pre">P</span></code>, which is
+one past the last element of the pointer. In other words, this annotation
+describes a range that starts with the pointer that has this annotation and
+ends with <code class="docutils literal notranslate"><span class="pre">P</span></code> which is the argument of the annotation. <code class="docutils literal notranslate"><span class="pre">P</span></code> itself may be
+annotated with <code class="docutils literal notranslate"><span class="pre">__ended_by(Q)</span></code>. In this case, the end of the range extends
+to the pointer <code class="docutils literal notranslate"><span class="pre">Q</span></code>. This is used for “iterator” support in C where you’re
+iterating from one pointer value to another until a final pointer value is
+reached (and the final pointer value is not dereferencable).</p></li>
+</ul>
+<p>Accessing a pointer outside the specified bounds causes a run-time trap or a
+compile-time error. Also, the model maintains correctness of bounds annotations
+when the pointer and/or the related value containing the bounds information are
+updated or passed as arguments. This is done by compile-time restrictions or
+run-time checks (see <a class="reference internal" href="#maintaining-correctness-of-bounds-annotations">Maintaining correctness of bounds annotations</a>
+for more detail). For instance, initializing <code class="docutils literal notranslate"><span class="pre">buf</span></code> with <code class="docutils literal notranslate"><span class="pre">null</span></code> while
+assigning non-zero value to <code class="docutils literal notranslate"><span class="pre">count</span></code>, as shown in the following example, would
+violate the <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code> annotation because a null pointer does not point to
+any valid memory location. To avoid this, the compiler produces either a
+compile-time error or run-time trap.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">null_with_count_10</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">   </span><span class="c1">// This is not allowed as it creates a null pointer with non-zero length</span>
+<span class="w">   </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>However, there are use cases where a pointer is either a null pointer or is
+pointing to memory of the specified size. To support this idiom,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> provides <code class="docutils literal notranslate"><span class="pre">*_or_null</span></code> variants,
+<code class="docutils literal notranslate"><span class="pre">__counted_by_or_null(N)</span></code>, <code class="docutils literal notranslate"><span class="pre">__sized_by_or_null(N)</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">__ended_by_or_null(P)</span></code>. Accessing a pointer with any of these bounds
+annotations will require an extra null check to avoid a null pointer
+dereference.</p>
+</section>
+<section id="internal-bounds-annotations">
+<h4><a class="toc-backref" href="#id9" role="doc-backlink">Internal bounds annotations</a><a class="headerlink" href="#internal-bounds-annotations" title="Permalink to this heading">¶</a></h4>
+<p>A wide pointer (sometimes known as a “fat” pointer) is a pointer that carries
+additional bounds information internally (as part of its data). The bounds
+require additional storage space making wide pointers larger than normal
+pointers, hence the name “wide pointer”. The memory layout of a wide pointer is
+equivalent to a struct with the pointer, upper bound, and (optionally) lower
+bound as its fields as shown below.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">wide_pointer_datalayout</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">pointer</span><span class="p">;</span><span class="w"> </span><span class="c1">// Address used for dereferences and pointer arithmetic</span>
+<span class="w">   </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">upper_bound</span><span class="p">;</span><span class="w"> </span><span class="c1">// Points one past the highest address that can be</span>
+<span class="w">                      </span><span class="c1">// accessed</span>
+<span class="w">   </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">lower_bound</span><span class="p">;</span><span class="w"> </span><span class="c1">// (Optional) Points to lowest address that can be</span>
+<span class="w">                      </span><span class="c1">// accessed</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>Even with this representational change, wide pointers act syntactically as
+normal pointers to allow standard pointer operations, such as pointer
+dereference (<code class="docutils literal notranslate"><span class="pre">*p</span></code>), array subscript (<code class="docutils literal notranslate"><span class="pre">p[i]</span></code>), member access (<code class="docutils literal notranslate"><span class="pre">p-&gt;</span></code>), and
+pointer arithmetic, with some restrictions on bounds-unsafe uses.</p>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> has a set of “internal” bounds annotations to turn pointers
+into wide pointers. These are <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> and <code class="docutils literal notranslate"><span class="pre">__indexable</span></code>. When a
+pointer has either of these annotations, the compiler changes the pointer to the
+corresponding wide pointer. This means these annotations will break the ABI and
+will not be compatible with plain C, and thus they should generally not be used
+in ABI surfaces.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> : A pointer with this annotation becomes a wide pointer
+to carry the upper bound and the lower bound, the layout of which is
+equivalent to <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">{</span> <span class="pre">T</span> <span class="pre">*ptr;</span> <span class="pre">T</span> <span class="pre">*upper_bound;</span> <span class="pre">T</span> <span class="pre">*lower_bound;</span> <span class="pre">};</span></code>. As the
+name indicates, pointers with this annotation are “bidirectionally indexable”,
+meaning that they can be indexed with either a negative or a positive offset
+and the pointers can be incremented or decremented using pointer arithmetic. A
+<code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> pointer is allowed to hold an out-of-bounds pointer
+value. While creating an OOB pointer is undefined behavior in C,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> makes it well-defined behavior. That is, pointer
+arithmetic overflow with <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> is defined as equivalent of
+two’s complement integer computation, and at the LLVM IR level this means
+<code class="docutils literal notranslate"><span class="pre">getelementptr</span></code> won’t get <code class="docutils literal notranslate"><span class="pre">inbounds</span></code> keyword. Accessing memory using the
+OOB pointer is prevented via a run-time bounds check.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__indexable</span></code> : A pointer with this annotation becomes a wide pointer
+carrying the upper bound (but no explicit lower bound), the layout of which is
+equivalent to <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">{</span> <span class="pre">T</span> <span class="pre">*ptr;</span> <span class="pre">T</span> <span class="pre">*upper_bound;</span> <span class="pre">};</span></code>. Since <code class="docutils literal notranslate"><span class="pre">__indexable</span></code>
+pointers do not have a separate lower bound, the pointer value itself acts as
+the lower bound. An <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> pointer can only be incremented or indexed
+in the positive direction. Indexing it in the negative direction will trigger
+a compile-time error. Otherwise, the compiler inserts a run-time
+check to ensure pointer arithmetic doesn’t make the pointer smaller than the
+original <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> pointer (Note that <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> doesn’t have a
+lower bound so the pointer value is effectively the lower bound). As pointer
+arithmetic overflow will make the pointer smaller than the original pointer,
+it will cause a trap at runtime. Similar to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>, an
+<code class="docutils literal notranslate"><span class="pre">__indexable</span></code> pointer is allowed to have a pointer value above the upper
+bound and creating such a pointer is well-defined behavior. Dereferencing such
+a pointer, however, will cause a run-time trap.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> offers the best flexibility out of all the pointer
+annotations in this model, as <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> pointers can be used for
+any pointer operation. However, this comes with the largest code size and
+memory cost out of the available pointer annotations in this model. In some
+cases, use of the <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> annotation may be duplicating bounds
+information that exists elsewhere in the program. In such cases, using
+external bounds annotations may be a better choice.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> is the default annotation for non-ABI visible pointers,
+such as local pointer variables — that is, if the programmer does not specify
+another bounds annotation, a local pointer variable is implicitly
+<code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>. Since <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> pointers automatically carry
+bounds information and have no restrictions on kinds of pointer operations that
+can be used with these pointers, most code inside a function works as is without
+modification. In the example below, <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*buf</span></code> doesn’t require manual
+annotation as it’s implicitly <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span> <span class="pre">buf</span></code>, carrying the bounds
+information passed from the return value of malloc, which is necessary to insert
+bounds checking for <code class="docutils literal notranslate"><span class="pre">buf[i]</span></code>.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__sized_by</span><span class="p">(</span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="nf">__counted_by</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="n">get_array_with_0_to_n_1</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">);</span>
+<span class="w">   </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">      </span><span class="n">buf</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="w">   </span><span class="k">return</span><span class="w"> </span><span class="n">buf</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="annotations-for-sentinel-delimited-arrays">
+<h4><a class="toc-backref" href="#id10" role="doc-backlink">Annotations for sentinel-delimited arrays</a><a class="headerlink" href="#annotations-for-sentinel-delimited-arrays" title="Permalink to this heading">¶</a></h4>
+<p>A C string is an array of characters. The null terminator — the first null
+character (’0’) element in the array — marks the end of the string.
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> provides <code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code> to annotate C strings and the
+generalized form <code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> to annotate pointers and arrays with an
+end marked by a sentinel value. The model prevents dereferencing a
+<code class="docutils literal notranslate"><span class="pre">__terminated_by</span></code> pointer beyond its end. Calculating the location of the end
+(i.e., the address of the sentinel value), requires reading the entire array in
+memory and would have some performance costs. To avoid an unintended performance
+hit, the model puts some restrictions on how these pointers can be used.
+<code class="docutils literal notranslate"><span class="pre">__terminated_by</span></code> pointers cannot be indexed and can only be incremented one
+element at a time. To allow these operations, the pointers must be explicitly
+converted to <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> pointers using the intrinsic function
+<code class="docutils literal notranslate"><span class="pre">__unsafe_terminated_by_to_indexable(P,</span> <span class="pre">T)</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">__unsafe_null_terminated_to_indexable(P)</span></code>) which converts the
+<code class="docutils literal notranslate"><span class="pre">__terminated_by</span></code> pointer <code class="docutils literal notranslate"><span class="pre">P</span></code> to an <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> pointer.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code> : The pointer or array is terminated by <code class="docutils literal notranslate"><span class="pre">NULL</span></code> or
+<code class="docutils literal notranslate"><span class="pre">0</span></code>. Modifying the terminator or incrementing the pointer beyond it is
+prevented at run time.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> : The pointer or array is terminated by <code class="docutils literal notranslate"><span class="pre">T</span></code> which is
+a constant expression. Accessing or incrementing the pointer beyond the
+terminator is not allowed. This is a generalization of <code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code>
+which is defined as <code class="docutils literal notranslate"><span class="pre">__terminated_by(0)</span></code>.</p></li>
+</ul>
+</section>
+<section id="annotation-for-interoperating-with-bounds-unsafe-code">
+<h4><a class="toc-backref" href="#id11" role="doc-backlink">Annotation for interoperating with bounds-unsafe code</a><a class="headerlink" href="#annotation-for-interoperating-with-bounds-unsafe-code" title="Permalink to this heading">¶</a></h4>
+<p>A pointer with the <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> annotation behaves the same as a plain
+C pointer. That is, the pointer does not have any bounds information and pointer
+operations are not checked.</p>
+<p><code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> can be used to mark pointers from system headers or
+pointers from code that has not adopted -fbounds safety. This enables
+interoperation between code using <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> and code that does not.</p>
+</section>
+</section>
+<section id="default-pointer-types">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Default pointer types</a><a class="headerlink" href="#default-pointer-types" title="Permalink to this heading">¶</a></h3>
+<section id="abi-visibility-and-default-annotations">
+<h4><a class="toc-backref" href="#id13" role="doc-backlink">ABI visibility and default annotations</a><a class="headerlink" href="#abi-visibility-and-default-annotations" title="Permalink to this heading">¶</a></h4>
+<p>Requiring <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> adopters to add bounds annotations to all pointers
+in the codebase would be a significant adoption burden. To avoid this and to
+secure all pointers by default, <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> applies default bounds
+annotations to pointer types.
+Default annotations apply to pointer types of declarations</p>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> applies default bounds annotations to pointer types used in
+declarations. The default annotations are determined by the ABI visibility of
+the pointer. A pointer type is ABI-visible if changing its size or
+representation affects the ABI. For instance, changing the size of a type used
+in a function parameter will affect the ABI and thus pointers used in function
+parameters are ABI-visible pointers. On the other hand, changing the types of
+local variables won’t have such ABI implications. Hence, <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>
+considers the outermost pointer types of local variables as non-ABI visible. The
+rest of the pointers such as nested pointer types, pointer types of global
+variables, struct fields, and function prototypes are considered ABI-visible.</p>
+<p>All ABI-visible pointers are treated as <code class="docutils literal notranslate"><span class="pre">__single</span></code> by default unless annotated
+otherwise. This default both preserves ABI and makes these pointers safe by
+default. This behavior can be controlled with macros, i.e.,
+<code class="docutils literal notranslate"><span class="pre">__ptrcheck_abi_assume_*ATTR*()</span></code>, to set the default annotation for
+ABI-visible pointers to be either <code class="docutils literal notranslate"><span class="pre">__single</span></code>, <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>,
+<code class="docutils literal notranslate"><span class="pre">__indexable</span></code>, or <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code>. For instance,
+<code class="docutils literal notranslate"><span class="pre">__ptrcheck_abi_assume_unsafe_indexable()</span></code> will make all ABI-visible pointers
+be <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code>. Non-ABI visible pointers — the outermost pointer
+types of local variables — are <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> by default, so that these
+pointers have the bounds information necessary to perform bounds checks without
+the need for a manual annotation. All <code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">char</span></code> pointers or any typedefs
+equivalent to <code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">char</span></code> pointers are <code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code> by default. This
+means that <code class="docutils literal notranslate"><span class="pre">char8_t</span></code> is <code class="docutils literal notranslate"><span class="pre">unsigned</span> <span class="pre">char</span></code> so <code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">char8_t</span> <span class="pre">*</span></code> won’t be
+<code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code> by default. Similarly, <code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">wchar_t</span> <span class="pre">*</span></code> won’t be
+<code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code> by default unless the platform defines it as <code class="docutils literal notranslate"><span class="pre">typedef</span>
+<span class="pre">char</span> <span class="pre">wchar_t</span></code>. Please note, however, that the programmers can still explicitly
+use <code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code> in any other pointers, e.g., <code class="docutils literal notranslate"><span class="pre">char8_t</span>
+<span class="pre">*__null_terminated</span></code>, <code class="docutils literal notranslate"><span class="pre">wchar_t</span> <span class="pre">*__null_terminated</span></code>, <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__null_terminated</span></code>, etc. if they should be treated as <code class="docutils literal notranslate"><span class="pre">__null_terminated</span></code>.
+The same applies to other annotations.
+In system headers, the default pointer attribute for ABI-visible pointers is set
+to <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> by default.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">__ptrcheck_abi_assume_*ATTR*()</span></code> macros are defined as pragmas in the
+toolchain header (See <a class="reference internal" href="#portability-with-toolchains-that-do-not-support-the-extension">Portability with toolchains that do not support the
+extension</a> for more details about the toolchain header):</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span>
+</pre></div>
+</div>
+<dl class="simple">
+<dt>#define __ptrcheck_abi_assume_single() </dt><dd><p>_Pragma(“clang abi_ptr_attr set(single)”)</p>
+</dd>
+<dt>#define __ptrcheck_abi_assume_indexable() </dt><dd><p>_Pragma(“clang abi_ptr_attr set(indexable)”)</p>
+</dd>
+<dt>#define __ptrcheck_abi_assume_bidi_indexable() </dt><dd><p>_Pragma(“clang abi_ptr_attr set(bidi_indexable)”)</p>
+</dd>
+<dt>#define __ptrcheck_abi_assume_unsafe_indexable() </dt><dd><p>_Pragma(“clang abi_ptr_attr set(unsafe_indexable)”)</p>
+</dd>
+</dl>
+</section>
+<section id="abi-implications-of-default-bounds-annotations">
+<h4><a class="toc-backref" href="#id14" role="doc-backlink">ABI implications of default bounds annotations</a><a class="headerlink" href="#abi-implications-of-default-bounds-annotations" title="Permalink to this heading">¶</a></h4>
+<p>Although simply modifying types of a local variable doesn’t normally impact the
+ABI, taking the address of such a modified type could create a pointer type that
+has an ABI mismatch. Looking at the following example, <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*local</span></code> is
+implicitly <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code> and thus the type of <code class="docutils literal notranslate"><span class="pre">&amp;local</span></code> is a
+pointer to <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code>. On the other hand, in <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">foo(int</span>
+<span class="pre">**)</span></code>, the parameter type is a pointer to <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__single</span></code> (i.e., <code class="docutils literal notranslate"><span class="pre">void</span>
+<span class="pre">foo(int</span> <span class="pre">*__single</span> <span class="pre">*__single)</span></code>) (or a pointer to <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__unsafe_indexable</span></code> if
+it’s from a system header). The compiler reports an error for casts between
+pointers whose elements have incompatible pointer attributes. This way,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> prevents pointers that are implicitly <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>
+from silently escaping thereby breaking the ABI.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">**</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">local</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">   </span><span class="c1">// error: passing &#39;int *__bidi_indexable*__bidi_indexable&#39; to parameter of</span>
+<span class="w">   </span><span class="c1">// incompatible nested pointer type &#39;int *__single*__single&#39;</span>
+<span class="w">   </span><span class="n">foo</span><span class="p">(</span><span class="o">&amp;</span><span class="n">local</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>A local variable may still be exposed to the ABI if <code class="docutils literal notranslate"><span class="pre">typeof()</span></code> takes the type
+of local variable to define an interface as shown in the following example.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="c1">// bar.c</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// foo.c</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span><span class="w"> </span><span class="c1">// implicitly `int *__bidi_indexable p`</span>
+<span class="w">   </span><span class="k">extern</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">bar</span><span class="p">(</span><span class="n">typeof</span><span class="p">(</span><span class="n">p</span><span class="p">));</span><span class="w"> </span><span class="c1">// creates an interface of type</span>
+<span class="w">                               </span><span class="c1">// `void bar(int *__bidi_indexable)`</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Doing this may break the ABI if the parameter is not <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> at the
+definition of function <code class="docutils literal notranslate"><span class="pre">bar()</span></code> which is likely the case because parameters are
+<code class="docutils literal notranslate"><span class="pre">__single</span></code> by default without an explicit annotation.</p>
+<p>In order to avoid an implicitly wide pointer from silently breaking the ABI, the
+compiler reports a warning when <code class="docutils literal notranslate"><span class="pre">typeof()</span></code> is used on an implicit wide pointer
+at any ABI visible context (e.g., function prototype, struct definition, etc.).</p>
+</section>
+<section id="default-pointer-types-in-typeof">
+<span id="id2"></span><h4><a class="toc-backref" href="#id15" role="doc-backlink">Default pointer types in <code class="docutils literal notranslate"><span class="pre">typeof()</span></code></a><a class="headerlink" href="#default-pointer-types-in-typeof" title="Permalink to this heading">¶</a></h4>
+<p>When <code class="docutils literal notranslate"><span class="pre">typeof()</span></code> takes an expression, it respects the bounds annotation on
+the expression type, including the bounds annotation is implcit. For example,
+the global variable <code class="docutils literal notranslate"><span class="pre">g</span></code> in the following code is implicitly <code class="docutils literal notranslate"><span class="pre">__single</span></code> so
+<code class="docutils literal notranslate"><span class="pre">typeof(g)</span></code> gets <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*__single</span></code>. The similar is true for the parameter
+<code class="docutils literal notranslate"><span class="pre">p</span></code>, so <code class="docutils literal notranslate"><span class="pre">typeof(p)</span></code> returns <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__single</span></code>. The local variable <code class="docutils literal notranslate"><span class="pre">l</span></code> is
+implicitly <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>, so <code class="docutils literal notranslate"><span class="pre">typeof(l)</span></code> becomes
+<code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code>.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">g</span><span class="p">;</span><span class="w"> </span><span class="c1">// typeof(g) == char *__single</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// typeof(p) == void *__single</span>
+
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">l</span><span class="p">;</span><span class="w"> </span><span class="c1">// typeof(l) == int *__bidi_indexable</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>When the type of expression has an “external” bounds annotation, e.g.,
+<code class="docutils literal notranslate"><span class="pre">__sized_by</span></code>, <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>, etc., the compiler may report an error on
+<code class="docutils literal notranslate"><span class="pre">typeof</span></code> if the annotation creates a dependency with another declaration or
+variable. For example, the compiler reports an error on <code class="docutils literal notranslate"><span class="pre">typeof(p1)</span></code> shown in
+the following code because allowing it can potentially create another type
+dependent on the parameter <code class="docutils literal notranslate"><span class="pre">size</span></code> in a different context (Please note that an
+external bounds annotation on a parameter may only refer to another parameter of
+the same function). On the other hand, <code class="docutils literal notranslate"><span class="pre">typeof(p2)</span></code> works resulting in <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__counted_by(10)</span></code>, since it doesn’t depend on any other declaration.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// typeof(p1) == int *__counted_by(size)</span>
+<span class="w">   </span><span class="c1">// -&gt; a compiler error as it tries to create another type</span>
+<span class="w">   </span><span class="c1">// dependent on `size`.</span>
+
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="n">p2</span><span class="p">;</span><span class="w"> </span><span class="c1">// typeof(p2) == int *__counted_by(10)</span>
+<span class="w">                             </span><span class="c1">// -&gt; no error</span>
+
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>When <code class="docutils literal notranslate"><span class="pre">typeof()</span></code> takes a type name, the compiler doesn’t apply an implicit
+bounds annotation on the named pointer types. For example, <code class="docutils literal notranslate"><span class="pre">typeof(int*)</span></code>
+returns <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*</span></code> without any bounds annotation. A bounds annotation may be
+added after the fact depending on the context. In the following example,
+<code class="docutils literal notranslate"><span class="pre">typeof(int</span> <span class="pre">*)</span></code> returns <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*</span></code> so it’s equivalent as the local variable is
+declared as <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*l</span></code>, so it eventually becomes implicitly
+<code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">typeof</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">l</span><span class="p">;</span><span class="w"> </span><span class="c1">// `int *__bidi_indexable` (same as `int *l`)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The programmers can still explicitly add a bounds annotation on the types named
+inside <code class="docutils literal notranslate"><span class="pre">typeof</span></code>, e.g., <code class="docutils literal notranslate"><span class="pre">typeof(int</span> <span class="pre">*__bidi_indexable)</span></code>, which evaluates to
+<code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code>.</p>
+</section>
+<section id="default-pointer-types-in-sizeof">
+<h4><a class="toc-backref" href="#id16" role="doc-backlink">Default pointer types in <code class="docutils literal notranslate"><span class="pre">sizeof()</span></code></a><a class="headerlink" href="#default-pointer-types-in-sizeof" title="Permalink to this heading">¶</a></h4>
+<p>When <code class="docutils literal notranslate"><span class="pre">sizeof()</span></code> takes a type name, the compiler doesn’t apply an implicit
+bounds annotation on the named pointer types. This means if a bounds annotation
+is not specified, the evaluated pointer type is treated identically to a plain C
+pointer type. Therefore, <code class="docutils literal notranslate"><span class="pre">sizeof(int*)</span></code> remains the same with or without
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>. That said, programmers can explicitly add attribute to the
+types, e.g., <code class="docutils literal notranslate"><span class="pre">sizeof(int</span> <span class="pre">*__bidi_indexable)</span></code>, in which case the sizeof
+evaluates to the size of type <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code> (the value equivalent to
+<code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">*</span> <span class="pre">sizeof(int*)</span></code>).</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">sizeof()</span></code> takes an expression, i.e., <code class="docutils literal notranslate"><span class="pre">sizeof(expr</span></code>, it behaves as
+<code class="docutils literal notranslate"><span class="pre">sizeof(typeof(expr))</span></code>, except that <code class="docutils literal notranslate"><span class="pre">sizeof(expr)</span></code> does not report an error
+with <code class="docutils literal notranslate"><span class="pre">expr</span></code> that has a type with an external bounds annotation dependent on
+another declaration, whereas <code class="docutils literal notranslate"><span class="pre">typeof()</span></code> on the same expression would be an
+error as described in <a class="reference internal" href="#default-pointer-types-in-typeof"><span class="std std-ref">Default pointer types in typeof()</span></a>.
+The following example describes this behavior.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// sizeof(p) == sizeof(int *__counted_by(size)) == sizeof(int *)</span>
+<span class="w">   </span><span class="c1">// typeof(p): error</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</section>
+<section id="default-pointer-types-in-alignof">
+<h4><a class="toc-backref" href="#id17" role="doc-backlink">Default pointer types in <code class="docutils literal notranslate"><span class="pre">alignof()</span></code></a><a class="headerlink" href="#default-pointer-types-in-alignof" title="Permalink to this heading">¶</a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">alignof()</span></code> only takes a type name as the argument and it doesn’t take an
+expression. Similar to <code class="docutils literal notranslate"><span class="pre">sizeof()</span></code> and <code class="docutils literal notranslate"><span class="pre">typeof</span></code>, the compiler doesn’t apply
+an implicit bounds annotation on the pointer types named inside <code class="docutils literal notranslate"><span class="pre">alignof()</span></code>.
+Therefore, <code class="docutils literal notranslate"><span class="pre">alignof(T</span> <span class="pre">*)</span></code> remains the same with or without
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>, evaluating into the alignment of the raw pointer <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">*</span></code>.
+The programmers can explicitly add a bounds annotation to the types, e.g.,
+<code class="docutils literal notranslate"><span class="pre">alignof(int</span> <span class="pre">*__bidi_indexable)</span></code>, which returns the alignment of <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__bidi_indexable</span></code>. A bounds annotation including an internal bounds annotation
+(i.e., <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> and <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>) doesn’t affect the alignment of
+the original pointer. Therefore, <code class="docutils literal notranslate"><span class="pre">alignof(int</span> <span class="pre">*__bidi_indexable)</span></code> is equal to
+<code class="docutils literal notranslate"><span class="pre">alignof(int</span> <span class="pre">*)</span></code>.</p>
+</section>
+<section id="default-pointer-types-used-in-c-style-casts">
+<h4><a class="toc-backref" href="#id18" role="doc-backlink">Default pointer types used in C-style casts</a><a class="headerlink" href="#default-pointer-types-used-in-c-style-casts" title="Permalink to this heading">¶</a></h4>
+<p>A pointer type used in a C-style cast (e.g., <code class="docutils literal notranslate"><span class="pre">(int</span> <span class="pre">*)src</span></code>) inherits the same
+pointer attribute in the type of src. For instance, if the type of src is <code class="docutils literal notranslate"><span class="pre">T</span>
+<span class="pre">*__single</span></code> (with <code class="docutils literal notranslate"><span class="pre">T</span></code> being an arbitrary C type), <code class="docutils literal notranslate"><span class="pre">(int</span> <span class="pre">*)src</span></code> will be <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__single</span></code>. The reasoning behind this behavior is so that a C-style cast
+doesn’t introduce any unexpected side effects caused by an implicit cast of
+bounds attribute.</p>
+<p>Pointer casts can have explicit bounds annotations. For instance, <code class="docutils literal notranslate"><span class="pre">(int</span>
+<span class="pre">*__bidi_indexable)src</span></code> casts to <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code> as long as src has a
+bounds annotation that can implicitly convert to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>. If
+<code class="docutils literal notranslate"><span class="pre">src</span></code> has type <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__single</span></code>, it can implicitly convert to <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__bidi_indexable</span></code> which then will have the upper bound pointing to one past
+the first element. However, if src has type <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__unsafe_indexable</span></code>, the
+explicit cast <code class="docutils literal notranslate"><span class="pre">(int</span> <span class="pre">*__bidi_indexable)src</span></code> will cause an error because
+<code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> cannot cast to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> as
+<code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> doesn’t have bounds information. <a class="reference internal" href="#cast-rules">Cast rules</a> describes
+in more detail what kinds of casts are allowed between pointers with different
+bounds annotations.</p>
+</section>
+<section id="default-pointer-types-in-typedef">
+<h4><a class="toc-backref" href="#id19" role="doc-backlink">Default pointer types in typedef</a><a class="headerlink" href="#default-pointer-types-in-typedef" title="Permalink to this heading">¶</a></h4>
+<p>Pointer types in <code class="docutils literal notranslate"><span class="pre">typedef</span></code>s do not have implicit default bounds annotations.
+Instead, the bounds annotation is determined when the <code class="docutils literal notranslate"><span class="pre">typedef</span></code> is used. The
+following example shows that no pointer annotation is specified in the <code class="docutils literal notranslate"><span class="pre">typedef</span>
+<span class="pre">pint_t</span></code> while each instance of <code class="docutils literal notranslate"><span class="pre">typedef</span></code>’ed pointer gets its bounds
+annotation based on the context in which the type is used.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">pint_t</span><span class="p">;</span><span class="w"> </span><span class="c1">// int *</span>
+
+<span class="n">pint_t</span><span class="w"> </span><span class="n">glob</span><span class="p">;</span><span class="w"> </span><span class="c1">// int *__single glob;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">pint_t</span><span class="w"> </span><span class="n">local</span><span class="p">;</span><span class="w"> </span><span class="c1">// int *__bidi_indexable local;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Pointer types in a <code class="docutils literal notranslate"><span class="pre">typedef</span></code> can still have explicit annotations, e.g.,
+<code class="docutils literal notranslate"><span class="pre">typedef</span> <span class="pre">int</span> <span class="pre">*__single</span></code>, in which case the bounds annotation <code class="docutils literal notranslate"><span class="pre">__single</span></code> will
+apply to every use of the <code class="docutils literal notranslate"><span class="pre">typedef</span></code>.</p>
+</section>
+</section>
+<section id="array-to-pointer-promotion-to-secure-arrays-including-vlas">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">Array to pointer promotion to secure arrays (including VLAs)</a><a class="headerlink" href="#array-to-pointer-promotion-to-secure-arrays-including-vlas" title="Permalink to this heading">¶</a></h3>
+<section id="arrays-on-function-prototypes">
+<h4><a class="toc-backref" href="#id21" role="doc-backlink">Arrays on function prototypes</a><a class="headerlink" href="#arrays-on-function-prototypes" title="Permalink to this heading">¶</a></h4>
+<p>In C, arrays on function prototypes are promoted (or “decayed”) to a pointer to
+its first element (e.g., <code class="docutils literal notranslate"><span class="pre">&amp;arr[0]</span></code>). In <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>, arrays are also
+decayed to pointers, but with the addition of an implicit bounds annotation,
+which includes variable-length arrays (VLAs). As shown in the following example,
+arrays on function prototypes are decalyed to corresponding <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>
+pointers.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// Function prototype: void foo(int n, int *__counted_by(n) arr);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">arr</span><span class="p">[</span><span class="n">n</span><span class="p">]);</span>
+
+<span class="c1">// Function prototype: void bar(int *__counted_by(10) arr);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">arr</span><span class="p">[</span><span class="mi">10</span><span class="p">]);</span>
+</pre></div>
+</div>
+<p>This means the array parameters are treated as <cite>__counted_by</cite> pointers within
+the function and callers of the function also see them as the corresponding
+<cite>__counted_by</cite> pointers.</p>
+<p>Incomplete arrays on function prototypes will cause a compiler error unless it
+has <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code> annotation in its bracket.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">arr</span><span class="p">[]);</span><span class="w"> </span><span class="c1">// error</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">arr</span><span class="p">[</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">n</span><span class="p">)]);</span><span class="w"> </span><span class="c1">// ok</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">arr</span><span class="p">[</span><span class="n">n</span><span class="p">]);</span><span class="w"> </span><span class="c1">// ok, decays to int *__counted_by(n)</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f4</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="n">arr</span><span class="p">);</span><span class="w"> </span><span class="c1">// ok</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f5</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">arr</span><span class="p">);</span><span class="w"> </span><span class="c1">// ok, but decays to int *__single,</span>
+<span class="w">                          </span><span class="c1">// and cannot be used for pointer arithmetic</span>
+</pre></div>
+</div>
+</section>
+<section id="array-references">
+<h4><a class="toc-backref" href="#id22" role="doc-backlink">Array references</a><a class="headerlink" href="#array-references" title="Permalink to this heading">¶</a></h4>
+<p>In C, similar to arrays on the function prototypes, a reference to array is
+automatically promoted (or “decayed”) to a pointer to its first element (e.g.,
+<code class="docutils literal notranslate"><span class="pre">&amp;arr[0]</span></code>).</p>
+<p>In <cite>-fbounds-safety</cite>, array references are promoted to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>
+pointers which contain the upper and lower bounds of the array, with the
+equivalent of <code class="docutils literal notranslate"><span class="pre">&amp;arr[0]</span></code> serving as the lower bound and <code class="docutils literal notranslate"><span class="pre">&amp;arr[array_size]</span></code>
+(or one past the last element) serving as the upper bound. This applies to all
+types of arrays including constant-length arrays, variable-length arrays (VLAs),
+and flexible array members annotated with <cite>__counted_by</cite>.</p>
+<p>In the following example, reference to <code class="docutils literal notranslate"><span class="pre">vla</span></code> promotes to <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__bidi_indexable</span></code>, with <code class="docutils literal notranslate"><span class="pre">&amp;vla[n]</span></code> as the upper bound and <code class="docutils literal notranslate"><span class="pre">&amp;vla[0]</span></code> as the
+lower bound. Then, it’s copied to <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*p</span></code>, which is implicitly <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__bidi_indexable</span> <span class="pre">p</span></code>. Please note that value of <code class="docutils literal notranslate"><span class="pre">n</span></code> used to create the upper
+bound is <code class="docutils literal notranslate"><span class="pre">10</span></code>, not <code class="docutils literal notranslate"><span class="pre">100</span></code>, in this case because <code class="docutils literal notranslate"><span class="pre">10</span></code> is the actual length
+of <code class="docutils literal notranslate"><span class="pre">vla</span></code>, the value of <code class="docutils literal notranslate"><span class="pre">n</span></code> at the time when the array is being allocated.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="n">vla</span><span class="p">[</span><span class="n">n</span><span class="p">];</span>
+<span class="w">   </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">vla</span><span class="p">;</span><span class="w"> </span><span class="c1">// { .ptr: &amp;vla[0], .upper: &amp;vla[10], .lower: &amp;vla[0] }</span>
+<span class="w">                 </span><span class="c1">// it&#39;s `&amp;vla[10]` because the value of `n` was 10 at the</span>
+<span class="w">                 </span><span class="c1">// time when the array is actually allocated.</span>
+<span class="w">   </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>By promoting array references to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>, all array accesses are
+bounds checked in <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>, just as <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> pointers
+are.</p>
+</section>
+</section>
+<section id="maintaining-correctness-of-bounds-annotations">
+<h3><a class="toc-backref" href="#id23" role="doc-backlink">Maintaining correctness of bounds annotations</a><a class="headerlink" href="#maintaining-correctness-of-bounds-annotations" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> maintains correctness of bounds annotations by performing
+additional checks when a pointer object and/or its related value containing the
+bounds information is updated.</p>
+<p>For example, <code class="docutils literal notranslate"><span class="pre">__single</span></code> expresses an invariant that the pointer must either
+point to a single valid object or be a null pointer. To maintain this invariant,
+the compiler inserts checks when initializing a <code class="docutils literal notranslate"><span class="pre">__single</span></code> pointer, as shown
+in the following example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">__sized_by</span><span class="p">(</span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="n">vp</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// Inserted check:</span>
+<span class="w">   </span><span class="c1">// if ((int*)upper_bound(vp) - (int*)vp &lt; sizeof(int) &amp;&amp; !!vp) trap();</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__single</span><span class="w"> </span><span class="n">ip</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">vp</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Additionally, an explicit bounds annotation such as <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__counted_by(count)</span>
+<span class="pre">buf</span></code> defines a relationship between two variables, <code class="docutils literal notranslate"><span class="pre">buf</span></code> and <code class="docutils literal notranslate"><span class="pre">count</span></code>:
+namely, that <code class="docutils literal notranslate"><span class="pre">buf</span></code> has <code class="docutils literal notranslate"><span class="pre">count</span></code> number of elements available. This
+relationship must hold even after any of these related variables are updated. To
+this end, the model requires that assignments to <code class="docutils literal notranslate"><span class="pre">buf</span></code> and <code class="docutils literal notranslate"><span class="pre">count</span></code> must be
+side by side, with no side effects between them. This prevents <code class="docutils literal notranslate"><span class="pre">buf</span></code> and
+<code class="docutils literal notranslate"><span class="pre">count</span></code> from temporarily falling out of sync due to updates happening at a
+distance.</p>
+<p>The example below shows a function <code class="docutils literal notranslate"><span class="pre">alloc_buf</span></code> that initializes a struct that
+members that use the <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code> annotation. The compiler allows these
+assignments because <code class="docutils literal notranslate"><span class="pre">sbuf-&gt;buf</span></code> and <code class="docutils literal notranslate"><span class="pre">sbuf-&gt;count</span></code> are updated side by side
+without any side effects in between the assignments.</p>
+<p>Furthermore, the compiler inserts additional run-time checks to ensure the new
+<code class="docutils literal notranslate"><span class="pre">buf</span></code> has at least as many elements as the new <code class="docutils literal notranslate"><span class="pre">count</span></code> indicates as shown in
+the transformed pseudo code of function <code class="docutils literal notranslate"><span class="pre">alloc_buf()</span></code> in the example below.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="nf">__counted_by</span><span class="p">(</span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="n">buf</span><span class="p">;</span>
+<span class="w">   </span><span class="kt">size_t</span><span class="w"> </span><span class="n">count</span><span class="p">;</span>
+<span class="p">}</span><span class="w"> </span><span class="n">sized_buf_t</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">alloc_buf</span><span class="p">(</span><span class="n">sized_buf_t</span><span class="w"> </span><span class="o">*</span><span class="n">sbuf</span><span class="p">,</span><span class="w"> </span><span class="n">sized_t</span><span class="w"> </span><span class="n">nelems</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">sbuf</span><span class="o">-&gt;</span><span class="n">buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nelems</span><span class="p">);</span>
+<span class="w">   </span><span class="n">sbuf</span><span class="o">-&gt;</span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nelems</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// Transformed pseudo code:</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">alloc_buf</span><span class="p">(</span><span class="n">sized_buf_t</span><span class="w"> </span><span class="o">*</span><span class="n">sbuf</span><span class="p">,</span><span class="w"> </span><span class="n">sized_t</span><span class="w"> </span><span class="n">nelems</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// Materialize RHS values:</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">tmp_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">nelems</span><span class="p">);</span>
+<span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="n">tmp_count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nelems</span><span class="p">;</span>
+<span class="w">   </span><span class="c1">// Inserted check:</span>
+<span class="w">   </span><span class="c1">//   - checks to ensure that `lower &lt;= tmp_ptr &lt;= upper`</span>
+<span class="w">   </span><span class="c1">//   - if (upper(tmp_ptr) - tmp_ptr &lt; tmp_count) trap();</span>
+<span class="w">   </span><span class="n">sbuf</span><span class="o">-&gt;</span><span class="n">buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tmp_ptr</span><span class="p">;</span>
+<span class="w">   </span><span class="n">sbuf</span><span class="o">-&gt;</span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tmp_count</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Whether the compiler can optimize such run-time checks depends on how the upper
+bound of the pointer is derived. If the source pointer has <code class="docutils literal notranslate"><span class="pre">__sized_by</span></code>,
+<code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>, or a variant of such, the compiler assumes that the upper
+bound calculation doesn’t overflow, e.g., <code class="docutils literal notranslate"><span class="pre">ptr</span> <span class="pre">+</span> <span class="pre">size</span></code> (where the type of
+<code class="docutils literal notranslate"><span class="pre">ptr</span></code> is <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__sized_by(size)</span></code>), because when the <code class="docutils literal notranslate"><span class="pre">__sized_by</span></code> pointer
+is initialized, <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> inserts run-time checks to ensure that <code class="docutils literal notranslate"><span class="pre">ptr</span>
+<span class="pre">+</span> <span class="pre">size</span></code> doesn’t overflow and that <code class="docutils literal notranslate"><span class="pre">size</span> <span class="pre">&gt;=</span> <span class="pre">0</span></code>.</p>
+<p>Assuming the upper bound calculation doesn’t overflow, the compiler can simplify
+the trap condition <code class="docutils literal notranslate"><span class="pre">upper(tmp_ptr)</span> <span class="pre">-</span> <span class="pre">tmp_ptr</span> <span class="pre">&lt;</span> <span class="pre">tmp_count</span></code> to <code class="docutils literal notranslate"><span class="pre">size</span> <span class="pre">&lt;</span>
+<span class="pre">tmp_count</span></code> so if both <code class="docutils literal notranslate"><span class="pre">size</span></code> and <code class="docutils literal notranslate"><span class="pre">tmp_count</span></code> values are known at compile
+time such that <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">&lt;=</span> <span class="pre">tmp_count</span> <span class="pre">&lt;=</span> <span class="pre">size</span></code>, the optimizer can remove the check.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ptr</span> <span class="pre">+</span> <span class="pre">size</span></code> may still overflow if the <code class="docutils literal notranslate"><span class="pre">__sized_by</span></code> pointer is created from
+code that doesn’t enable <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>, which is undefined behavior.</p>
+<p>In the previous code example with the transformed <code class="docutils literal notranslate"><span class="pre">alloc_buf()</span></code>, the upper
+bound of <code class="docutils literal notranslate"><span class="pre">tmp_ptr</span></code> is derived from <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__sized_by_or_null(size)</span></code>, which
+is the return type of <code class="docutils literal notranslate"><span class="pre">malloc()</span></code>. Hence, the pointer arithmetic doesn’t
+overflow or <code class="docutils literal notranslate"><span class="pre">tmp_ptr</span></code> is null. Therefore, if <code class="docutils literal notranslate"><span class="pre">nelems</span></code> was given as a
+compile-time constant, the compiler could remove the checks.</p>
+</section>
+<section id="cast-rules">
+<h3><a class="toc-backref" href="#id24" role="doc-backlink">Cast rules</a><a class="headerlink" href="#cast-rules" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> does not enforce overall type safety and bounds invariants
+can still be violated by incorrect casts in some cases. That said,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> prevents type conversions that change bounds attributes in a
+way to violate the bounds invariant of the destination’s pointer annotation.
+Type conversions that change bounds attributes may be allowed if it does not
+violate the invariant of the destination or that can be verified at run time.
+Here are some of the important cast rules.</p>
+<p>Two pointers that have different bounds annotations on their nested pointer
+types are incompatible and cannot implicitly cast to each other. For example,
+<code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">*__single</span> <span class="pre">*__single</span></code> cannot be converted to <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">*__bidi_indexable</span>
+<span class="pre">*__single</span></code>. Such a conversion between incompatible nested bounds annotations
+can be allowed using an explicit cast (e.g., C-style cast). Hereafter, the rules
+only apply to the top pointer types. <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> cannot be converted
+to any other safe pointer types (<code class="docutils literal notranslate"><span class="pre">__single</span></code>, <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>,
+<code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>, etc) using a cast. The extension provides builtins to force
+this conversion, <code class="docutils literal notranslate"><span class="pre">__unsafe_forge_bidi_indexable(type,</span> <span class="pre">pointer,</span> <span class="pre">char_count)</span></code> to
+convert pointer to a <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> pointer of type with <code class="docutils literal notranslate"><span class="pre">char_count</span></code>
+bytes available and <code class="docutils literal notranslate"><span class="pre">__unsafe_forge_single(type,</span> <span class="pre">pointer)</span></code> to convert pointer
+to a single pointer of type type. The following examples show the usage of these
+functions. Function <code class="docutils literal notranslate"><span class="pre">example_forge_bidi()</span></code> gets an external buffer from an
+unsafe library by calling <code class="docutils literal notranslate"><span class="pre">get_buf()</span></code> which returns <code class="docutils literal notranslate"><span class="pre">void</span>
+<span class="pre">*__unsafe_indexable.</span></code> Under the type rules, this cannot be directly assigned to
+<code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*buf</span></code> (implicitly <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__bidi_indexable</span></code>). Thus,
+<code class="docutils literal notranslate"><span class="pre">__unsafe_forge_bidi_indexable</span></code> is used to manually create a
+<code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> from the unsafe buffer.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// unsafe_library.h</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">__unsafe_indexable</span><span class="w"> </span><span class="n">get_buf</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+<span class="kt">size_t</span><span class="w"> </span><span class="nf">get_buf_size</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+
+<span class="c1">// my_source1.c (enables -fbounds-safety)</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;unsafe_library.h&quot;</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">example_forge_bidi</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">buf</span><span class="w"> </span><span class="o">=</span>
+<span class="w">     </span><span class="n">__unsafe_forge_bidi_indexable</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">get_buf</span><span class="p">(),</span><span class="w"> </span><span class="n">get_buf_size</span><span class="p">());</span>
+<span class="w">   </span><span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="c1">// my_source2.c (enables -fbounds-safety)</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">example_forge_single</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="kt">FILE</span><span class="w"> </span><span class="o">*</span><span class="n">fp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__unsafe_forge_single</span><span class="p">(</span><span class="kt">FILE</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">fopen</span><span class="p">(</span><span class="s">&quot;mypath&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;rb&quot;</span><span class="p">));</span>
+<span class="w">   </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>Function <code class="docutils literal notranslate"><span class="pre">example_forge_single</span></code> takes a file handle by calling fopen defined
+in system header <code class="docutils literal notranslate"><span class="pre">stdio.h</span></code>. Assuming <code class="docutils literal notranslate"><span class="pre">stdio.h</span></code> did not adopt
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>, the return type of <code class="docutils literal notranslate"><span class="pre">fopen</span></code> would implicitly be <code class="docutils literal notranslate"><span class="pre">FILE</span>
+<span class="pre">*__unsafe_indexable</span></code> and thus it cannot be directly assigned to <code class="docutils literal notranslate"><span class="pre">FILE</span> <span class="pre">*fp</span></code>
+in the bounds-safe source. To allow this operation, <code class="docutils literal notranslate"><span class="pre">__unsafe_forge_single</span></code>
+is used to create a <code class="docutils literal notranslate"><span class="pre">__single</span></code> from the return value of <code class="docutils literal notranslate"><span class="pre">fopen</span></code>.</p></li>
+<li><p>Similar to <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code>, any non-pointer type (including <code class="docutils literal notranslate"><span class="pre">int</span></code>,
+<code class="docutils literal notranslate"><span class="pre">intptr_t</span></code>, <code class="docutils literal notranslate"><span class="pre">uintptr_t</span></code>, etc.) cannot be converted to any safe pointer
+type because these don’t have bounds information. <code class="docutils literal notranslate"><span class="pre">__unsafe_forge_single</span></code> or
+<code class="docutils literal notranslate"><span class="pre">__unsafe_forge_bidi_indexable</span></code> must be used to force the conversion.</p></li>
+<li><p>Any safe pointer types can cast to <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code> because it doesn’t
+have any invariant to maintain.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__single</span></code> casts to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> if the pointee type has a known
+size. After the conversion, the resulting <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> has the size of
+a single object of the pointee type of <code class="docutils literal notranslate"><span class="pre">__single</span></code>. <code class="docutils literal notranslate"><span class="pre">__single</span></code> cannot cast
+to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> if the pointee type is incomplete or sizeless. For
+example, <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__single</span></code> cannot convert to <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__bidi_indexable</span></code>
+because void is an incomplete type and thus the compiler cannot correctly
+determine the upper bound of a single void pointer.</p></li>
+<li><p>Similarly, <code class="docutils literal notranslate"><span class="pre">__single</span></code> can cast to <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> if the pointee type has a
+known size. The resulting <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> has the size of a single object of
+the pointee type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__single</span></code> casts to <code class="docutils literal notranslate"><span class="pre">__counted_by(E)</span></code> only if <code class="docutils literal notranslate"><span class="pre">E</span></code> is 0 or 1.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__single</span></code> can cast to <code class="docutils literal notranslate"><span class="pre">__single</span></code> including when they have different
+pointee types as long as it is allowed in the underlying C standard.
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> doesn’t guarantee type safety.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> and <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> can cast to <code class="docutils literal notranslate"><span class="pre">__single</span></code>. The
+compiler may insert run-time checks to ensure the pointer has at least a
+single element or is a null pointer.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> casts to <code class="docutils literal notranslate"><span class="pre">__indexable</span></code> if the pointer does not have an
+underflow. The compiler may insert run-time checks to ensure the pointer is
+not below the lower bound.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__indexable</span></code> casts to <code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code>. The resulting
+<code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> gets the lower bound same as the pointer value.</p></li>
+<li><p>A type conversion may involve both a bitcast and a bounds annotation cast. For
+example, casting from <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__bidi_indexable</span></code> to <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*__single</span></code> involve
+a bitcast (<code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*</span></code> to <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*</span></code>) and a bounds annotation cast
+(<code class="docutils literal notranslate"><span class="pre">__bidi_indexable</span></code> to <code class="docutils literal notranslate"><span class="pre">__single</span></code>). In this case, the compiler performs
+the bitcast and then converts the bounds annotation. This means, <code class="docutils literal notranslate"><span class="pre">int</span>
+<span class="pre">*__bidi_indexable</span></code> will be converted to <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*__bidi_indexable</span></code> and then
+to <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*__single</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> cannot cast to any safe pointer type without the same
+<code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> attribute. To perform the cast, programmers can use an
+intrinsic function such as <code class="docutils literal notranslate"><span class="pre">__unsafe_terminated_by_to_indexable(P)</span></code> to force
+the conversion.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> can cast to <code class="docutils literal notranslate"><span class="pre">__unsafe_indexable</span></code>.</p></li>
+<li><p>Any type without <code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> cannot cast to <code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code>
+without explicitly using an intrinsic function to allow it.</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">__unsafe_terminated_by_from_indexable(T,</span> <span class="pre">PTR</span> <span class="pre">[,</span> <span class="pre">PTR_TO_TERM])</span></code> casts any
+safe pointer PTR to a <code class="docutils literal notranslate"><span class="pre">__terminated_by(T)</span></code> pointer. <code class="docutils literal notranslate"><span class="pre">PTR_TO_TERM</span></code> is an
+optional argument where the programmer can provide the exact location of the
+terminator. With this argument, the function can skip reading the entire
+array in order to locate the end of the pointer (or the upper bound).
+Providing an incorrect <code class="docutils literal notranslate"><span class="pre">PTR_TO_TERM</span></code> causes a run-time trap.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">__unsafe_forge_terminated_by(T,</span> <span class="pre">P,</span> <span class="pre">E)</span></code> creates <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">__terminated_by(E)</span></code>
+pointer given any pointer <code class="docutils literal notranslate"><span class="pre">P</span></code>. Tmust be a pointer type.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="portability-with-toolchains-that-do-not-support-the-extension">
+<h3><a class="toc-backref" href="#id25" role="doc-backlink">Portability with toolchains that do not support the extension</a><a class="headerlink" href="#portability-with-toolchains-that-do-not-support-the-extension" title="Permalink to this heading">¶</a></h3>
+<p>The language model is designed so that it doesn’t alter the semantics of the
+original C program, other than introducing deterministic traps where otherwise
+the behavior is undefined and/or unsafe. Clang provides a toolchain header
+(<code class="docutils literal notranslate"><span class="pre">ptrcheck.h</span></code>) that macro-defines the annotations as type attributes when
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> is enabled and defines them to empty when the extension is
+disabled. Thus, the code adopting <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> can compile with
+toolchains that do not support this extension, by including the header or adding
+macros to define the annotations to empty. For example, the toolchain not
+supporting this extension may not have a header defining <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code>, so
+the code using <code class="docutils literal notranslate"><span class="pre">__counted_by</span></code> must define it as nothing or include a header
+that has the define.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature) &amp;&amp; __has_feature(bounds_safety)</span>
+<span class="cp">#define __counted_by(T) __attribute__((__counted_by__(T)))</span>
+<span class="c1">// ... other bounds annotations</span>
+<span class="cp">#else #define __counted_by(T) </span><span class="c1">// defined as nothing</span>
+<span class="c1">// ... other bounds annotations</span>
+<span class="cp">#endif</span>
+
+<span class="c1">// expands to `void foo(int * ptr, size_t count);`</span>
+<span class="c1">// when extension is not enabled or not available</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">__counted_by</span><span class="p">(</span><span class="n">count</span><span class="p">)</span><span class="w"> </span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">count</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="other-potential-applications-of-bounds-annotations">
+<h2><a class="toc-backref" href="#id26" role="doc-backlink">Other potential applications of bounds annotations</a><a class="headerlink" href="#other-potential-applications-of-bounds-annotations" title="Permalink to this heading">¶</a></h2>
+<p>The bounds annotations provided by the <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> programming model
+have potential use cases beyond the language extension itself. For example,
+static and dynamic analysis tools could use the bounds information to improve
+diagnostics for out-of-bounds accesses, even if <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> is not used.
+The bounds annotations could be used to improve C interoperability with
+bounds-safe languages, providing a better mapping to bounds-safe types in the
+safe language interface. The bounds annotations can also serve as documentation
+specifying the relationship between declarations.</p>
+</section>
+<section id="limitations">
+<h2><a class="toc-backref" href="#id27" role="doc-backlink">Limitations</a><a class="headerlink" href="#limitations" title="Permalink to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> aims to bring the bounds safety guarantee to the C language,
+and it does not guarantee other types of memory safety properties. Consequently,
+it may not prevent some of the secondary bounds safety violations caused by
+other types of safety violations such as type confusion. For instance,
+<code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> does not perform type-safety checks on conversions between
+<cite>__single`</cite> pointers of different pointee types (e.g., <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*__single</span></code> →
+<code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">*__single</span></code> → <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">*__single</span></code>) beyond what the foundation languages
+(C/C++) already offer.</p>
+<p><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code> heavily relies on run-time checks to keep the bounds safety
+and the soundness of the type system. This may incur significant code size
+overhead in unoptimized builds and leaving some of the adoption mistakes to be
+caught only at run time. This is not a fundamental limitation, however, because
+incrementally adding necessary static analysis will allow us to catch issues
+early on and remove unnecessary bounds checks in unoptimized builds.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SanitizerSpecialCaseList.html">Sanitizer special case list</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BoundsSafetyImplPlans.html">Implementation plans for <code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code></a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

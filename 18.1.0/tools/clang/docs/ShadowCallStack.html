@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ShadowCallStack &#8212; Clang 18.1.0rc documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=f0e7387b"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Source-based Code Coverage" href="SourceBasedCodeCoverage.html" />
+    <link rel="prev" title="SafeStack" href="SafeStack.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.0rc documentation</span></a></h1>
+        <h2 class="heading"><span>ShadowCallStack</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SafeStack.html">SafeStack</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SourceBasedCodeCoverage.html">Source-based Code Coverage</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="shadowcallstack">
+<h1>ShadowCallStack<a class="headerlink" href="#shadowcallstack" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id4">Introduction</a></p>
+<ul>
+<li><p><a class="reference internal" href="#comparison" id="id5">Comparison</a></p></li>
+<li><p><a class="reference internal" href="#compatibility" id="id6">Compatibility</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#security" id="id7">Security</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id8">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#low-level-api" id="id9">Low-level API</a></p>
+<ul>
+<li><p><a class="reference internal" href="#has-feature-shadow-call-stack" id="id10"><code class="docutils literal notranslate"><span class="pre">__has_feature(shadow_call_stack)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#attribute-no-sanitize-shadow-call-stack" id="id11"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;shadow-call-stack&quot;)))</span></code></a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#example" id="id12">Example</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this heading">¶</a></h2>
+<p>ShadowCallStack is an instrumentation pass, currently only implemented for
+aarch64, that protects programs against return address overwrites
+(e.g. stack buffer overflows.) It works by saving a function’s return address
+to a separately allocated ‘shadow call stack’ in the function prolog in
+non-leaf functions and loading the return address from the shadow call stack
+in the function epilog. The return address is also stored on the regular stack
+for compatibility with unwinders, but is otherwise unused.</p>
+<p>The aarch64 implementation is considered production ready, and
+an <a class="reference external" href="https://android.googlesource.com/platform/bionic/+/808d176e7e0dd727c7f929622ec017f6e065c582/libc/bionic/pthread_create.cpp#128">implementation of the runtime</a> has been added to Android’s libc
+(bionic). An x86_64 implementation was evaluated using Chromium and was found
+to have critical performance and security deficiencies–it was removed in
+LLVM 9.0. Details on the x86_64 implementation can be found in the
+<a class="reference external" href="https://releases.llvm.org/7.0.1/tools/clang/docs/ShadowCallStack.html">Clang 7.0.1 documentation</a>.</p>
+<section id="comparison">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Comparison</a><a class="headerlink" href="#comparison" title="Permalink to this heading">¶</a></h3>
+<p>To optimize for memory consumption and cache locality, the shadow call
+stack stores only an array of return addresses. This is in contrast to other
+schemes, like <a class="reference internal" href="SafeStack.html"><span class="doc">SafeStack</span></a>, that mirror the entire stack and trade-off
+consuming more memory for shorter function prologs and epilogs with fewer
+memory accesses.</p>
+<p><a class="reference external" href="https://xlab.tencent.com/en/2016/11/02/return-flow-guard/">Return Flow Guard</a> is a pure software implementation of shadow call stacks
+on x86_64. Like the previous implementation of ShadowCallStack on x86_64, it is
+inherently racy due to the architecture’s use of the stack for calls and
+returns.</p>
+<p>Intel <a class="reference external" href="https://software.intel.com/sites/default/files/managed/4d/2a/control-flow-enforcement-technology-preview.pdf">Control-flow Enforcement Technology</a> (CET) is a proposed hardware
+extension that would add native support to use a shadow stack to store/check
+return addresses at call/return time. Being a hardware implementation, it
+would not suffer from race conditions and would not incur the overhead of
+function instrumentation, but it does require operating system support.</p>
+</section>
+<section id="compatibility">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Compatibility</a><a class="headerlink" href="#compatibility" title="Permalink to this heading">¶</a></h3>
+<p>A runtime is not provided in compiler-rt so one must be provided by the
+compiled application or the operating system. Integrating the runtime into
+the operating system should be preferred since otherwise all thread creation
+and destruction would need to be intercepted by the application.</p>
+<p>The instrumentation makes use of the platform register <code class="docutils literal notranslate"><span class="pre">x18</span></code> on AArch64 and
+<code class="docutils literal notranslate"><span class="pre">x3</span></code> (<code class="docutils literal notranslate"><span class="pre">gp</span></code>) on RISC-V. For simplicity we will refer to this as the
+<code class="docutils literal notranslate"><span class="pre">SCSReg</span></code>. On some platforms, <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> is reserved, and on others, it is
+designated as a scratch register.  This generally means that any code that may
+run on the same thread as code compiled with ShadowCallStack must either target
+one of the platforms whose ABI reserves <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> (currently Android, Darwin,
+Fuchsia and Windows) or be compiled with a flag to reserve that register (e.g.,
+<code class="docutils literal notranslate"><span class="pre">-ffixed-x18</span></code>). If absolutely necessary, code compiled without reserving the
+register may be run on the same thread as code that uses ShadowCallStack by
+saving the register value temporarily on the stack (<a class="reference external" href="https://android-review.googlesource.com/c/platform/frameworks/base/+/803717">example in Android</a>) but
+this should be done with care since it risks leaking the shadow call stack
+address.</p>
+<p>Because it requires a dedicated register, the ShadowCallStack feature is
+incompatible with any other feature that may use <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code>. However, there is
+no inherent reason why ShadowCallStack needs to use a specific register; in
+principle, a platform could choose to reserve and use another register for
+ShadowCallStack, but this would be incompatible with the ABI standards
+published in AAPCS64 and the RISC-V psABI.</p>
+<p>Special unwind information is required on functions that are compiled
+with ShadowCallStack and that may be unwound, i.e. functions compiled with
+<code class="docutils literal notranslate"><span class="pre">-fexceptions</span></code> (which is the default in C++). Some unwinders (such as the
+libgcc 4.9 unwinder) do not understand this unwind info and will segfault
+when encountering it. LLVM libunwind processes this unwind info correctly,
+however. This means that if exceptions are used together with ShadowCallStack,
+the program must use a compatible unwinder.</p>
+</section>
+</section>
+<section id="security">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Security</a><a class="headerlink" href="#security" title="Permalink to this heading">¶</a></h2>
+<p>ShadowCallStack is intended to be a stronger alternative to
+<code class="docutils literal notranslate"><span class="pre">-fstack-protector</span></code>. It protects from non-linear overflows and arbitrary
+memory writes to the return address slot.</p>
+<p>The instrumentation makes use of the <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> register to reference the shadow
+call stack, meaning that references to the shadow call stack do not have
+to be stored in memory. This makes it possible to implement a runtime that
+avoids exposing the address of the shadow call stack to attackers that can
+read arbitrary memory. However, attackers could still try to exploit side
+channels exposed by the operating system <a class="reference external" href="https://eyalitkin.wordpress.com/2017/09/01/cartography-lighting-up-the-shadows/">[1]</a> <a class="reference external" href="https://www.blackhat.com/docs/eu-16/materials/eu-16-Goktas-Bypassing-Clangs-SafeStack.pdf">[2]</a> or processor <a class="reference external" href="https://www.vusec.net/projects/anc/">[3]</a>
+to discover the address of the shadow call stack.</p>
+<p>Unless care is taken when allocating the shadow call stack, it may be
+possible for an attacker to guess its address using the addresses of
+other allocations. Therefore, the address should be chosen to make this
+difficult. One way to do this is to allocate a large guard region without
+read/write permissions, randomly select a small region within it to be
+used as the address of the shadow call stack and mark only that region as
+read/write. This also mitigates somewhat against processor side channels.
+The intent is that the Android runtime <a class="reference external" href="https://android-review.googlesource.com/c/platform/bionic/+/891622">will do this</a>, but the platform will
+first need to be <a class="reference external" href="https://android-review.googlesource.com/c/platform/frameworks/av/+/837745">changed</a> to avoid using <code class="docutils literal notranslate"><span class="pre">setrlimit(RLIMIT_AS)</span></code> to limit
+memory allocations in certain processes, as this also limits the number of
+guard regions that can be allocated.</p>
+<p>The runtime will need the address of the shadow call stack in order to
+deallocate it when destroying the thread. If the entire program is compiled
+with <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> reserved, this is trivial: the address can be derived from the
+value stored in <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> (e.g. by masking out the lower bits). If a guard
+region is used, the address of the start of the guard region could then be
+stored at the start of the shadow call stack itself. But if it is possible
+for code compiled without reserving <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> to run on a thread managed by the
+runtime, which is the case on Android for example, the address must be stored
+somewhere else instead. On Android we store the address of the start of the
+guard region in TLS and deallocate the entire guard region including the
+shadow call stack at thread exit. This is considered acceptable given that
+the address of the start of the guard region is already somewhat guessable.</p>
+<p>One way in which the address of the shadow call stack could leak is in the
+<code class="docutils literal notranslate"><span class="pre">jmp_buf</span></code> data structure used by <code class="docutils literal notranslate"><span class="pre">setjmp</span></code> and <code class="docutils literal notranslate"><span class="pre">longjmp</span></code>. The Android
+runtime <a class="reference external" href="https://android.googlesource.com/platform/bionic/+/808d176e7e0dd727c7f929622ec017f6e065c582/libc/arch-arm64/bionic/setjmp.S#49">avoids this</a> by only storing the low bits of <code class="docutils literal notranslate"><span class="pre">SCSReg</span></code> in the
+<code class="docutils literal notranslate"><span class="pre">jmp_buf</span></code>, which requires the address of the shadow call stack to be
+aligned to its size.</p>
+<p>The architecture’s call and return instructions (<code class="docutils literal notranslate"><span class="pre">bl</span></code> and <code class="docutils literal notranslate"><span class="pre">ret</span></code>) operate on
+a register rather than the stack, which means that leaf functions are generally
+protected from return address overwrites even without ShadowCallStack.</p>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Permalink to this heading">¶</a></h2>
+<p>To enable ShadowCallStack, just pass the <code class="docutils literal notranslate"><span class="pre">-fsanitize=shadow-call-stack</span></code> flag
+to both compile and link command lines. On aarch64, you also need to pass
+<code class="docutils literal notranslate"><span class="pre">-ffixed-x18</span></code> unless your target already reserves <code class="docutils literal notranslate"><span class="pre">x18</span></code>. On RISC-V, <code class="docutils literal notranslate"><span class="pre">x3</span></code>
+(<code class="docutils literal notranslate"><span class="pre">gp</span></code>) is always reserved. It is, however, important to disable GP relaxation
+in the linker. This can be done with the <code class="docutils literal notranslate"><span class="pre">--no-relax-gp</span></code> flag in GNU ld.</p>
+<section id="low-level-api">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Low-level API</a><a class="headerlink" href="#low-level-api" title="Permalink to this heading">¶</a></h3>
+<section id="has-feature-shadow-call-stack">
+<h4><a class="toc-backref" href="#id10" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__has_feature(shadow_call_stack)</span></code></a><a class="headerlink" href="#has-feature-shadow-call-stack" title="Permalink to this heading">¶</a></h4>
+<p>In some cases one may need to execute different code depending on whether
+ShadowCallStack is enabled. The macro <code class="docutils literal notranslate"><span class="pre">__has_feature(shadow_call_stack)</span></code> can
+be used for this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature)</span>
+<span class="cp">#  if __has_feature(shadow_call_stack)</span>
+<span class="c1">// code that builds only under ShadowCallStack</span>
+<span class="cp">#  endif</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-no-sanitize-shadow-call-stack">
+<h4><a class="toc-backref" href="#id11" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;shadow-call-stack&quot;)))</span></code></a><a class="headerlink" href="#attribute-no-sanitize-shadow-call-stack" title="Permalink to this heading">¶</a></h4>
+<p>Use <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;shadow-call-stack&quot;)))</span></code> on a function
+declaration to specify that the shadow call stack instrumentation should not be
+applied to that function, even if enabled globally.</p>
+</section>
+</section>
+</section>
+<section id="example">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Example</a><a class="headerlink" href="#example" title="Permalink to this heading">¶</a></h2>
+<p>The following example code:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">bar</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Generates the following aarch64 assembly when compiled with <code class="docutils literal notranslate"><span class="pre">-O2</span></code>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>stp     x29, x30, [sp, #-16]!
+mov     x29, sp
+bl      bar
+add     w0, w0, #1
+ldp     x29, x30, [sp], #16
+ret
+</pre></div>
+</div>
+<p>Adding <code class="docutils literal notranslate"><span class="pre">-fsanitize=shadow-call-stack</span></code> would output the following assembly:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>str     x30, [x18], #8
+stp     x29, x30, [sp, #-16]!
+mov     x29, sp
+bl      bar
+add     w0, w0, #1
+ldp     x29, x30, [sp], #16
+ldr     x30, [x18, #-8]!
+ret
+</pre></div>
+</div>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SafeStack.html">SafeStack</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SourceBasedCodeCoverage.html">Source-based Code Coverage</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

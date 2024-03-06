@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debugging C++ Coroutines &#8212; Clang 18.1.0rc documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=f0e7387b"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="AMDGPU Support" href="AMDGPUSupport.html" />
+    <link rel="prev" title="API Notes: Annotations Without Modifying Headers" href="APINotes.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.0rc documentation</span></a></h1>
+        <h2 class="heading"><span>Debugging C++ Coroutines</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="APINotes.html">API Notes: Annotations Without Modifying Headers</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AMDGPUSupport.html">AMDGPU Support</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="debugging-c-coroutines">
+<h1>Debugging C++ Coroutines<a class="headerlink" href="#debugging-c-coroutines" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#terminology" id="id2">Terminology</a></p>
+<ul>
+<li><p><a class="reference internal" href="#coroutine-type" id="id3">coroutine type</a></p></li>
+<li><p><a class="reference internal" href="#coroutine" id="id4">coroutine</a></p></li>
+<li><p><a class="reference internal" href="#coroutine-frame" id="id5">coroutine frame</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#the-structure-of-coroutine-frames" id="id6">The structure of coroutine frames</a></p></li>
+<li><p><a class="reference internal" href="#print-promise-type" id="id7">Print promise_type</a></p></li>
+<li><p><a class="reference internal" href="#print-coroutine-frames" id="id8">Print coroutine frames</a></p>
+<ul>
+<li><p><a class="reference internal" href="#examples-to-print-coroutine-frames" id="id9">Examples to print coroutine frames</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#get-the-suspended-points" id="id10">Get the suspended points</a></p></li>
+<li><p><a class="reference internal" href="#get-the-asynchronous-stack" id="id11">Get the asynchronous stack</a></p>
+<ul>
+<li><p><a class="reference internal" href="#examples-to-print-asynchronous-stack" id="id12">Examples to print asynchronous stack</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#get-the-living-coroutines" id="id13">Get the living coroutines</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this heading">¶</a></h2>
+<p>For performance and other architectural reasons, the C++ Coroutines feature in
+the Clang compiler is implemented in two parts of the compiler.  Semantic
+analysis is performed in Clang, and Coroutine construction and optimization
+takes place in the LLVM middle-end.</p>
+<p>However, this design forces us to generate insufficient debugging information.
+Typically, the compiler generates debug information in the Clang frontend, as
+debug information is highly language specific. However, this is not possible
+for Coroutine frames because the frames are constructed in the LLVM middle-end.</p>
+<p>To mitigate this problem, the LLVM middle end attempts to generate some debug
+information, which is unfortunately incomplete, since much of the language
+specific information is missing in the middle end.</p>
+<p>This document describes how to use this debug information to better debug
+coroutines.</p>
+</section>
+<section id="terminology">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Terminology</a><a class="headerlink" href="#terminology" title="Permalink to this heading">¶</a></h2>
+<p>Due to the recent nature of C++20 Coroutines, the terminology used to describe
+the concepts of Coroutines is not settled.  This section defines a common,
+understandable terminology to be used consistently throughout this document.</p>
+<section id="coroutine-type">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">coroutine type</a><a class="headerlink" href="#coroutine-type" title="Permalink to this heading">¶</a></h3>
+<p>A <cite>coroutine function</cite> is any function that contains any of the Coroutine
+Keywords <cite>co_await</cite>, <cite>co_yield</cite>, or <cite>co_return</cite>.  A <cite>coroutine type</cite> is a
+possible return type of one of these <cite>coroutine functions</cite>.  <cite>Task</cite> and
+<cite>Generator</cite> are commonly referred to coroutine types.</p>
+</section>
+<section id="coroutine">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">coroutine</a><a class="headerlink" href="#coroutine" title="Permalink to this heading">¶</a></h3>
+<p>By technical definition, a <cite>coroutine</cite> is a suspendable function. However,
+programmers typically use <cite>coroutine</cite> to refer to an individual instance.
+For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">Task</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Coros</span><span class="p">;</span><span class="w"> </span><span class="c1">// Task is a coroutine type.</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span>
+<span class="w">  </span><span class="n">Coros</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="n">CoroTask</span><span class="p">());</span><span class="w"> </span><span class="c1">// CoroTask is a coroutine function, which</span>
+<span class="w">                               </span><span class="c1">// would return a coroutine type &#39;Task&#39;.</span>
+</pre></div>
+</div>
+<p>In practice, we typically say “<cite>Coros</cite> contains 3 coroutines” in the above
+example, though this is not strictly correct.  More technically, this should
+say “<cite>Coros</cite> contains 3 coroutine instances” or “Coros contains 3 coroutine
+objects.”</p>
+<p>In this document, we follow the common practice of using <cite>coroutine</cite> to refer
+to an individual <cite>coroutine instance</cite>, since the terms <cite>coroutine instance</cite> and
+<cite>coroutine object</cite> aren’t sufficiently defined in this case.</p>
+</section>
+<section id="coroutine-frame">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">coroutine frame</a><a class="headerlink" href="#coroutine-frame" title="Permalink to this heading">¶</a></h3>
+<p>The C++ Standard uses <cite>coroutine state</cite> to describe the allocated storage. In
+the compiler, we use <cite>coroutine frame</cite> to describe the generated data structure
+that contains the necessary information.</p>
+</section>
+</section>
+<section id="the-structure-of-coroutine-frames">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">The structure of coroutine frames</a><a class="headerlink" href="#the-structure-of-coroutine-frames" title="Permalink to this heading">¶</a></h2>
+<p>The structure of coroutine frames is defined as:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">__r</span><span class="p">)();</span><span class="w"> </span><span class="c1">// function pointer to the `resume` function</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">__d</span><span class="p">)();</span><span class="w"> </span><span class="c1">// function pointer to the `destroy` function</span>
+<span class="w">  </span><span class="n">promise_type</span><span class="p">;</span><span class="w"> </span><span class="c1">// the corresponding `promise_type`</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="c1">// Any other needed information</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In the debugger, the function’s name is obtainable from the address of the
+function. And the name of <cite>resume</cite> function is equal to the name of the
+coroutine function. So the name of the coroutine is obtainable once the
+address of the coroutine is known.</p>
+</section>
+<section id="print-promise-type">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Print promise_type</a><a class="headerlink" href="#print-promise-type" title="Permalink to this heading">¶</a></h2>
+<p>Every coroutine has a <cite>promise_type</cite>, which defines the behavior
+for the corresponding coroutine. In other words, if two coroutines have the
+same <cite>promise_type</cite>, they should behave in the same way.
+To print a <cite>promise_type</cite> in a debugger when stopped at a breakpoint inside a
+coroutine, printing the <cite>promise_type</cite> can be done by:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span> <span class="n">__promise</span>
+</pre></div>
+</div>
+<p>It is also possible to print the <cite>promise_type</cite> of a coroutine from the address
+of the coroutine frame. For example, if the address of a coroutine frame is
+0x416eb0, and the type of the <cite>promise_type</cite> is <cite>task::promise_type</cite>, printing
+the <cite>promise_type</cite> can be done by:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span> <span class="p">(</span><span class="n">task</span><span class="p">::</span><span class="n">promise_type</span><span class="p">)</span><span class="o">*</span><span class="p">(</span><span class="mh">0x416eb0</span><span class="o">+</span><span class="mh">0x10</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>This is possible because the <cite>promise_type</cite> is guaranteed by the ABI to be at a
+16 bit offset from the coroutine frame.</p>
+<p>Note that there is also an ABI independent method:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span> <span class="n">std</span><span class="p">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">task</span><span class="p">::</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="p">::</span><span class="n">from_address</span><span class="p">((</span><span class="n">void</span><span class="o">*</span><span class="p">)</span><span class="mh">0x416eb0</span><span class="p">)</span><span class="o">.</span><span class="n">promise</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>The functions <cite>from_address(void*)</cite> and <cite>promise()</cite> are often small enough to
+be removed during optimization, so this method may not be possible.</p>
+</section>
+<section id="print-coroutine-frames">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Print coroutine frames</a><a class="headerlink" href="#print-coroutine-frames" title="Permalink to this heading">¶</a></h2>
+<p>LLVM generates the debug information for the coroutine frame in the LLVM middle
+end, which permits printing of the coroutine frame in the debugger. Much like
+the <cite>promise_type</cite>, when stopped at a breakpoint inside a coroutine we can
+print the coroutine frame by:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span> <span class="n">__coro_frame</span>
+</pre></div>
+</div>
+<p>Just as printing the <cite>promise_type</cite> is possible from the coroutine address,
+printing the details of the coroutine frame from an address is also possible:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>(gdb) # Get the address of coroutine frame
+(gdb) print/x *0x418eb0
+$1 = 0x4019e0
+(gdb) # Get the linkage name for the coroutine
+(gdb) x 0x4019e0
+0x4019e0 &lt;_ZL9coro_taski&gt;:  0xe5894855
+(gdb) # Turn off the demangler temporarily to avoid the debugger misunderstanding the name.
+(gdb) set demangle-style none
+(gdb) # The coroutine frame type is &#39;linkage_name.coro_frame_ty&#39;
+(gdb) print  (&#39;_ZL9coro_taski.coro_frame_ty&#39;)*(0x418eb0)
+$2 = {__resume_fn = 0x4019e0 &lt;coro_task(int)&gt;, __destroy_fn = 0x402000 &lt;coro_task(int)&gt;, __promise = {...}, ...}
+</pre></div>
+</div>
+<p>The above is possible because:</p>
+<p>(1) The name of the debug type of the coroutine frame is the <cite>linkage_name</cite>,
+plus the <cite>.coro_frame_ty</cite> suffix because each coroutine function shares the
+same coroutine type.</p>
+<p>(2) The coroutine function name is accessible from the address of the coroutine
+frame.</p>
+<p>The above commands can be simplified by placing them in debug scripts.</p>
+<section id="examples-to-print-coroutine-frames">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Examples to print coroutine frames</a><a class="headerlink" href="#examples-to-print-coroutine-frames" title="Permalink to this heading">¶</a></h3>
+<p>The print examples below use the following definition:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;coroutine&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">task</span><span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">task</span><span class="w"> </span><span class="nf">get_return_object</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="w"> </span><span class="nf">initial_suspend</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{};</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="w"> </span><span class="nf">final_suspend</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{};</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">return_void</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">unhandled_exception</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">count</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="p">};</span>
+
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">resume</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">handle</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">task</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">hdl</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">handle</span><span class="p">(</span><span class="n">hdl</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">  </span><span class="o">~</span><span class="n">task</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+<span class="w">      </span><span class="n">handle</span><span class="p">.</span><span class="n">destroy</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">await_counter</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="k">template</span><span class="o">&lt;</span><span class="k">class</span><span class="w"> </span><span class="nc">PromiseType</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">PromiseType</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">count</span><span class="o">++</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">coro_task</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">task</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">coro_task</span><span class="p">(</span><span class="mi">43</span><span class="p">);</span>
+<span class="w">  </span><span class="n">t</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span>
+<span class="w">  </span><span class="n">t</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span>
+<span class="w">  </span><span class="n">t</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In debug mode (<cite>O0</cite> + <cite>g</cite>), the printing result would be:</p>
+<pre class="literal-block">{__resume_fn = 0x4019e0 &lt;coro_task(int)&gt;, __destroy_fn = 0x402000 &lt;coro_task(int)&gt;, __promise = {count = 1}, v = 43, a = 45, __coro_index = 1 '001', struct_std__suspend_always_0 = {__int_8 = 0 '000'},
+  class_await_counter_1 = {__int_8 = 0 '000'}, class_await_counter_2 = {__int_8 = 0 '000'}, struct_std__suspend_always_3 = {__int_8 = 0 '000'}}</pre>
+<p>In the above, the values of <cite>v</cite> and <cite>a</cite> are clearly expressed, as are the
+temporary values for <cite>await_counter</cite> (<cite>class_await_counter_1</cite> and
+<cite>class_await_counter_2</cite>) and <cite>std::suspend_always</cite> (
+<cite>struct_std__suspend_always_0</cite> and <cite>struct_std__suspend_always_3</cite>). The index
+of the current suspension point of the coroutine is emitted as <cite>__coro_index</cite>.
+In the above example, the <cite>__coro_index</cite> value of <cite>1</cite> means the coroutine
+stopped at the second suspend point (Note that <cite>__coro_index</cite> is zero indexed)
+which is the first <cite>co_await await_counter{};</cite> in <cite>coro_task</cite>. Note that the
+first initial suspend point is the compiler generated
+<cite>co_await promise_type::initial_suspend()</cite>.</p>
+<p>However, when optimizations are enabled, the printed result changes drastically:</p>
+<pre class="literal-block">{__resume_fn = 0x401280 &lt;coro_task(int)&gt;, __destroy_fn = 0x401390 &lt;coro_task(int)&gt;, __promise = {count = 1}, __int_32_0 = 43, __coro_index = 1 '001'}</pre>
+<p>Unused values are optimized out, as well as the name of the local variable <cite>a</cite>.
+The only information remained is the value of a 32 bit integer. In this simple
+case, it seems to be pretty clear that <cite>__int_32_0</cite> represents <cite>a</cite>. However, it
+is not true.</p>
+<p>An important note with optimization is that the value of a variable may not
+properly express the intended value in the source code.  For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">coro_task</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is 43 here</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is still 43 here</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is still 43 here!</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is still 43 here!!</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// Why is __int_32_0 still 43 here?</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>When debugging step-by-step, the value of <cite>__int_32_0</cite> seemingly does not
+change, despite being frequently incremented, and instead is always <cite>43</cite>.
+While this might be surprising, this is a result of the optimizer recognizing
+that it can eliminate most of the load/store operations. The above code gets
+optimized to the equivalent of:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">coro_task</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">store</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="n">to</span><span class="w"> </span><span class="n">__int_32_0</span><span class="w"> </span><span class="n">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">frame</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load</span><span class="w"> </span><span class="n">__int_32_0</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">2</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">3</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load</span><span class="w"> </span><span class="n">__int_32_0</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">4</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">5</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>It should now be obvious why the value of <cite>__int_32_0</cite> remains unchanged
+throughout the function. It is important to recognize that <cite>__int_32_0</cite>
+does not directly correspond to <cite>a</cite>, but is instead a variable generated
+to assist the compiler in code generation. The variables in an optimized
+coroutine frame should not be thought of as directly representing the
+variables in the C++ source.</p>
+</section>
+</section>
+<section id="get-the-suspended-points">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Get the suspended points</a><a class="headerlink" href="#get-the-suspended-points" title="Permalink to this heading">¶</a></h2>
+<p>An important requirement for debugging coroutines is to understand suspended
+points, which are where the coroutine is currently suspended and awaiting.</p>
+<p>For simple cases like the above, inspecting the value of the <cite>__coro_index</cite>
+variable in the coroutine frame works well.</p>
+<p>However, it is not quite so simple in really complex situations. In these
+cases, it is necessary to use the coroutine libraries to insert the
+line-number.</p>
+<p>For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// For all the promise_type we want:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="o">+</span><span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">line_number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0xffffffff</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;source_location&gt;</span>
+
+<span class="c1">// For all the awaiter types we need:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">awaiter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Promise</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">Promise</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">,</span>
+<span class="w">                     </span><span class="n">std</span><span class="o">::</span><span class="n">source_location</span><span class="w"> </span><span class="n">sl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">source_location</span><span class="o">::</span><span class="n">current</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="p">...</span>
+<span class="w">        </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">line_number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sl</span><span class="p">.</span><span class="n">line</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>In this case, we use <cite>std::source_location</cite> to store the line number of the
+await inside the <cite>promise_type</cite>.  Since we can locate the coroutine function
+from the address of the coroutine, we can identify suspended points this way
+as well.</p>
+<p>The downside here is that this comes at the price of additional runtime cost.
+This is consistent with the C++ philosophy of “Pay for what you use”.</p>
+</section>
+<section id="get-the-asynchronous-stack">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Get the asynchronous stack</a><a class="headerlink" href="#get-the-asynchronous-stack" title="Permalink to this heading">¶</a></h2>
+<p>Another important requirement to debug a coroutine is to print the asynchronous
+stack to identify the asynchronous caller of the coroutine.  As many
+implementations of coroutine types store <cite>std::coroutine_handle&lt;&gt; continuation</cite>
+in the promise type, identifying the caller should be trivial.  The
+<cite>continuation</cite> is typically the awaiting coroutine for the current coroutine.
+That is, the asynchronous parent.</p>
+<p>Since the <cite>promise_type</cite> is obtainable from the address of a coroutine and
+contains the corresponding continuation (which itself is a coroutine with a
+<cite>promise_type</cite>), it should be trivial to print the entire asynchronous stack.</p>
+<p>This logic should be quite easily captured in a debugger script.</p>
+<section id="examples-to-print-asynchronous-stack">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Examples to print asynchronous stack</a><a class="headerlink" href="#examples-to-print-asynchronous-stack" title="Permalink to this heading">¶</a></h3>
+<p>Here is an example to print the asynchronous stack for the normal task implementation.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// debugging-example.cpp</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;coroutine&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;utility&gt;</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">task</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">task</span><span class="w"> </span><span class="nf">get_return_object</span><span class="p">();</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="w"> </span><span class="nf">initial_suspend</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{};</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">unhandled_exception</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="nc">FinalSuspend</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">continuation</span><span class="p">;</span>
+<span class="w">      </span><span class="k">auto</span><span class="w"> </span><span class="n">await_ready</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">      </span><span class="k">auto</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">continuation</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">      </span><span class="kt">void</span><span class="w"> </span><span class="n">await_resume</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="n">FinalSuspend</span><span class="w"> </span><span class="nf">final_suspend</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">continuation</span><span class="p">};</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="nf">return_value</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">res</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">res</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">continuation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">noop_coroutine</span><span class="p">();</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="p">};</span>
+
+<span class="w">  </span><span class="n">task</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">handle</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">  </span><span class="o">~</span><span class="n">task</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+<span class="w">      </span><span class="n">handle</span><span class="p">.</span><span class="n">destroy</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="k">co_await</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">struct</span><span class="w"> </span><span class="nc">Awaiter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="w">      </span><span class="k">auto</span><span class="w"> </span><span class="n">await_ready</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">      </span><span class="k">auto</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">continuation</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">continuation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">continuation</span><span class="p">;</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">      </span><span class="kt">int</span><span class="w"> </span><span class="n">await_resume</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kt">int</span><span class="w"> </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">result</span><span class="p">;</span>
+<span class="w">        </span><span class="n">handle</span><span class="p">.</span><span class="n">destroy</span><span class="p">();</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">Awaiter</span><span class="p">{</span><span class="n">std</span><span class="o">::</span><span class="n">exchange</span><span class="p">(</span><span class="n">handle</span><span class="p">,</span><span class="w"> </span><span class="k">nullptr</span><span class="p">)};</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">syncStart</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">handle</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">result</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="n">task</span><span class="w"> </span><span class="nf">task::promise_type::get_return_object</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="k">namespace</span><span class="w"> </span><span class="nn">detail</span><span class="w"> </span><span class="p">{</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">int</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;</span>
+<span class="n">task</span><span class="w"> </span><span class="n">chain_fn</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">co_return</span><span class="w"> </span><span class="n">N</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="k">co_await</span><span class="w"> </span><span class="n">chain_fn</span><span class="o">&lt;</span><span class="n">N</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="p">}</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span>
+<span class="n">task</span><span class="w"> </span><span class="n">chain_fn</span><span class="o">&lt;</span><span class="mi">0</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// This is the default breakpoint.</span>
+<span class="w">  </span><span class="n">__builtin_debugtrap</span><span class="p">();</span>
+<span class="w">  </span><span class="k">co_return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="p">}</span><span class="w">  </span><span class="c1">// namespace detail</span>
+
+<span class="n">task</span><span class="w"> </span><span class="n">chain</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">co_return</span><span class="w"> </span><span class="k">co_await</span><span class="w"> </span><span class="n">detail</span><span class="o">::</span><span class="n">chain_fn</span><span class="o">&lt;</span><span class="mi">30</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">chain</span><span class="p">().</span><span class="n">syncStart</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In the example, the <code class="docutils literal notranslate"><span class="pre">task</span></code> coroutine holds a <code class="docutils literal notranslate"><span class="pre">continuation</span></code> field,
+which would be resumed once the <code class="docutils literal notranslate"><span class="pre">task</span></code> completes.
+In another word, the <code class="docutils literal notranslate"><span class="pre">continuation</span></code> is the asynchronous caller for the <code class="docutils literal notranslate"><span class="pre">task</span></code>.
+Just like the normal function returns to its caller when the function completes.</p>
+<p>So we can use the <code class="docutils literal notranslate"><span class="pre">continuation</span></code> field to construct the asynchronous stack:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># debugging-helper.py</span>
+<span class="kn">import</span> <span class="nn">gdb</span>
+<span class="kn">from</span> <span class="nn">gdb.FrameDecorator</span> <span class="kn">import</span> <span class="n">FrameDecorator</span>
+
+<span class="k">class</span> <span class="nc">SymValueWrapper</span><span class="p">():</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">symbol</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sym</span> <span class="o">=</span> <span class="n">symbol</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">val</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sym</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; = &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">val</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">get_long_pointer_size</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">gdb</span><span class="o">.</span><span class="n">lookup_type</span><span class="p">(</span><span class="s1">&#39;long&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">pointer</span><span class="p">()</span><span class="o">.</span><span class="n">sizeof</span>
+
+<span class="k">def</span> <span class="nf">cast_addr2long_pointer</span><span class="p">(</span><span class="n">addr</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">gdb</span><span class="o">.</span><span class="n">Value</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">gdb</span><span class="o">.</span><span class="n">lookup_type</span><span class="p">(</span><span class="s1">&#39;long&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">pointer</span><span class="p">())</span>
+
+<span class="k">def</span> <span class="nf">dereference</span><span class="p">(</span><span class="n">addr</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">long</span><span class="p">(</span><span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">dereference</span><span class="p">())</span>
+
+<span class="k">class</span> <span class="nc">CoroutineFrame</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task_addr</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frame_addr</span> <span class="o">=</span> <span class="n">task_addr</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resume_addr</span> <span class="o">=</span> <span class="n">task_addr</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">destroy_addr</span> <span class="o">=</span> <span class="n">task_addr</span> <span class="o">+</span> <span class="n">get_long_pointer_size</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promise_addr</span> <span class="o">=</span> <span class="n">task_addr</span> <span class="o">+</span> <span class="n">get_long_pointer_size</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span>
+        <span class="c1"># In the example, the continuation is the first field member of the promise_type.</span>
+        <span class="c1"># So they have the same addresses.</span>
+        <span class="c1"># If we want to generalize the scripts to other coroutine types, we need to be sure</span>
+        <span class="c1"># the continuation field is the first member of promise_type.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">continuation_addr</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">promise_addr</span>
+
+    <span class="k">def</span> <span class="nf">next_task_addr</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">dereference</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">continuation_addr</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">CoroutineFrameDecorator</span><span class="p">(</span><span class="n">FrameDecorator</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coro_frame</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">CoroutineFrameDecorator</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span> <span class="o">=</span> <span class="n">coro_frame</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span> <span class="o">=</span> <span class="n">dereference</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">resume_addr</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resume_func_block</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">block_for_pc</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resume_func_block</span> <span class="o">==</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s1">&#39;Not stackless coroutine.&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">line_info</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">find_pc_line</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">address</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span>
+
+    <span class="k">def</span> <span class="nf">filename</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">line_info</span><span class="o">.</span><span class="n">symtab</span><span class="o">.</span><span class="n">filename</span>
+
+    <span class="k">def</span> <span class="nf">frame_args</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">SymValueWrapper</span><span class="p">(</span><span class="s2">&quot;frame_addr&quot;</span><span class="p">,</span> <span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">frame_addr</span><span class="p">)),</span>
+                <span class="n">SymValueWrapper</span><span class="p">(</span><span class="s2">&quot;promise_addr&quot;</span><span class="p">,</span> <span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">promise_addr</span><span class="p">)),</span>
+                <span class="n">SymValueWrapper</span><span class="p">(</span><span class="s2">&quot;continuation_addr&quot;</span><span class="p">,</span> <span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">continuation_addr</span><span class="p">))</span>
+                <span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">function</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resume_func_block</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">print_name</span>
+
+    <span class="k">def</span> <span class="nf">line</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">line_info</span><span class="o">.</span><span class="n">line</span>
+
+<span class="k">class</span> <span class="nc">StripDecorator</span><span class="p">(</span><span class="n">FrameDecorator</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">frame</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">StripDecorator</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">function</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">function_name</span> <span class="o">=</span> <span class="n">f</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">shift</span> <span class="o">=</span> <span class="mi">2</span><span class="p">):</span>
+        <span class="n">addr</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">address</span><span class="p">()</span> <span class="o">==</span> <span class="kc">None</span> <span class="k">else</span> <span class="s1">&#39;</span><span class="si">%#x</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">address</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot; in &quot;</span>
+        <span class="n">location</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="p">()</span> <span class="o">==</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot; at &quot;</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot;:&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">line</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">addr</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">function</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">([</span><span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="k">for</span> <span class="n">args</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">frame_args</span><span class="p">()])</span> <span class="o">+</span> <span class="n">location</span>
+
+<span class="k">class</span> <span class="nc">CoroutineFilter</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">create_coroutine_frames</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task_addr</span><span class="p">):</span>
+        <span class="n">frames</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">while</span> <span class="n">task_addr</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">coro_frame</span> <span class="o">=</span> <span class="n">CoroutineFrame</span><span class="p">(</span><span class="n">task_addr</span><span class="p">)</span>
+            <span class="n">frames</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">CoroutineFrameDecorator</span><span class="p">(</span><span class="n">coro_frame</span><span class="p">))</span>
+            <span class="n">task_addr</span> <span class="o">=</span> <span class="n">coro_frame</span><span class="o">.</span><span class="n">next_task_addr</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">frames</span>
+
+<span class="k">class</span> <span class="nc">AsyncStack</span><span class="p">(</span><span class="n">gdb</span><span class="o">.</span><span class="n">Command</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">AsyncStack</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="s2">&quot;async-bt&quot;</span><span class="p">,</span> <span class="n">gdb</span><span class="o">.</span><span class="n">COMMAND_USER</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">invoke</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg</span><span class="p">,</span> <span class="n">from_tty</span><span class="p">):</span>
+        <span class="n">coroutine_filter</span> <span class="o">=</span> <span class="n">CoroutineFilter</span><span class="p">()</span>
+        <span class="n">argv</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">string_to_argv</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">task</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">parse_and_eval</span><span class="p">(</span><span class="s1">&#39;__coro_frame&#39;</span><span class="p">)</span>
+                <span class="n">task</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">address</span><span class="p">),</span> <span class="mi">16</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;Can&#39;t find __coro_frame in current context.</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span>
+                      <span class="s2">&quot;Please use `async-bt` in stackless coroutine context.&quot;</span><span class="p">)</span>
+                <span class="k">return</span>
+        <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;usage: async-bt &lt;pointer to task&gt;&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">task</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span>
+
+        <span class="n">frames</span> <span class="o">=</span> <span class="n">coroutine_filter</span><span class="o">.</span><span class="n">create_coroutine_frames</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">frames</span><span class="p">:</span>
+            <span class="nb">print</span> <span class="s1">&#39;#&#39;</span><span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">StripDecorator</span><span class="p">(</span><span class="n">f</span><span class="p">))</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span>
+
+<span class="n">AsyncStack</span><span class="p">()</span>
+
+<span class="k">class</span> <span class="nc">ShowCoroFrame</span><span class="p">(</span><span class="n">gdb</span><span class="o">.</span><span class="n">Command</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ShowCoroFrame</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="s2">&quot;show-coro-frame&quot;</span><span class="p">,</span> <span class="n">gdb</span><span class="o">.</span><span class="n">COMMAND_USER</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">invoke</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg</span><span class="p">,</span> <span class="n">from_tty</span><span class="p">):</span>
+        <span class="n">argv</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">string_to_argv</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;usage: show-coro-frame &lt;address of coroutine frame&gt;&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">addr</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span>
+        <span class="n">block</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">block_for_pc</span><span class="p">(</span><span class="n">long</span><span class="p">(</span><span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">dereference</span><span class="p">()))</span>
+        <span class="k">if</span> <span class="n">block</span> <span class="o">==</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span> <span class="s2">&quot;block &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;  is none.&quot;</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Disable demangling since gdb will treat names starting with `_Z`(The marker for Itanium ABI) specially.</span>
+        <span class="n">gdb</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;set demangle-style none&quot;</span><span class="p">)</span>
+
+        <span class="n">coro_frame_type</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">lookup_type</span><span class="p">(</span><span class="n">block</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">linkage_name</span> <span class="o">+</span> <span class="s2">&quot;.coro_frame_ty&quot;</span><span class="p">)</span>
+        <span class="n">coro_frame_ptr_type</span> <span class="o">=</span> <span class="n">coro_frame_type</span><span class="o">.</span><span class="n">pointer</span><span class="p">()</span>
+        <span class="n">coro_frame</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">Value</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">coro_frame_ptr_type</span><span class="p">)</span><span class="o">.</span><span class="n">dereference</span><span class="p">()</span>
+
+        <span class="n">gdb</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;set demangle-style auto&quot;</span><span class="p">)</span>
+        <span class="n">gdb</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">format_string</span><span class="p">(</span><span class="n">pretty_structs</span> <span class="o">=</span> <span class="kc">True</span><span class="p">))</span>
+
+<span class="n">ShowCoroFrame</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Then let’s run:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>$ clang++ -std=c++20 -g debugging-example.cpp -o debugging-example
+$ gdb ./debugging-example
+(gdb) # We&#39;ve already set the breakpoint.
+(gdb) r
+Program received signal SIGTRAP, Trace/breakpoint trap.
+detail::chain_fn&lt;0&gt; () at debugging-example2.cpp:73
+73      co_return 0;
+(gdb) # Executes the debugging scripts
+(gdb) source debugging-helper.py
+(gdb) # Print the asynchronous stack
+(gdb) async-bt
+#0 0x401c40 in detail::chain_fn&lt;0&gt;() [&#39;frame_addr = 0x441860&#39;, &#39;promise_addr = 0x441870&#39;, &#39;continuation_addr = 0x441870&#39;] at debugging-example.cpp:71
+#1 0x4022d0 in detail::chain_fn&lt;1&gt;() [&#39;frame_addr = 0x441810&#39;, &#39;promise_addr = 0x441820&#39;, &#39;continuation_addr = 0x441820&#39;] at debugging-example.cpp:66
+#2 0x403060 in detail::chain_fn&lt;2&gt;() [&#39;frame_addr = 0x4417c0&#39;, &#39;promise_addr = 0x4417d0&#39;, &#39;continuation_addr = 0x4417d0&#39;] at debugging-example.cpp:66
+#3 0x403df0 in detail::chain_fn&lt;3&gt;() [&#39;frame_addr = 0x441770&#39;, &#39;promise_addr = 0x441780&#39;, &#39;continuation_addr = 0x441780&#39;] at debugging-example.cpp:66
+#4 0x404b80 in detail::chain_fn&lt;4&gt;() [&#39;frame_addr = 0x441720&#39;, &#39;promise_addr = 0x441730&#39;, &#39;continuation_addr = 0x441730&#39;] at debugging-example.cpp:66
+#5 0x405910 in detail::chain_fn&lt;5&gt;() [&#39;frame_addr = 0x4416d0&#39;, &#39;promise_addr = 0x4416e0&#39;, &#39;continuation_addr = 0x4416e0&#39;] at debugging-example.cpp:66
+#6 0x4066a0 in detail::chain_fn&lt;6&gt;() [&#39;frame_addr = 0x441680&#39;, &#39;promise_addr = 0x441690&#39;, &#39;continuation_addr = 0x441690&#39;] at debugging-example.cpp:66
+#7 0x407430 in detail::chain_fn&lt;7&gt;() [&#39;frame_addr = 0x441630&#39;, &#39;promise_addr = 0x441640&#39;, &#39;continuation_addr = 0x441640&#39;] at debugging-example.cpp:66
+#8 0x4081c0 in detail::chain_fn&lt;8&gt;() [&#39;frame_addr = 0x4415e0&#39;, &#39;promise_addr = 0x4415f0&#39;, &#39;continuation_addr = 0x4415f0&#39;] at debugging-example.cpp:66
+#9 0x408f50 in detail::chain_fn&lt;9&gt;() [&#39;frame_addr = 0x441590&#39;, &#39;promise_addr = 0x4415a0&#39;, &#39;continuation_addr = 0x4415a0&#39;] at debugging-example.cpp:66
+#10 0x409ce0 in detail::chain_fn&lt;10&gt;() [&#39;frame_addr = 0x441540&#39;, &#39;promise_addr = 0x441550&#39;, &#39;continuation_addr = 0x441550&#39;] at debugging-example.cpp:66
+#11 0x40aa70 in detail::chain_fn&lt;11&gt;() [&#39;frame_addr = 0x4414f0&#39;, &#39;promise_addr = 0x441500&#39;, &#39;continuation_addr = 0x441500&#39;] at debugging-example.cpp:66
+#12 0x40b800 in detail::chain_fn&lt;12&gt;() [&#39;frame_addr = 0x4414a0&#39;, &#39;promise_addr = 0x4414b0&#39;, &#39;continuation_addr = 0x4414b0&#39;] at debugging-example.cpp:66
+#13 0x40c590 in detail::chain_fn&lt;13&gt;() [&#39;frame_addr = 0x441450&#39;, &#39;promise_addr = 0x441460&#39;, &#39;continuation_addr = 0x441460&#39;] at debugging-example.cpp:66
+#14 0x40d320 in detail::chain_fn&lt;14&gt;() [&#39;frame_addr = 0x441400&#39;, &#39;promise_addr = 0x441410&#39;, &#39;continuation_addr = 0x441410&#39;] at debugging-example.cpp:66
+#15 0x40e0b0 in detail::chain_fn&lt;15&gt;() [&#39;frame_addr = 0x4413b0&#39;, &#39;promise_addr = 0x4413c0&#39;, &#39;continuation_addr = 0x4413c0&#39;] at debugging-example.cpp:66
+#16 0x40ee40 in detail::chain_fn&lt;16&gt;() [&#39;frame_addr = 0x441360&#39;, &#39;promise_addr = 0x441370&#39;, &#39;continuation_addr = 0x441370&#39;] at debugging-example.cpp:66
+#17 0x40fbd0 in detail::chain_fn&lt;17&gt;() [&#39;frame_addr = 0x441310&#39;, &#39;promise_addr = 0x441320&#39;, &#39;continuation_addr = 0x441320&#39;] at debugging-example.cpp:66
+#18 0x410960 in detail::chain_fn&lt;18&gt;() [&#39;frame_addr = 0x4412c0&#39;, &#39;promise_addr = 0x4412d0&#39;, &#39;continuation_addr = 0x4412d0&#39;] at debugging-example.cpp:66
+#19 0x4116f0 in detail::chain_fn&lt;19&gt;() [&#39;frame_addr = 0x441270&#39;, &#39;promise_addr = 0x441280&#39;, &#39;continuation_addr = 0x441280&#39;] at debugging-example.cpp:66
+#20 0x412480 in detail::chain_fn&lt;20&gt;() [&#39;frame_addr = 0x441220&#39;, &#39;promise_addr = 0x441230&#39;, &#39;continuation_addr = 0x441230&#39;] at debugging-example.cpp:66
+#21 0x413210 in detail::chain_fn&lt;21&gt;() [&#39;frame_addr = 0x4411d0&#39;, &#39;promise_addr = 0x4411e0&#39;, &#39;continuation_addr = 0x4411e0&#39;] at debugging-example.cpp:66
+#22 0x413fa0 in detail::chain_fn&lt;22&gt;() [&#39;frame_addr = 0x441180&#39;, &#39;promise_addr = 0x441190&#39;, &#39;continuation_addr = 0x441190&#39;] at debugging-example.cpp:66
+#23 0x414d30 in detail::chain_fn&lt;23&gt;() [&#39;frame_addr = 0x441130&#39;, &#39;promise_addr = 0x441140&#39;, &#39;continuation_addr = 0x441140&#39;] at debugging-example.cpp:66
+#24 0x415ac0 in detail::chain_fn&lt;24&gt;() [&#39;frame_addr = 0x4410e0&#39;, &#39;promise_addr = 0x4410f0&#39;, &#39;continuation_addr = 0x4410f0&#39;] at debugging-example.cpp:66
+#25 0x416850 in detail::chain_fn&lt;25&gt;() [&#39;frame_addr = 0x441090&#39;, &#39;promise_addr = 0x4410a0&#39;, &#39;continuation_addr = 0x4410a0&#39;] at debugging-example.cpp:66
+#26 0x4175e0 in detail::chain_fn&lt;26&gt;() [&#39;frame_addr = 0x441040&#39;, &#39;promise_addr = 0x441050&#39;, &#39;continuation_addr = 0x441050&#39;] at debugging-example.cpp:66
+#27 0x418370 in detail::chain_fn&lt;27&gt;() [&#39;frame_addr = 0x440ff0&#39;, &#39;promise_addr = 0x441000&#39;, &#39;continuation_addr = 0x441000&#39;] at debugging-example.cpp:66
+#28 0x419100 in detail::chain_fn&lt;28&gt;() [&#39;frame_addr = 0x440fa0&#39;, &#39;promise_addr = 0x440fb0&#39;, &#39;continuation_addr = 0x440fb0&#39;] at debugging-example.cpp:66
+#29 0x419e90 in detail::chain_fn&lt;29&gt;() [&#39;frame_addr = 0x440f50&#39;, &#39;promise_addr = 0x440f60&#39;, &#39;continuation_addr = 0x440f60&#39;] at debugging-example.cpp:66
+#30 0x41ac20 in detail::chain_fn&lt;30&gt;() [&#39;frame_addr = 0x440f00&#39;, &#39;promise_addr = 0x440f10&#39;, &#39;continuation_addr = 0x440f10&#39;] at debugging-example.cpp:66
+#31 0x41b9b0 in chain() [&#39;frame_addr = 0x440eb0&#39;, &#39;promise_addr = 0x440ec0&#39;, &#39;continuation_addr = 0x440ec0&#39;] at debugging-example.cpp:77
+</pre></div>
+</div>
+<p>Now we get the complete asynchronous stack!
+It is also possible to print other asynchronous stack which doesn’t live in the top of the stack.
+We can make it by passing the address of the corresponding coroutine frame to <code class="docutils literal notranslate"><span class="pre">async-bt</span></code> command.</p>
+<p>By the debugging scripts, we can print any coroutine frame too as long as we know the address.
+For example, we can print the coroutine frame for <code class="docutils literal notranslate"><span class="pre">detail::chain_fn&lt;18&gt;()</span></code> in the above example.
+From the log record, we know the address of the coroutine frame is <code class="docutils literal notranslate"><span class="pre">0x4412c0</span></code> in the run. Then we can:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(gdb) show-coro-frame 0x4412c0
+{
+  __resume_fn = 0x410960 &lt;detail::chain_fn&lt;18&gt;()&gt;,
+  __destroy_fn = 0x410d60 &lt;detail::chain_fn&lt;18&gt;()&gt;,
+  __promise = {
+    continuation = {
+      _M_fr_ptr = 0x441270
+    },
+    result = 0
+  },
+  struct_Awaiter_0 = {
+    struct_std____n4861__coroutine_handle_0 = {
+      struct_std____n4861__coroutine_handle = {
+        PointerType = 0x441310
+      }
+    }
+  },
+  struct_task_1 = {
+    struct_std____n4861__coroutine_handle_0 = {
+      struct_std____n4861__coroutine_handle = {
+        PointerType = 0x0
+      }
+    }
+  },
+  struct_task__promise_type__FinalSuspend_2 = {
+    struct_std____n4861__coroutine_handle = {
+      PointerType = 0x0
+    }
+  },
+  __coro_index = 1 &#39;\001&#39;,
+  struct_std____n4861__suspend_always_3 = {
+    __int_8 = 0 &#39;\000&#39;
+  }
+</pre></div>
+</div>
+</section>
+</section>
+<section id="get-the-living-coroutines">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Get the living coroutines</a><a class="headerlink" href="#get-the-living-coroutines" title="Permalink to this heading">¶</a></h2>
+<p>Another useful task when debugging coroutines is to enumerate the list of
+living coroutines, which is often done with threads.  While technically
+possible, this task is not recommended in production code as it is costly at
+runtime. One such solution is to store the list of currently running coroutines
+in a collection:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kr">inline</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">unordered_set</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">*&gt;</span><span class="w"> </span><span class="n">lived_coroutines</span><span class="p">;</span>
+<span class="c1">// For all promise_type we want to record</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="n">promise_type</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// Note to avoid data races</span>
+<span class="w">        </span><span class="n">lived_coroutines</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">).</span><span class="n">address</span><span class="p">());</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="o">~</span><span class="n">promise_type</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// Note to avoid data races</span>
+<span class="w">        </span><span class="n">lived_coroutines</span><span class="p">.</span><span class="n">erase</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">).</span><span class="n">address</span><span class="p">());</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>In the above code snippet, we save the address of every lived coroutine in the
+<cite>lived_coroutines</cite> <cite>unordered_set</cite>. As before, once we know the address of the
+coroutine we can derive the function, <cite>promise_type</cite>, and other members of the
+frame. Thus, we could print the list of lived coroutines from that collection.</p>
+<p>Please note that the above is expensive from a storage perspective, and requires
+some level of locking (not pictured) on the collection to prevent data races.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="APINotes.html">API Notes: Annotations Without Modifying Headers</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AMDGPUSupport.html">AMDGPU Support</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>
