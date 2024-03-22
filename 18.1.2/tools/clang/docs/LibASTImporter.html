@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ASTImporter: Merging Clang ASTs &#8212; Clang 18.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=2f6c9c8e"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="How To Setup Clang Tooling For LLVM" href="HowToSetupToolingForLLVM.html" />
+    <link rel="prev" title="Clang Transformer Tutorial" href="ClangTransformerTutorial.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.2 documentation</span></a></h1>
+        <h2 class="heading"><span>ASTImporter: Merging Clang ASTs</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangTransformerTutorial.html">Clang Transformer Tutorial</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="HowToSetupToolingForLLVM.html">How To Setup Clang Tooling For LLVM</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="astimporter-merging-clang-asts">
+<h1>ASTImporter: Merging Clang ASTs<a class="headerlink" href="#astimporter-merging-clang-asts" title="Permalink to this heading">¶</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">ASTImporter</span></code> class is part of Clang’s core library, the AST library.
+It imports nodes of an <code class="docutils literal notranslate"><span class="pre">ASTContext</span></code> into another <code class="docutils literal notranslate"><span class="pre">ASTContext</span></code>.</p>
+<p>In this document, we assume basic knowledge about the Clang AST.  See the <a class="reference internal" href="IntroductionToTheClangAST.html"><span class="doc">Introduction
+to the Clang AST</span></a> if you want to learn more
+about how the AST is structured.
+Knowledge about <a class="reference internal" href="LibASTMatchers.html"><span class="doc">matching the Clang AST</span></a> and the <a class="reference external" href="https://clang.llvm.org/docs/LibASTMatchersReference.html">reference for the matchers</a> are also useful.</p>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id2">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#algorithm-of-the-import" id="id3">Algorithm of the import</a></p></li>
+<li><p><a class="reference internal" href="#api" id="id4">API</a></p>
+<ul>
+<li><p><a class="reference internal" href="#errors-during-the-import-process" id="id5">Errors during the import process</a></p>
+<ul>
+<li><p><a class="reference internal" href="#error-propagation" id="id6">Error propagation</a></p></li>
+<li><p><a class="reference internal" href="#polluted-ast" id="id7">Polluted AST</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#using-the-ast-merge-clang-front-end-action" id="id8">Using the <code class="docutils literal notranslate"><span class="pre">-ast-merge</span></code> Clang front-end action</a></p>
+<ul>
+<li><p><a class="reference internal" href="#example-for-c" id="id9">Example for C</a></p></li>
+<li><p><a class="reference internal" href="#id1" id="id10">Example for C++</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">ASTContext</span></code> holds long-lived AST nodes (such as types and decls) that can be referred to throughout the semantic analysis of a file.
+In some cases it is preferable to work with more than one <code class="docutils literal notranslate"><span class="pre">ASTContext</span></code>.
+For example, we’d like to parse multiple different files inside the same Clang tool.
+It may be convenient if we could view the set of the resulting ASTs as if they were one AST resulting from the parsing of each file together.
+<code class="docutils literal notranslate"><span class="pre">ASTImporter</span></code> provides the way to copy types or declarations from one <code class="docutils literal notranslate"><span class="pre">ASTContext</span></code> to another.
+We refer to the context from which we import as the <strong>“from” context</strong> or <em>source context</em>; and the context into which we import as the <strong>“to” context</strong> or <em>destination context</em>.</p>
+<p>Existing clients of the <code class="docutils literal notranslate"><span class="pre">ASTImporter</span></code> library are Cross Translation Unit (CTU) static analysis and the LLDB expression parser.
+CTU static analysis imports a definition of a function if its definition is found in another translation unit (TU).
+This way the analysis can breach out from the single TU limitation.
+LLDB’s <code class="docutils literal notranslate"><span class="pre">expr</span></code> command parses a user-defined expression, creates an <code class="docutils literal notranslate"><span class="pre">ASTContext</span></code> for that and then imports the missing definitions from the AST what we got from the debug information (DWARF, etc).</p>
+</section>
+<section id="algorithm-of-the-import">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Algorithm of the import</a><a class="headerlink" href="#algorithm-of-the-import" title="Permalink to this heading">¶</a></h2>
+<p>Importing one AST node copies that node into the destination <code class="docutils literal notranslate"><span class="pre">ASTContext</span></code>.
+Why do we have to copy the node?
+Isn’t enough to insert the pointer to that node into the destination context?
+One reason is that the “from” context may outlive the “to” context.
+Also, the Clang AST consider nodes (or certain properties of nodes) equivalent if they have the same address!</p>
+<p>The import algorithm has to ensure that the structurally equivalent nodes in the different translation units are not getting duplicated in the merged AST.
+E.g. if we include the definition of the vector template (<code class="docutils literal notranslate"><span class="pre">#include</span> <span class="pre">&lt;vector&gt;</span></code>) in two translation units, then their merged AST should have only one node which represents the template.
+Also, we have to discover <em>one definition rule</em> (ODR) violations.
+For instance, if there is a class definition with the same name in both translation units, but one of the definition contains a different number of fields.
+So, we look up existing definitions, and then we check the structural equivalency on those nodes.
+The following pseudo-code demonstrates the basics of the import mechanism:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Pseudo-code(!) of import:</span>
+<span class="n">ErrorOrDecl</span><span class="w"> </span><span class="nf">Import</span><span class="p">(</span><span class="n">Decl</span><span class="w"> </span><span class="o">*</span><span class="n">FromD</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Decl</span><span class="w"> </span><span class="o">*</span><span class="n">ToDecl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">;</span>
+<span class="w">  </span><span class="n">FoundDeclsList</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Look</span><span class="w"> </span><span class="n">up</span><span class="w"> </span><span class="n">all</span><span class="w"> </span><span class="n">Decls</span><span class="w"> </span><span class="n">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="s">&quot;to&quot;</span><span class="w"> </span><span class="n">Ctx</span><span class="w"> </span><span class="n">with</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">same</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="n">of</span><span class="w"> </span><span class="n">FromD</span><span class="p">;</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="n">FoundDecl</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">FoundDeclsList</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">StructurallyEquivalentDecls</span><span class="p">(</span><span class="n">FoundDecl</span><span class="p">,</span><span class="w"> </span><span class="n">FromD</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">ToDecl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">FoundDecl</span><span class="p">;</span>
+<span class="w">      </span><span class="n">Mark</span><span class="w"> </span><span class="n">FromD</span><span class="w"> </span><span class="n">as</span><span class="w"> </span><span class="n">imported</span><span class="p">;</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">Report</span><span class="w"> </span><span class="n">ODR</span><span class="w"> </span><span class="n">violation</span><span class="p">;</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">error</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">FoundDeclsList</span><span class="w"> </span><span class="n">is</span><span class="w"> </span><span class="n">empty</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">Import</span><span class="w"> </span><span class="n">dependent</span><span class="w"> </span><span class="n">declarations</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="n">types</span><span class="w"> </span><span class="n">of</span><span class="w"> </span><span class="n">ToDecl</span><span class="p">;</span>
+<span class="w">    </span><span class="n">ToDecl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">create</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">AST</span><span class="w"> </span><span class="n">node</span><span class="w"> </span><span class="n">in</span><span class="w"> </span><span class="s">&quot;to&quot;</span><span class="w"> </span><span class="n">Ctx</span><span class="p">;</span>
+<span class="w">    </span><span class="n">Mark</span><span class="w"> </span><span class="n">FromD</span><span class="w"> </span><span class="n">as</span><span class="w"> </span><span class="n">imported</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">ToDecl</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Two AST nodes are <em>structurally equivalent</em> if they are</p>
+<ul class="simple">
+<li><p>builtin types and refer to the same type, e.g. <code class="docutils literal notranslate"><span class="pre">int</span></code> and <code class="docutils literal notranslate"><span class="pre">int</span></code> are structurally equivalent,</p></li>
+<li><p>function types and all their parameters have structurally equivalent types,</p></li>
+<li><p>record types and all their fields in order of their definition have the same identifier names and structurally equivalent types,</p></li>
+<li><p>variable or function declarations and they have the same identifier name and their types are structurally equivalent.</p></li>
+</ul>
+<p>We could extend the definition of structural equivalency to templates similarly.</p>
+<p>If A and B are AST nodes and <em>A depends on B</em>, then we say that A is a <strong>dependant</strong> of B and B is a <strong>dependency</strong> of A.
+The words “dependant” and “dependency” are nouns in British English.
+Unfortunately, in American English, the adjective “dependent” is used for both meanings.
+In this document, with the “dependent” adjective we always address the dependencies, the B node in the example.</p>
+</section>
+<section id="api">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">API</a><a class="headerlink" href="#api" title="Permalink to this heading">¶</a></h2>
+<p>Let’s create a tool which uses the ASTImporter class!
+First, we build two ASTs from virtual files; the content of the virtual files are synthesized from string literals:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ToUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;to.cc&quot;</span><span class="p">);</span><span class="w"> </span><span class="c1">// empty file</span>
+<span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">FromUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">    </span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">    class MyClass {</span>
+<span class="s">      int m1;</span>
+<span class="s">      int m2;</span>
+<span class="s">    };</span>
+<span class="s">    </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s">&quot;from.cc&quot;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The first AST corresponds to the destination (“to”) context - which is empty - and the second for the source (“from”) context.
+Next, we define a matcher to match <code class="docutils literal notranslate"><span class="pre">MyClass</span></code> in the “from” context:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">auto</span><span class="w"> </span><span class="n">Matcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cxxRecordDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;MyClass&quot;</span><span class="p">));</span>
+<span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">From</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">CXXRecordDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">FromUnit</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Now we create the Importer and do the import:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">ASTImporter</span><span class="w"> </span><span class="n">Importer</span><span class="p">(</span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                     </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                     </span><span class="cm">/*MinimalImport=*/</span><span class="nb">true</span><span class="p">);</span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">Decl</span><span class="w"> </span><span class="o">*&gt;</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">Import</span><span class="p">(</span><span class="n">From</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">Import</span></code> call returns with <code class="docutils literal notranslate"><span class="pre">llvm::Expected</span></code>, so, we must check for any error.
+Please refer to the <a class="reference external" href="https://llvm.org/docs/ProgrammersManual.html#recoverable-errors">error handling</a> documentation for details.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">ImportedOrErr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;ERROR: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If there’s no error then we can get the underlying value.
+In this example we will print the AST of the “to” context.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">Decl</span><span class="w"> </span><span class="o">*</span><span class="n">Imported</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">ImportedOrErr</span><span class="p">;</span>
+<span class="n">Imported</span><span class="o">-&gt;</span><span class="n">getTranslationUnitDecl</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">dump</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>Since we set <strong>minimal import</strong> in the constructor of the importer, the AST will not contain the declaration of the members (once we run the test tool).</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>TranslationUnitDecl<span class="w"> </span>0x68b9a8<span class="w"> </span><span class="s">&lt;&lt;invalid sloc&gt;&gt; &lt;invalid</span><span class="w"> </span>sloc&gt;
+<span class="sb">`</span>-CXXRecordDecl<span class="w"> </span>0x6c7e30<span class="w"> </span>&lt;line:2:7,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>class<span class="w"> </span>MyClass<span class="w"> </span>definition
+<span class="w">  </span><span class="sb">`</span>-DefinitionData<span class="w"> </span>pass_in_registers<span class="w"> </span>standard_layout<span class="w"> </span>trivially_copyable<span class="w"> </span>trivial<span class="w"> </span>literal
+<span class="w">    </span><span class="p">|</span>-DefaultConstructor<span class="w"> </span>exists<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">    </span><span class="p">|</span>-CopyConstructor<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">    </span><span class="p">|</span>-MoveConstructor<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">    </span><span class="p">|</span>-CopyAssignment<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">    </span><span class="p">|</span>-MoveAssignment<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">    </span><span class="sb">`</span>-Destructor<span class="w"> </span>simple<span class="w"> </span>irrelevant<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+</pre></div>
+</div>
+<p>We’d like to get the members too, so, we use <code class="docutils literal notranslate"><span class="pre">ImportDefinition</span></code> to copy the whole definition of <code class="docutils literal notranslate"><span class="pre">MyClass</span></code> into the “to” context.
+Then we dump the AST again.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">ImportDefinition</span><span class="p">(</span><span class="n">From</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;ERROR: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Imported definition.</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="n">Imported</span><span class="o">-&gt;</span><span class="n">getTranslationUnitDecl</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">dump</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>This time the AST is going to contain the members too.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>TranslationUnitDecl<span class="w"> </span>0x68b9a8<span class="w"> </span><span class="s">&lt;&lt;invalid sloc&gt;&gt; &lt;invalid</span><span class="w"> </span>sloc&gt;
+<span class="sb">`</span>-CXXRecordDecl<span class="w"> </span>0x6c7e30<span class="w"> </span>&lt;line:2:7,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>class<span class="w"> </span>MyClass<span class="w"> </span>definition
+<span class="w">  </span><span class="p">|</span>-DefinitionData<span class="w"> </span>pass_in_registers<span class="w"> </span>standard_layout<span class="w"> </span>trivially_copyable<span class="w"> </span>trivial<span class="w"> </span>literal
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-DefaultConstructor<span class="w"> </span>exists<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyConstructor<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveConstructor<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyAssignment<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveAssignment<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="sb">`</span>-Destructor<span class="w"> </span>simple<span class="w"> </span>irrelevant<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span>-CXXRecordDecl<span class="w"> </span>0x6c7f48<span class="w"> </span>&lt;col:7,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>implicit<span class="w"> </span>class<span class="w"> </span>MyClass
+<span class="w">  </span><span class="p">|</span>-FieldDecl<span class="w"> </span>0x6c7ff0<span class="w"> </span>&lt;line:3:9,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>m1<span class="w"> </span><span class="s1">&#39;int&#39;</span>
+<span class="w">  </span><span class="sb">`</span>-FieldDecl<span class="w"> </span>0x6c8058<span class="w"> </span>&lt;line:4:9,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>m2<span class="w"> </span><span class="s1">&#39;int&#39;</span>
+</pre></div>
+</div>
+<p>We can spare the call for <code class="docutils literal notranslate"><span class="pre">ImportDefinition</span></code> if we set up the importer to do a “normal” (not minimal) import.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">ASTImporter</span><span class="w"> </span><span class="nf">Importer</span><span class="p">(</span><span class="w"> </span><span class="p">....</span><span class="w">  </span><span class="cm">/*MinimalImport=*/</span><span class="nb">false</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>With <strong>normal import</strong>, all dependent declarations are imported normally.
+However, with minimal import, the dependent Decls are imported without definition, and we have to import their definition for each if we later need that.</p>
+<p>Putting this all together here is how the source of the tool looks like:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;clang/AST/ASTImporter.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;clang/ASTMatchers/ASTMatchFinder.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;clang/ASTMatchers/ASTMatchers.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;clang/Tooling/Tooling.h&quot;</span>
+
+<span class="k">using</span><span class="w"> </span><span class="k">namespace</span><span class="w"> </span><span class="nn">clang</span><span class="p">;</span>
+<span class="k">using</span><span class="w"> </span><span class="k">namespace</span><span class="w"> </span><span class="nn">tooling</span><span class="p">;</span>
+<span class="k">using</span><span class="w"> </span><span class="k">namespace</span><span class="w"> </span><span class="nn">ast_matchers</span><span class="p">;</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Node</span><span class="p">,</span><span class="w"> </span><span class="k">typename</span><span class="w"> </span><span class="nc">Matcher</span><span class="o">&gt;</span>
+<span class="n">Node</span><span class="w"> </span><span class="o">*</span><span class="n">getFirstDecl</span><span class="p">(</span><span class="n">Matcher</span><span class="w"> </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Unit</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">MB</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">M</span><span class="p">.</span><span class="n">bind</span><span class="p">(</span><span class="s">&quot;bindStr&quot;</span><span class="p">);</span><span class="w"> </span><span class="c1">// Bind the to-be-matched node to a string key.</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">MatchRes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">match</span><span class="p">(</span><span class="n">MB</span><span class="p">,</span><span class="w"> </span><span class="n">Unit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">());</span>
+<span class="w">  </span><span class="c1">// We should have at least one match.</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">MatchRes</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="c1">// Get the first matched and bound node.</span>
+<span class="w">  </span><span class="n">Node</span><span class="w"> </span><span class="o">*</span><span class="n">Result</span><span class="w"> </span><span class="o">=</span>
+<span class="w">      </span><span class="k">const_cast</span><span class="o">&lt;</span><span class="n">Node</span><span class="w"> </span><span class="o">*&gt;</span><span class="p">(</span><span class="n">MatchRes</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="k">template</span><span class="w"> </span><span class="n">getNodeAs</span><span class="o">&lt;</span><span class="n">Node</span><span class="o">&gt;</span><span class="p">(</span><span class="s">&quot;bindStr&quot;</span><span class="p">));</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">Result</span><span class="p">);</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">Result</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ToUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">      </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;to.cc&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">FromUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">      </span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">      class MyClass {</span>
+<span class="s">        int m1;</span>
+<span class="s">        int m2;</span>
+<span class="s">      };</span>
+<span class="s">      </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="s">&quot;from.cc&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">Matcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cxxRecordDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;MyClass&quot;</span><span class="p">));</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">From</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">CXXRecordDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">FromUnit</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">ASTImporter</span><span class="w"> </span><span class="n">Importer</span><span class="p">(</span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                       </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                       </span><span class="cm">/*MinimalImport=*/</span><span class="nb">true</span><span class="p">);</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">Decl</span><span class="w"> </span><span class="o">*&gt;</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">Import</span><span class="p">(</span><span class="n">From</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">ImportedOrErr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+<span class="w">    </span><span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;ERROR: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">Decl</span><span class="w"> </span><span class="o">*</span><span class="n">Imported</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">ImportedOrErr</span><span class="p">;</span>
+<span class="w">  </span><span class="n">Imported</span><span class="o">-&gt;</span><span class="n">getTranslationUnitDecl</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">dump</span><span class="p">();</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">ImportDefinition</span><span class="p">(</span><span class="n">From</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;ERROR: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Imported definition.</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">Imported</span><span class="o">-&gt;</span><span class="n">getTranslationUnitDecl</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">dump</span><span class="p">();</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>We may extend the <code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code> under let’s say <code class="docutils literal notranslate"><span class="pre">clang/tools</span></code> with the build and link instructions:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>add_clang_executable<span class="o">(</span>astimporter-demo<span class="w"> </span>ASTImporterDemo.cpp<span class="o">)</span>
+clang_target_link_libraries<span class="o">(</span>astimporter-demo
+<span class="w">  </span>PRIVATE
+<span class="w">  </span>LLVMSupport
+<span class="w">  </span>clangAST
+<span class="w">  </span>clangASTMatchers
+<span class="w">  </span>clangBasic
+<span class="w">  </span>clangFrontend
+<span class="w">  </span>clangSerialization
+<span class="w">  </span>clangTooling
+<span class="w">  </span><span class="o">)</span>
+</pre></div>
+</div>
+<p>Then we can build and execute the new tool.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>ninja<span class="w"> </span>astimporter-demo<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>./bin/astimporter-demo
+</pre></div>
+</div>
+<section id="errors-during-the-import-process">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Errors during the import process</a><a class="headerlink" href="#errors-during-the-import-process" title="Permalink to this heading">¶</a></h3>
+<p>Normally, either the source or the destination context contains the definition of a declaration.
+However, there may be cases when both of the contexts have a definition for a given symbol.
+If these definitions differ, then we have a name conflict, in C++ it is known as ODR (one definition rule) violation.
+Let’s modify the previous tool we had written and try to import a <code class="docutils literal notranslate"><span class="pre">ClassTemplateSpecializationDecl</span></code> with a conflicting definition:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ToUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">      </span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">      // primary template</span>
+<span class="s">      template &lt;typename T&gt;</span>
+<span class="s">      struct X {};</span>
+<span class="s">      // explicit specialization</span>
+<span class="s">      template&lt;&gt;</span>
+<span class="s">      struct X&lt;int&gt; { int i; };</span>
+<span class="s">      </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="s">&quot;to.cc&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">enableSourceFileDiagnostics</span><span class="p">();</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">FromUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">      </span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">      // primary template</span>
+<span class="s">      template &lt;typename T&gt;</span>
+<span class="s">      struct X {};</span>
+<span class="s">      // explicit specialization</span>
+<span class="s">      template&lt;&gt;</span>
+<span class="s">      struct X&lt;int&gt; { int i2; };</span>
+<span class="s">      // field mismatch:  ^^</span>
+<span class="s">      </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="s">&quot;from.cc&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">enableSourceFileDiagnostics</span><span class="p">();</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">Matcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">classTemplateSpecializationDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;X&quot;</span><span class="p">));</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">From</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">ClassTemplateSpecializationDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">FromUnit</span><span class="p">);</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">To</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">ClassTemplateSpecializationDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">ToUnit</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">ASTImporter</span><span class="w"> </span><span class="n">Importer</span><span class="p">(</span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                       </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                       </span><span class="cm">/*MinimalImport=*/</span><span class="nb">false</span><span class="p">);</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">Decl</span><span class="w"> </span><span class="o">*&gt;</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">Import</span><span class="p">(</span><span class="n">From</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">ImportedOrErr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+<span class="w">    </span><span class="n">llvm</span><span class="o">::</span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;ERROR: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">    </span><span class="n">To</span><span class="o">-&gt;</span><span class="n">getTranslationUnitDecl</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">dump</span><span class="p">();</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>When we run the tool we have the following warning:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>to.cc:7:14:<span class="w"> </span>warning:<span class="w"> </span><span class="nb">type</span><span class="w"> </span><span class="s1">&#39;X&lt;int&gt;&#39;</span><span class="w"> </span>has<span class="w"> </span>incompatible<span class="w"> </span>definitions<span class="w"> </span><span class="k">in</span><span class="w"> </span>different<span class="w"> </span>translation<span class="w"> </span>units<span class="w"> </span><span class="o">[</span>-Wodr<span class="o">]</span>
+<span class="w">      </span>struct<span class="w"> </span>X&lt;int&gt;<span class="w"> </span><span class="o">{</span><span class="w"> </span>int<span class="w"> </span>i<span class="p">;</span><span class="w"> </span><span class="o">}</span><span class="p">;</span>
+<span class="w">             </span>^
+to.cc:7:27:<span class="w"> </span>note:<span class="w"> </span>field<span class="w"> </span>has<span class="w"> </span>name<span class="w"> </span><span class="s1">&#39;i&#39;</span><span class="w"> </span>here
+<span class="w">      </span>struct<span class="w"> </span>X&lt;int&gt;<span class="w"> </span><span class="o">{</span><span class="w"> </span>int<span class="w"> </span>i<span class="p">;</span><span class="w"> </span><span class="o">}</span><span class="p">;</span>
+<span class="w">                          </span>^
+from.cc:7:27:<span class="w"> </span>note:<span class="w"> </span>field<span class="w"> </span>has<span class="w"> </span>name<span class="w"> </span><span class="s1">&#39;i2&#39;</span><span class="w"> </span>here
+<span class="w">      </span>struct<span class="w"> </span>X&lt;int&gt;<span class="w"> </span><span class="o">{</span><span class="w"> </span>int<span class="w"> </span>i2<span class="p">;</span><span class="w"> </span><span class="o">}</span><span class="p">;</span>
+<span class="w">                        </span>^
+</pre></div>
+</div>
+<p>Note, because of these diagnostics we had to call <code class="docutils literal notranslate"><span class="pre">enableSourceFileDiagnostics</span></code> on the <code class="docutils literal notranslate"><span class="pre">ASTUnit</span></code> objects.</p>
+<p>Since we could not import the specified declaration (<code class="docutils literal notranslate"><span class="pre">From</span></code>), we get an error in the return value.
+The AST does not contain the conflicting definition, so we are left with the original AST.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ERROR:<span class="w"> </span>NameConflict
+TranslationUnitDecl<span class="w"> </span>0xe54a48<span class="w"> </span><span class="s">&lt;&lt;invalid sloc&gt;&gt; &lt;invalid</span><span class="w"> </span>sloc&gt;
+<span class="p">|</span>-ClassTemplateDecl<span class="w"> </span>0xe91020<span class="w"> </span>&lt;to.cc:3:7,<span class="w"> </span>line:4:17&gt;<span class="w"> </span>col:14<span class="w"> </span>X
+<span class="p">|</span><span class="w"> </span><span class="p">|</span>-TemplateTypeParmDecl<span class="w"> </span>0xe90ed0<span class="w"> </span>&lt;line:3:17,<span class="w"> </span>col:26&gt;<span class="w"> </span>col:26<span class="w"> </span>typename<span class="w"> </span>depth<span class="w"> </span><span class="m">0</span><span class="w"> </span>index<span class="w"> </span><span class="m">0</span><span class="w"> </span>T
+<span class="p">|</span><span class="w"> </span><span class="p">|</span>-CXXRecordDecl<span class="w"> </span>0xe90f90<span class="w"> </span>&lt;line:4:7,<span class="w"> </span>col:17&gt;<span class="w"> </span>col:14<span class="w"> </span>struct<span class="w"> </span>X<span class="w"> </span>definition
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-DefinitionData<span class="w"> </span>empty<span class="w"> </span>aggregate<span class="w"> </span>standard_layout<span class="w"> </span>trivially_copyable<span class="w"> </span>pod<span class="w"> </span>trivial<span class="w"> </span>literal<span class="w"> </span>has_constexpr_non_copy_move_ctor<span class="w"> </span>can_const_default_init
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-DefaultConstructor<span class="w"> </span>exists<span class="w"> </span>trivial<span class="w"> </span>constexpr<span class="w"> </span>needs_implicit<span class="w"> </span>defaulted_is_constexpr
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyConstructor<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveConstructor<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyAssignment<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveAssignment<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="sb">`</span>-Destructor<span class="w"> </span>simple<span class="w"> </span>irrelevant<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="p">|</span><span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="sb">`</span>-CXXRecordDecl<span class="w"> </span>0xe91270<span class="w"> </span>&lt;col:7,<span class="w"> </span>col:14&gt;<span class="w"> </span>col:14<span class="w"> </span>implicit<span class="w"> </span>struct<span class="w"> </span>X
+<span class="p">|</span><span class="w"> </span><span class="sb">`</span>-ClassTemplateSpecialization<span class="w"> </span>0xe91340<span class="w"> </span><span class="s1">&#39;X&#39;</span>
+<span class="sb">`</span>-ClassTemplateSpecializationDecl<span class="w"> </span>0xe91340<span class="w"> </span>&lt;line:6:7,<span class="w"> </span>line:7:30&gt;<span class="w"> </span>col:14<span class="w"> </span>struct<span class="w"> </span>X<span class="w"> </span>definition
+<span class="w">  </span><span class="p">|</span>-DefinitionData<span class="w"> </span>pass_in_registers<span class="w"> </span>aggregate<span class="w"> </span>standard_layout<span class="w"> </span>trivially_copyable<span class="w"> </span>pod<span class="w"> </span>trivial<span class="w"> </span>literal
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-DefaultConstructor<span class="w"> </span>exists<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyConstructor<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveConstructor<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyAssignment<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveAssignment<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="sb">`</span>-Destructor<span class="w"> </span>simple<span class="w"> </span>irrelevant<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span>-TemplateArgument<span class="w"> </span><span class="nb">type</span><span class="w"> </span><span class="s1">&#39;int&#39;</span>
+<span class="w">  </span><span class="p">|</span>-CXXRecordDecl<span class="w"> </span>0xe91558<span class="w"> </span>&lt;col:7,<span class="w"> </span>col:14&gt;<span class="w"> </span>col:14<span class="w"> </span>implicit<span class="w"> </span>struct<span class="w"> </span>X
+<span class="w">  </span><span class="sb">`</span>-FieldDecl<span class="w"> </span>0xe91600<span class="w"> </span>&lt;col:23,<span class="w"> </span>col:27&gt;<span class="w"> </span>col:27<span class="w"> </span>i<span class="w"> </span><span class="s1">&#39;int&#39;</span>
+</pre></div>
+</div>
+<section id="error-propagation">
+<h4><a class="toc-backref" href="#id6" role="doc-backlink">Error propagation</a><a class="headerlink" href="#error-propagation" title="Permalink to this heading">¶</a></h4>
+<p>If there is a dependent node we have to import before we could import a given node then the import error associated to the dependency propagates to the dependant node.
+Let’s modify the previous example and import a <code class="docutils literal notranslate"><span class="pre">FieldDecl</span></code> instead of the <code class="docutils literal notranslate"><span class="pre">ClassTemplateSpecializationDecl</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">auto</span><span class="w"> </span><span class="n">Matcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fieldDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;i2&quot;</span><span class="p">));</span>
+<span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">From</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">FieldDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">FromUnit</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>In this case we can see that an error is associated (<code class="docutils literal notranslate"><span class="pre">getImportDeclErrorIfAny</span></code>) to the specialization also, not just to the field:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">llvm</span><span class="o">::</span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">Decl</span><span class="w"> </span><span class="o">*&gt;</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">Import</span><span class="p">(</span><span class="n">From</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">ImportedOrErr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+<span class="w">  </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+
+<span class="w">  </span><span class="c1">// check that the ClassTemplateSpecializationDecl is also marked as</span>
+<span class="w">  </span><span class="c1">// erroneous.</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">FromSpec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">ClassTemplateSpecializationDecl</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">      </span><span class="n">classTemplateSpecializationDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;X&quot;</span><span class="p">)),</span><span class="w"> </span><span class="n">FromUnit</span><span class="p">);</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">Importer</span><span class="p">.</span><span class="n">getImportDeclErrorIfAny</span><span class="p">(</span><span class="n">FromSpec</span><span class="p">));</span>
+<span class="w">  </span><span class="c1">// Btw, the error is also set for the FieldDecl.</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">Importer</span><span class="p">.</span><span class="n">getImportDeclErrorIfAny</span><span class="p">(</span><span class="n">From</span><span class="p">));</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="polluted-ast">
+<h4><a class="toc-backref" href="#id7" role="doc-backlink">Polluted AST</a><a class="headerlink" href="#polluted-ast" title="Permalink to this heading">¶</a></h4>
+<p>We may recognize an error during the import of a dependent node. However, by that time, we had already created the dependant.
+In these cases we do not remove the existing erroneous node from the “to” context, rather we associate an error to that node.
+Let’s extend the previous example with another class <code class="docutils literal notranslate"><span class="pre">Y</span></code>.
+This class has a forward definition in the “to” context, but its definition is in the “from” context.
+We’d like to import the definition, but it contains a member whose type conflicts with the type in the “to” context:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ToUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">    </span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">    // primary template</span>
+<span class="s">    template &lt;typename T&gt;</span>
+<span class="s">    struct X {};</span>
+<span class="s">    // explicit specialization</span>
+<span class="s">    template&lt;&gt;</span>
+<span class="s">    struct X&lt;int&gt; { int i; };</span>
+
+<span class="s">    class Y;</span>
+<span class="s">    </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s">&quot;to.cc&quot;</span><span class="p">);</span>
+<span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">enableSourceFileDiagnostics</span><span class="p">();</span>
+<span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ASTUnit</span><span class="o">&gt;</span><span class="w"> </span><span class="n">FromUnit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buildASTFromCode</span><span class="p">(</span>
+<span class="w">    </span><span class="sa">R</span><span class="s">&quot;</span><span class="dl">(</span>
+<span class="s">    // primary template</span>
+<span class="s">    template &lt;typename T&gt;</span>
+<span class="s">    struct X {};</span>
+<span class="s">    // explicit specialization</span>
+<span class="s">    template&lt;&gt;</span>
+<span class="s">    struct X&lt;int&gt; { int i2; };</span>
+<span class="s">    // field mismatch:  ^^</span>
+
+<span class="s">    class Y { void f() { X&lt;int&gt; xi; } };</span>
+<span class="s">    </span><span class="dl">)</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s">&quot;from.cc&quot;</span><span class="p">);</span>
+<span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">enableSourceFileDiagnostics</span><span class="p">();</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">Matcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cxxRecordDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;Y&quot;</span><span class="p">));</span>
+<span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">From</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">CXXRecordDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">FromUnit</span><span class="p">);</span>
+<span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">To</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">CXXRecordDecl</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Matcher</span><span class="p">,</span><span class="w"> </span><span class="n">ToUnit</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>This time we create a shared_ptr for <code class="docutils literal notranslate"><span class="pre">ASTImporterSharedState</span></code> which owns the associated errors for the “to” context.
+Note, there may be several different ASTImporter objects which import into the same “to” context but from different “from” contexts; they should share the same <code class="docutils literal notranslate"><span class="pre">ASTImporterSharedState</span></code>.
+(Also note, we have to include the corresponding <code class="docutils literal notranslate"><span class="pre">ASTImporterSharedState.h</span></code> header file.)</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">auto</span><span class="w"> </span><span class="n">ImporterState</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_shared</span><span class="o">&lt;</span><span class="n">ASTImporterSharedState</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="n">ASTImporter</span><span class="w"> </span><span class="n">Importer</span><span class="p">(</span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">ToUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                     </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getASTContext</span><span class="p">(),</span><span class="w"> </span><span class="n">FromUnit</span><span class="o">-&gt;</span><span class="n">getFileManager</span><span class="p">(),</span>
+<span class="w">                     </span><span class="cm">/*MinimalImport=*/</span><span class="nb">false</span><span class="p">,</span><span class="w"> </span><span class="n">ImporterState</span><span class="p">);</span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">Decl</span><span class="w"> </span><span class="o">*&gt;</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Importer</span><span class="p">.</span><span class="n">Import</span><span class="p">(</span><span class="n">From</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">ImportedOrErr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">Error</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ImportedOrErr</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+<span class="w">  </span><span class="n">consumeError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+
+<span class="w">  </span><span class="c1">// ... but the node had been created.</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">ToYDef</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getFirstDecl</span><span class="o">&lt;</span><span class="n">CXXRecordDecl</span><span class="o">&gt;</span><span class="p">(</span>
+<span class="w">      </span><span class="n">cxxRecordDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;Y&quot;</span><span class="p">),</span><span class="w"> </span><span class="n">isDefinition</span><span class="p">()),</span><span class="w"> </span><span class="n">ToUnit</span><span class="p">);</span>
+<span class="w">  </span><span class="n">ToYDef</span><span class="o">-&gt;</span><span class="n">dump</span><span class="p">();</span>
+<span class="w">  </span><span class="c1">// An error is set for &quot;ToYDef&quot; in the shared state.</span>
+<span class="w">  </span><span class="n">Optional</span><span class="o">&lt;</span><span class="n">ASTImportError</span><span class="o">&gt;</span><span class="w"> </span><span class="n">OptErr</span><span class="w"> </span><span class="o">=</span>
+<span class="w">      </span><span class="n">ImporterState</span><span class="o">-&gt;</span><span class="n">getImportDeclErrorIfAny</span><span class="p">(</span><span class="n">ToYDef</span><span class="p">);</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">OptErr</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If we take a look at the AST, then we can see that the Decl with the definition is created, but the field is missing.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="p">|</span>-CXXRecordDecl<span class="w"> </span>0xf66678<span class="w"> </span>&lt;line:9:7,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>class<span class="w"> </span>Y
+<span class="sb">`</span>-CXXRecordDecl<span class="w"> </span>0xf66730<span class="w"> </span>prev<span class="w"> </span>0xf66678<span class="w"> </span>&lt;:10:7,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>class<span class="w"> </span>Y<span class="w"> </span>definition
+<span class="w">  </span><span class="p">|</span>-DefinitionData<span class="w"> </span>pass_in_registers<span class="w"> </span>empty<span class="w"> </span>aggregate<span class="w"> </span>standard_layout<span class="w"> </span>trivially_copyable<span class="w"> </span>pod<span class="w"> </span>trivial<span class="w"> </span>literal<span class="w"> </span>has_constexpr_non_copy_move_ctor<span class="w"> </span>can_const_default_init
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-DefaultConstructor<span class="w"> </span>exists<span class="w"> </span>trivial<span class="w"> </span>constexpr<span class="w"> </span>needs_implicit<span class="w"> </span>defaulted_is_constexpr
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyConstructor<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveConstructor<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-CopyAssignment<span class="w"> </span>trivial<span class="w"> </span>has_const_param<span class="w"> </span>needs_implicit<span class="w"> </span>implicit_has_const_param
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="p">|</span>-MoveAssignment<span class="w"> </span>exists<span class="w"> </span>simple<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="p">|</span><span class="w"> </span><span class="sb">`</span>-Destructor<span class="w"> </span>simple<span class="w"> </span>irrelevant<span class="w"> </span>trivial<span class="w"> </span>needs_implicit
+<span class="w">  </span><span class="sb">`</span>-CXXRecordDecl<span class="w"> </span>0xf66828<span class="w"> </span>&lt;col:7,<span class="w"> </span>col:13&gt;<span class="w"> </span>col:13<span class="w"> </span>implicit<span class="w"> </span>class<span class="w"> </span>Y
+</pre></div>
+</div>
+<p>We do not remove the erroneous nodes because by the time when we recognize the error it is too late to remove the node, there may be additional references to that already in the AST.
+This is aligned with the overall <a class="reference external" href="InternalsManual.html#immutability">design principle of the Clang AST</a>: Clang AST nodes (types, declarations, statements, expressions, and so on) are generally designed to be <strong>immutable once created</strong>.
+Thus, clients of the ASTImporter library should always check if there is any associated error for the node which they inspect in the destination context.
+We recommend skipping the processing of those nodes which have an error associated with them.</p>
+</section>
+</section>
+</section>
+<section id="using-the-ast-merge-clang-front-end-action">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Using the <code class="docutils literal notranslate"><span class="pre">-ast-merge</span></code> Clang front-end action</a><a class="headerlink" href="#using-the-ast-merge-clang-front-end-action" title="Permalink to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">-ast-merge</span> <span class="pre">&lt;pch-file&gt;</span></code> command-line switch can be used to merge from the given serialized AST file.
+This file represents the source context.
+When this switch is present then each top-level AST node of the source context is being merged into the destination context.
+If the merge was successful then <code class="docutils literal notranslate"><span class="pre">ASTConsumer::HandleTopLevelDecl</span></code> is called for the Decl.
+This results that we can execute the original front-end action on the extended AST.</p>
+<section id="example-for-c">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Example for C</a><a class="headerlink" href="#example-for-c" title="Permalink to this heading">¶</a></h3>
+<p>Let’s consider the following three files:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// bar.h</span>
+<span class="cp">#ifndef BAR_H</span>
+<span class="cp">#define BAR_H</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">bar</span><span class="p">();</span>
+<span class="cp">#endif </span><span class="cm">/* BAR_H */</span>
+
+<span class="c1">// bar.c</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;bar.h&quot;</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">bar</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">41</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// main.c</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;bar.h&quot;</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">bar</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Let’s generate the AST files for the two source files:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>clang<span class="w"> </span>-cc1<span class="w"> </span>-emit-pch<span class="w"> </span>-o<span class="w"> </span>bar.ast<span class="w"> </span>bar.c
+$<span class="w"> </span>clang<span class="w"> </span>-cc1<span class="w"> </span>-emit-pch<span class="w"> </span>-o<span class="w"> </span>main.ast<span class="w"> </span>main.c
+</pre></div>
+</div>
+<p>Then, let’s check how the merged AST would look like if we consider only the <code class="docutils literal notranslate"><span class="pre">bar()</span></code> function:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>clang<span class="w"> </span>-cc1<span class="w"> </span>-ast-merge<span class="w"> </span>bar.ast<span class="w"> </span>-ast-merge<span class="w"> </span>main.ast<span class="w"> </span>/dev/null<span class="w"> </span>-ast-dump
+TranslationUnitDecl<span class="w"> </span>0x12b0738<span class="w"> </span><span class="s">&lt;&lt;invalid sloc&gt;&gt; &lt;invalid</span><span class="w"> </span>sloc&gt;
+<span class="p">|</span>-FunctionDecl<span class="w"> </span>0x12b1470<span class="w"> </span>&lt;/path/bar.h:4:1,<span class="w"> </span>col:9&gt;<span class="w"> </span>col:5<span class="w"> </span>used<span class="w"> </span>bar<span class="w"> </span><span class="s1">&#39;int ()&#39;</span>
+<span class="p">|</span>-FunctionDecl<span class="w"> </span>0x12b1538<span class="w"> </span>prev<span class="w"> </span>0x12b1470<span class="w"> </span>&lt;/path/bar.c:3:1,<span class="w"> </span>line:5:1&gt;<span class="w"> </span>line:3:5<span class="w"> </span>used<span class="w"> </span>bar<span class="w"> </span><span class="s1">&#39;int ()&#39;</span>
+<span class="p">|</span><span class="w"> </span><span class="sb">`</span>-CompoundStmt<span class="w"> </span>0x12b1608<span class="w"> </span>&lt;col:11,<span class="w"> </span>line:5:1&gt;
+<span class="p">|</span><span class="w">   </span><span class="sb">`</span>-ReturnStmt<span class="w"> </span>0x12b15f8<span class="w"> </span>&lt;line:4:3,<span class="w"> </span>col:10&gt;
+<span class="p">|</span><span class="w">     </span><span class="sb">`</span>-IntegerLiteral<span class="w"> </span>0x12b15d8<span class="w"> </span>&lt;col:10&gt;<span class="w"> </span><span class="s1">&#39;int&#39;</span><span class="w"> </span><span class="m">41</span>
+<span class="p">|</span>-FunctionDecl<span class="w"> </span>0x12b1648<span class="w"> </span>prev<span class="w"> </span>0x12b1538<span class="w"> </span>&lt;/path/bar.h:4:1,<span class="w"> </span>col:9&gt;<span class="w"> </span>col:5<span class="w"> </span>used<span class="w"> </span>bar<span class="w"> </span><span class="s1">&#39;int ()&#39;</span>
+</pre></div>
+</div>
+<p>We can inspect that the prototype of the function and the definition of it is merged into the same redeclaration chain.
+What’s more there is a third prototype declaration merged to the chain.
+The functions are merged in a way that prototypes are added to the redecl chain if they refer to the same type, but we can have only one definition.
+The first two declarations are from <code class="docutils literal notranslate"><span class="pre">bar.ast</span></code>, the third is from <code class="docutils literal notranslate"><span class="pre">main.ast</span></code>.</p>
+<p>Now, let’s create an object file from the merged AST:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>clang<span class="w"> </span>-cc1<span class="w"> </span>-ast-merge<span class="w"> </span>bar.ast<span class="w"> </span>-ast-merge<span class="w"> </span>main.ast<span class="w"> </span>/dev/null<span class="w"> </span>-emit-obj<span class="w"> </span>-o<span class="w"> </span>main.o
+</pre></div>
+</div>
+<p>Next, we may call the linker and execute the created binary file.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>clang<span class="w"> </span>-o<span class="w"> </span>a.out<span class="w"> </span>main.o
+$<span class="w"> </span>./a.out
+$<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span>
+<span class="m">41</span>
+$
+</pre></div>
+</div>
+</section>
+<section id="id1">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Example for C++</a><a class="headerlink" href="#id1" title="Permalink to this heading">¶</a></h3>
+<p>In the case of C++, the generation of the AST files and the way how we invoke the front-end is a bit different.
+Assuming we have these three files:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// foo.h</span>
+<span class="cp">#ifndef FOO_H</span>
+<span class="cp">#define FOO_H</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">virtual</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">fun</span><span class="p">();</span>
+<span class="p">};</span>
+<span class="cp">#endif </span><span class="cm">/* FOO_H */</span>
+
+<span class="c1">// foo.cpp</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;foo.h&quot;</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">foo::fun</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// main.cpp</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;foo.h&quot;</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">foo</span><span class="p">().</span><span class="n">fun</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>We shall generate the AST files, merge them, create the executable and then run it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>clang++<span class="w"> </span>-x<span class="w"> </span>c++-header<span class="w"> </span>-o<span class="w"> </span>foo.ast<span class="w"> </span>foo.cpp
+$<span class="w"> </span>clang++<span class="w"> </span>-x<span class="w"> </span>c++-header<span class="w"> </span>-o<span class="w"> </span>main.ast<span class="w"> </span>main.cpp
+$<span class="w"> </span>clang++<span class="w"> </span>-cc1<span class="w"> </span>-x<span class="w"> </span>c++<span class="w"> </span>-ast-merge<span class="w"> </span>foo.ast<span class="w"> </span>-ast-merge<span class="w"> </span>main.ast<span class="w"> </span>/dev/null<span class="w"> </span>-ast-dump
+$<span class="w"> </span>clang++<span class="w"> </span>-cc1<span class="w"> </span>-x<span class="w"> </span>c++<span class="w"> </span>-ast-merge<span class="w"> </span>foo.ast<span class="w"> </span>-ast-merge<span class="w"> </span>main.ast<span class="w"> </span>/dev/null<span class="w"> </span>-emit-obj<span class="w"> </span>-o<span class="w"> </span>main.o
+$<span class="w"> </span>clang++<span class="w"> </span>-o<span class="w"> </span>a.out<span class="w"> </span>main.o
+$<span class="w"> </span>./a.out
+$<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span>
+<span class="m">42</span>
+$
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangTransformerTutorial.html">Clang Transformer Tutorial</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="HowToSetupToolingForLLVM.html">How To Setup Clang Tooling For LLVM</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

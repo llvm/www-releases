@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>MSVC compatibility &#8212; Clang 18.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=2f6c9c8e"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Misexpect" href="MisExpect.html" />
+    <link rel="prev" title="Modules" href="Modules.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.2 documentation</span></a></h1>
+        <h2 class="heading"><span>MSVC compatibility</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Modules.html">Modules</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="MisExpect.html">Misexpect</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <style type="text/css">
+  .none { background-color: #FFCCCC }
+  .partial { background-color: #FFFF99 }
+  .good { background-color: #CCFF99 }
+</style><section id="msvc-compatibility">
+<h1>MSVC compatibility<a class="headerlink" href="#msvc-compatibility" title="Permalink to this heading">¶</a></h1>
+<p>When Clang compiles C++ code for Windows, it attempts to be compatible with
+MSVC.  There are multiple dimensions to compatibility.</p>
+<p>First, Clang attempts to be ABI-compatible, meaning that Clang-compiled code
+should be able to link against MSVC-compiled code successfully.  However, C++
+ABIs are particularly large and complicated, and Clang’s support for MSVC’s C++
+ABI is a work in progress.  If you don’t require MSVC ABI compatibility or don’t
+want to use Microsoft’s C and C++ runtimes, the mingw32 toolchain might be a
+better fit for your project.</p>
+<p>Second, Clang implements many MSVC language extensions, such as
+<code class="docutils literal notranslate"><span class="pre">__declspec(dllexport)</span></code> and a handful of pragmas.  These are typically
+controlled by <code class="docutils literal notranslate"><span class="pre">-fms-extensions</span></code>.</p>
+<p>Third, MSVC accepts some C++ code that Clang will typically diagnose as
+invalid.  When these constructs are present in widely included system headers,
+Clang attempts to recover and continue compiling the user’s program.  Most
+parsing and semantic compatibility tweaks are controlled by
+<code class="docutils literal notranslate"><span class="pre">-fms-compatibility</span></code> and <code class="docutils literal notranslate"><span class="pre">-fdelayed-template-parsing</span></code>, and they are a work
+in progress.</p>
+<p>Finally, there is <a class="reference internal" href="UsersManual.html#clang-cl"><span class="std std-ref">clang-cl</span></a>, a driver program for clang that attempts to
+be compatible with MSVC’s cl.exe.</p>
+<section id="abi-features">
+<h2>ABI features<a class="headerlink" href="#abi-features" title="Permalink to this heading">¶</a></h2>
+<p>The status of major ABI-impacting C++ features:</p>
+<ul class="simple">
+<li><p>Record layout: <span class="good">Complete</span>.  We’ve tested this with a fuzzer and have
+fixed all known bugs.</p></li>
+<li><p>Class inheritance: <span class="good">Mostly complete</span>.  This covers all of the standard
+OO features you would expect: virtual method inheritance, multiple
+inheritance, and virtual inheritance.  Every so often we uncover a bug where
+our tables are incompatible, but this is pretty well in hand.  This feature
+has also been fuzz tested.</p></li>
+<li><p>Name mangling: <span class="good">Ongoing</span>.  Every new C++ feature generally needs its own
+mangling.  For example, member pointer template arguments have an interesting
+and distinct mangling.  Fortunately, incorrect manglings usually do not result
+in runtime errors.  Non-inline functions with incorrect manglings usually
+result in link errors, which are relatively easy to diagnose.  Incorrect
+manglings for inline functions and templates result in multiple copies in the
+final image.  The C++ standard requires that those addresses be equal, but few
+programs rely on this.</p></li>
+<li><p>Member pointers: <span class="good">Mostly complete</span>.  Standard C++ member pointers are
+fully implemented and should be ABI compatible.  Both <a class="reference external" href="https://msdn.microsoft.com/en-us/library/83cch5a6.aspx">#pragma
+pointers_to_members</a> and the <a class="reference external" href="https://msdn.microsoft.com/en-us/library/yad46a6z.aspx">/vm</a> flags are supported. However, MSVC
+supports an extension to allow creating a <a class="reference external" href="https://llvm.org/PR15713">pointer to a member of a virtual
+base class</a>.  Clang does not yet support this.</p></li>
+</ul>
+<ul class="simple">
+<li><p>Debug info: <span class="good">Mostly complete</span>.  Clang emits relatively complete CodeView
+debug information if <code class="docutils literal notranslate"><span class="pre">/Z7</span></code> or <code class="docutils literal notranslate"><span class="pre">/Zi</span></code> is passed. Microsoft’s link.exe will
+transform the CodeView debug information into a PDB that works in Windows
+debuggers and other tools that consume PDB files like ETW. Work to teach lld
+about CodeView and PDBs is ongoing.</p></li>
+<li><p>RTTI: <span class="good">Complete</span>.  Generation of RTTI data structures has been
+finished, along with support for the <code class="docutils literal notranslate"><span class="pre">/GR</span></code> flag.</p></li>
+<li><p>C++ Exceptions: <span class="good">Mostly complete</span>.  Support for
+C++ exceptions (<code class="docutils literal notranslate"><span class="pre">try</span></code> / <code class="docutils literal notranslate"><span class="pre">catch</span></code> / <code class="docutils literal notranslate"><span class="pre">throw</span></code>) have been implemented for
+x86 and x64.  Our implementation has been well tested but we still get the
+odd bug report now and again.
+C++ exception specifications are ignored, but this is <a class="reference external" href="https://msdn.microsoft.com/en-us/library/wfa0edys.aspx">consistent with Visual
+C++</a>.</p></li>
+</ul>
+<ul class="simple">
+<li><p>Asynchronous Exceptions (SEH): <span class="partial">Partial</span>.
+Structured exceptions (<code class="docutils literal notranslate"><span class="pre">__try</span></code> / <code class="docutils literal notranslate"><span class="pre">__except</span></code> / <code class="docutils literal notranslate"><span class="pre">__finally</span></code>) mostly
+work on x86 and x64.
+LLVM does not model asynchronous exceptions, so it is currently impossible to
+catch an asynchronous exception generated in the same frame as the catching
+<code class="docutils literal notranslate"><span class="pre">__try</span></code>.</p></li>
+<li><p>Thread-safe initialization of local statics: <span class="good">Complete</span>.  MSVC 2015
+added support for thread-safe initialization of such variables by taking an
+ABI break.
+We are ABI compatible with both the MSVC 2013 and 2015 ABI for static local
+variables.</p></li>
+<li><p>Lambdas: <span class="good">Mostly complete</span>.  Clang is compatible with Microsoft’s
+implementation of lambdas except for providing overloads for conversion to
+function pointer for different calling conventions.  However, Microsoft’s
+extension is non-conforming.</p></li>
+</ul>
+</section>
+<section id="template-instantiation-and-name-lookup">
+<h2>Template instantiation and name lookup<a class="headerlink" href="#template-instantiation-and-name-lookup" title="Permalink to this heading">¶</a></h2>
+<p>MSVC allows many invalid constructs in class templates that Clang has
+historically rejected.  In order to parse widely distributed headers for
+libraries such as the Active Template Library (ATL) and Windows Runtime Library
+(WRL), some template rules have been relaxed or extended in Clang on Windows.</p>
+<p>The first major semantic difference is that MSVC appears to defer all parsing
+an analysis of inline method bodies in class templates until instantiation
+time.  By default on Windows, Clang attempts to follow suit.  This behavior is
+controlled by the <code class="docutils literal notranslate"><span class="pre">-fdelayed-template-parsing</span></code> flag.  While Clang delays
+parsing of method bodies, it still parses the bodies <em>before</em> template argument
+substitution, which is not what MSVC does.  The following compatibility tweaks
+are necessary to parse the template in those cases.</p>
+<p>MSVC allows some name lookup into dependent base classes.  Even on other
+platforms, this has been a <a class="reference external" href="https://clang.llvm.org/compatibility.html#dep_lookup">frequently asked question</a> for Clang users.  A
+dependent base class is a base class that depends on the value of a template
+parameter.  Clang cannot see any of the names inside dependent bases while it
+is parsing your template, so the user is sometimes required to use the
+<code class="docutils literal notranslate"><span class="pre">typename</span></code> keyword to assist the parser.  On Windows, Clang attempts to
+follow the normal lookup rules, but if lookup fails, it will assume that the
+user intended to find the name in a dependent base.  While parsing the
+following program, Clang will recover as if the user had written the
+commented-out code:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="cm">/*typename*/</span><span class="w"> </span><span class="n">T</span><span class="o">::</span><span class="n">UnknownType</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w">  </span><span class="cm">/*this-&gt;*/</span><span class="n">unknownMember</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>After recovery, Clang warns the user that this code is non-standard and issues
+a hint suggesting how to fix the problem.</p>
+<p>As of this writing, Clang is able to compile a simple ATL hello world
+application.  There are still issues parsing WRL headers for modern Windows 8
+apps, but they should be addressed soon.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Modules.html">Modules</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="MisExpect.html">Misexpect</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

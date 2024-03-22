@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>3.4. Nullability Checks &#8212; Clang 18.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="../../" id="documentation_options" src="../../_static/documentation_options.js?v=2f6c9c8e"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="3.5. Region Store" href="RegionStore.html" />
+    <link rel="prev" title="3.3. Initializer List" href="InitializerLists.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 18.1.2 documentation</span></a></h1>
+        <h2 class="heading"><span>3.4. Nullability Checks</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="InitializerLists.html"><span class="section-number">3.3. </span>Initializer List</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RegionStore.html"><span class="section-number">3.5. </span>Region Store</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="nullability-checks">
+<h1><span class="section-number">3.4. </span>Nullability Checks<a class="headerlink" href="#nullability-checks" title="Permalink to this heading">¶</a></h1>
+<p>This document is a high level description of the nullablility checks.
+These checks intended to use the annotations that is described in this
+RFC: <a class="reference external" href="https://discourse.llvm.org/t/rfc-nullability-qualifiers/35672">https://discourse.llvm.org/t/rfc-nullability-qualifiers/35672</a>
+(<a class="reference external" href="https://lists.llvm.org/pipermail/cfe-dev/2015-March/041779.html">Mailman</a>)</p>
+<p>Let’s consider the following 2 categories:</p>
+<p><strong>1) nullable</strong></p>
+<p>If a pointer <code class="docutils literal notranslate"><span class="pre">p</span></code> has a nullable annotation and no explicit null check or assert, we should warn in the following cases:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">p</span></code> gets implicitly converted into nonnull pointer, for example, we are passing it to a function that takes a nonnull parameter.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">p</span></code> gets dereferenced</p></li>
+</ul>
+<p>Taking a branch on nullable pointers are the same like taking branch on null unspecified pointers.</p>
+<p>Explicit cast from nullable to nonnull:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">__nullable</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="n">foo</span><span class="p">;</span>
+<span class="n">id</span><span class="w"> </span><span class="n">bar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">foo</span><span class="p">;</span>
+<span class="n">takesNonNull</span><span class="p">((</span><span class="n">_nonnull</span><span class="p">)</span><span class="w"> </span><span class="n">bar</span><span class="p">);</span><span class="w"> </span><span class="c1">// should not warn here (backward compatibility hack)</span>
+<span class="n">anotherTakesNonNull</span><span class="p">(</span><span class="n">bar</span><span class="p">);</span><span class="w"> </span><span class="c1">// would be great to warn here, but not necessary(*)</span>
+</pre></div>
+</div>
+<p>Because bar corresponds to the same symbol all the time it is not easy to implement the checker that way the cast only suppress the first call but not the second. For this reason in the first implementation after a contradictory cast happens, I will treat bar as nullable unspecified, this way all of the warnings will be suppressed. Treating the symbol as nullable unspecified also has an advantage that in case the takesNonNull function body is being inlined, the will be no warning, when the symbol is dereferenced. In case I have time after the initial version I might spend additional time to try to find a more sophisticated solution, in which we would produce the second warning (*).</p>
+<p><strong>2) nonnull</strong></p>
+<ul class="simple">
+<li><p>Dereferencing a nonnull, or sending message to it is ok.</p></li>
+<li><p>Converting nonnull to nullable is Ok.</p></li>
+<li><p>When there is an explicit cast from nonnull to nullable I will trust the cast (it is probable there for a reason, because this cast does not suppress any warnings or errors).</p></li>
+<li><p>But what should we do about null checks?:</p></li>
+</ul>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">__nonnull</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="n">takesNonnull</span><span class="p">(</span><span class="n">__nonnull</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">nil</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// Defensive backward compatible code:</span>
+<span class="w">        </span><span class="p">....</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="n">nil</span><span class="p">;</span><span class="w"> </span><span class="c1">// Should the analyzer cover this piece of code? Should we require the cast (__nonnull)nil?</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="p">....</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>There are these directions:</p>
+<ul class="simple">
+<li><p>We can either take the branch; this way the branch is analyzed</p></li>
+<li><p>Should we not warn about any nullability issues in that branch? Probably not, it is ok to break the nullability postconditions when the nullability preconditions are violated.</p></li>
+<li><p>We can assume that these pointers are not null and we lose coverage with the analyzer. (This can be implemented either in constraint solver or in the checker itself.)</p></li>
+</ul>
+<p>Other Issues to keep in mind/take care of:</p>
+<ul class="simple">
+<li><p>Messaging:</p>
+<ul>
+<li><p>Sending a message to a nullable pointer</p>
+<ul>
+<li><dl class="simple">
+<dt>Even though the method might return a nonnull pointer, when it was sent to a nullable pointer the return type will be nullable.</dt><dd><ul>
+<li><p>The result is nullable unless the receiver is known to be non null.</p></li>
+</ul>
+</dd>
+</dl>
+</li>
+</ul>
+</li>
+<li><p>Sending a message to an unspecified or nonnull pointer</p>
+<ul>
+<li><p>If the pointer is not assumed to be nil, we should be optimistic and use the nullability implied by the method.</p>
+<ul>
+<li><p>This will not happen automatically, since the AST will have null unspecified in this case.</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<section id="inlining">
+<h2><span class="section-number">3.4.1. </span>Inlining<a class="headerlink" href="#inlining" title="Permalink to this heading">¶</a></h2>
+<p>A symbol may need to be treated differently inside an inlined body. For example, consider these conversions from nonnull to nullable in presence of inlining:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">id</span><span class="w"> </span><span class="n">obj</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getNonnull</span><span class="p">();</span>
+<span class="n">takesNullable</span><span class="p">(</span><span class="n">obj</span><span class="p">);</span>
+<span class="n">takesNonnull</span><span class="p">(</span><span class="n">obj</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">takesNullable</span><span class="p">(</span><span class="n">nullable</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="n">obj</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">obj</span><span class="o">-&gt;</span><span class="n">ivar</span><span class="w"> </span><span class="c1">// we should assume obj is nullable and warn here</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>With no special treatment, when the takesNullable is inlined the analyzer will not warn when the obj symbol is dereferenced. One solution for this is to reanalyze takesNullable as a top level function to get possible violations. The alternative method, deducing nullability information from the arguments after inlining is not robust enough (for example there might be more parameters with different nullability, but in the given path the two parameters might end up being the same symbol or there can be nested functions that take different view of the nullability of the same symbol). So the symbol will remain nonnull to avoid false positives but the functions that takes nullable parameters will be analyzed separately as well without inlining.</p>
+</section>
+<section id="annotations-on-multi-level-pointers">
+<h2><span class="section-number">3.4.2. </span>Annotations on multi level pointers<a class="headerlink" href="#annotations-on-multi-level-pointers" title="Permalink to this heading">¶</a></h2>
+<p>Tracking multiple levels of annotations for pointers pointing to pointers would make the checker more complicated, because this way a vector of nullability qualifiers would be needed to be tracked for each symbol. This is not a big caveat, since once the top level pointer is dereferenced, the symvol for the inner pointer will have the nullability information. The lack of multi level annotation tracking only observable, when multiple levels of pointers are passed to a function which has a parameter with multiple levels of annotations. So for now the checker support the top level nullability qualifiers only.:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">__nonnull</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">__nullable</span><span class="w"> </span><span class="n">p</span><span class="p">;</span>
+<span class="kt">int</span><span class="w"> </span><span class="o">**</span><span class="w"> </span><span class="n">q</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p</span><span class="p">;</span>
+<span class="n">takesStarNullableStarNullable</span><span class="p">(</span><span class="n">q</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="implementation-notes">
+<h2><span class="section-number">3.4.3. </span>Implementation notes<a class="headerlink" href="#implementation-notes" title="Permalink to this heading">¶</a></h2>
+<p>What to track?</p>
+<ul class="simple">
+<li><p>The checker would track memory regions, and to each relevant region a qualifier information would be attached which is either nullable, nonnull or null unspecified (or contradicted to suppress warnings for a specific region).</p></li>
+<li><p>On a branch, where a nullable pointer is known to be non null, the checker treat it as a same way as a pointer annotated as nonnull.</p></li>
+<li><p>When there is an explicit cast from a null unspecified to either nonnull or nullable I will trust the cast.</p></li>
+<li><p>Unannotated pointers are treated the same way as pointers annotated with nullability unspecified qualifier, unless the region is wrapped in ASSUME_NONNULL macros.</p></li>
+<li><p>We might want to implement a callback for entry points to top level functions, where the pointer nullability assumptions would be made.</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="InitializerLists.html"><span class="section-number">3.3. </span>Initializer List</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RegionStore.html"><span class="section-number">3.5. </span>Region Store</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,506 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>OpenACC dialect: Fortran descriptor management in the offload data environment &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" href="_static/llvm.css" type="text/css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=bc9a48f6"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">OpenACC dialect: Fortran descriptor management in the offload data environment</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/README.md#getting-started">Getting Started</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+<! TODO: Point links to website(flang.llvm.org) and not github once webpage comes up.>
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#chat">Slack</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/blob/main/flang/docs/GettingInvolved.md#calls">Calls</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://github.com/llvm/llvm-project/tree/main/flang/">Github Repository</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/issues">Bug Reports</a></li>
+    <li><a href="https://reviews.llvm.org/">Code Review</a></li>
+    <li><a href="https://flang.llvm.org/doxygen/">Doxygen API</a></li>
+</ul>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <!--===- docs/OpenACC-descriptor-management.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="openacc-dialect-fortran-descriptor-management-in-the-offload-data-environment">
+<h1>OpenACC dialect: Fortran descriptor management in the offload data environment<a class="headerlink" href="#openacc-dialect-fortran-descriptor-management-in-the-offload-data-environment" title="Permalink to this heading">¶</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Permalink to this heading">¶</a></h2>
+<p>This document describes the details of the Fortran descriptor management during the offload execution using OpenACC.</p>
+<p>LLVM Flang compiler uses an extended CFI descriptor data structure to represent some Fortran variables along with their characteristics in memory.  For example, the descriptor is used to access dummy assumed shape arrays in a context of a subroutine where the arrays’ bounds are not explicit but are rather passed to the subroutine via the descriptor storage.</p>
+<p>During the offload execution a variable data (i.e. the memory holding the actual value of the variable) can be transferred between the host and the device using explicit OpenACC constructs.  Fortran language does not expose the descriptor representation to the user, but the accesses of variables with descriptors on the device may still be done using the descriptor data.  Thus, the implementations must implicitly manage the data transfers of the descriptors along with the transfers of the actual values of the variables.</p>
+<p>The MLIR OpenACC dialect is language agnostic so that it can work for Fortran and C/C++ with OpenACC.  The dialect should provide means for expressing the logic for data and descriptor management for the offload data environment.</p>
+<p>The chapter numbering in this document refers to:</p>
+<ul class="simple">
+<li><p>F202x: Fortran standard J3/23-007r1</p></li>
+<li><p>OpenACC: OpenACC specification version 3.3</p></li>
+<li><p>OpenMP: OpenMP specification version 5.2</p></li>
+</ul>
+</section>
+<section id="cfi-descriptor-structure">
+<h2>CFI descriptor structure<a class="headerlink" href="#cfi-descriptor-structure" title="Permalink to this heading">¶</a></h2>
+<p>Flang represents the data descriptors in memory using <code class="docutils literal notranslate"><span class="pre">CFI_cdesc_t</span></code> layout specified by F202x 18.5.3, i.e. the variable data address is located in its first member <code class="docutils literal notranslate"><span class="pre">base_addr</span></code>.  The standard does not strictly specify the layout of all the members, moreover, the actual size of the structure may be different for different variables (e.g. due to different ranks).  Other compilers may use different data descriptor formats, e.g. the variable data address may be interleaved with the auxiliary members, or the auxiliary data may be operated as a data structure not containing the variable data address.  In this document we will only consider supporting the CFI descriptor format as supported by Flang.</p>
+</section>
+<section id="runtime-behavior-for-variables-with-descriptors">
+<h2>Runtime behavior for variables with descriptors<a class="headerlink" href="#runtime-behavior-for-variables-with-descriptors" title="Permalink to this heading">¶</a></h2>
+<section id="pointer-variables">
+<h3>Pointer variables<a class="headerlink" href="#pointer-variables" title="Permalink to this heading">¶</a></h3>
+<p>OpenACC specifies the pointer attachment behavior in OpenACC 2.6.8.  This paragraph applies both to Fortran and C/C++ pointers, and the Fortran specific representation of the POINTER variables representation is not explicitly specified.  There is a single mention of the “Fortran descriptor (dope vector)” in 2.6.4 with regards to the POINTER/ALLOCATABLE members of data structures.  Chapter 2.7.2 describes the behavior of different data clause actions including <code class="docutils literal notranslate"><span class="pre">attach</span></code> and <code class="docutils literal notranslate"><span class="pre">detach</span></code> actions for the pointers.  Finally, chapters 2.7.4-13 describe what actions are taken for each OpenACC data clause.</p>
+<p>The spec operates in terms of the attachment counter associated with each pointer in device memory.  This counter is not exposed to the user code explicitly, i.e. there is no standard way to query the attachment counter for a pointer, but there are <code class="docutils literal notranslate"><span class="pre">acc_attach*</span></code> and <code class="docutils literal notranslate"><span class="pre">acc_detach*</span></code> APIs that affect the attachment counter as well as the data clause actions used with OpenACC constructs.</p>
+<p>Here is an example to demonstrate the member pointer attachment:</p>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">types</span>
+<span class="w">  </span><span class="k">type </span><span class="n">ty1</span>
+<span class="w">     </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="k">end type </span><span class="n">ty1</span>
+<span class="k">end module </span><span class="n">types</span>
+<span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">use </span><span class="n">types</span>
+<span class="w">  </span><span class="k">use </span><span class="n">openacc</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">ty1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">d</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t1</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="k">nullify</span><span class="p">(</span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="c">! 2.7.9:</span>
+<span class="w">  </span><span class="c">! Allocates the memory for object &#39;d&#39; on the device.</span>
+<span class="w">  </span><span class="c">! The descriptor member of &#39;d&#39; is a NULL descriptor,</span>
+<span class="w">  </span><span class="c">! i.e. the host contents of the descriptor is copied</span>
+<span class="w">  </span><span class="c">! verbatim to the device.</span>
+<span class="w">  </span><span class="c">! The descriptor storage is created on the device</span>
+<span class="w">  </span><span class="c">! just as part of the object &#39;d&#39; storage.</span>
+<span class="w">  </span><span class="c">!$acc enter data create(d)</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="c">! 2.7.7:</span>
+<span class="w">  </span><span class="c">! Pointer d%p is not present on the device, so copyin</span>
+<span class="w">  </span><span class="c">! action is performed for the data pointed to by the pointer:</span>
+<span class="w">  </span><span class="c">! the memory for &#39;REAL :: (2,2)&#39; array is allocated on the device</span>
+<span class="w">  </span><span class="c">! and the host values of the array elements are copied to</span>
+<span class="w">  </span><span class="c">! the allocated device memory.</span>
+<span class="w">  </span><span class="c">! Then the attach action is performed, i.e. the contents</span>
+<span class="w">  </span><span class="c">! of the device descriptor of d%p are updated as:</span>
+<span class="w">  </span><span class="c">!   * The base_addr member of the descriptor on the device</span>
+<span class="w">  </span><span class="c">!     is initialized to the device address of the data</span>
+<span class="w">  </span><span class="c">!     that has been initialized during the copyin.</span>
+<span class="w">  </span><span class="c">!   * The auxiliary members of the device descriptor are initialized</span>
+<span class="w">  </span><span class="c">!     from the host values of the corresponding members.</span>
+<span class="w">  </span><span class="c">!   * The attachment counter of &#39;d%p&#39; is set to 1.</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(d%p)</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="c">! 2.7.7:</span>
+<span class="w">  </span><span class="c">! Pointer d%p is already present on the device, so no copyin</span>
+<span class="w">  </span><span class="c">! action is performed.</span>
+<span class="w">  </span><span class="c">! The attach action is performed according to 2.6.8:</span>
+<span class="w">  </span><span class="c">! since the pointer is associated with the same target as</span>
+<span class="w">  </span><span class="c">! during the previous attachment, only its attachment counter</span>
+<span class="w">  </span><span class="c">! is incremented to 2.</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(d%p)</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="c">! 3.2.29:</span>
+<span class="w">  </span><span class="c">! The detach action is performed. According to 2.7.2 the attachment</span>
+<span class="w">  </span><span class="c">! counter of d%p is decremented to 1.</span>
+<span class="w">  </span><span class="k">call </span><span class="n">acc_detach</span><span class="p">(</span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="c">! 3.2.29:</span>
+<span class="w">  </span><span class="c">! The detach action is performed. According to 2.7.2 the attachment</span>
+<span class="w">  </span><span class="c">! counter of d%p is decremented to 0, which initiates an update</span>
+<span class="w">  </span><span class="c">! of the the device pointer to have the same value as the corresponding</span>
+<span class="w">  </span><span class="c">! pointer in the local memory.</span>
+<span class="w">  </span><span class="c">! We will discuss this in more detail below.</span>
+<span class="w">  </span><span class="k">call </span><span class="n">acc_detach</span><span class="p">(</span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span>
+<span class="w">  </span><span class="c">! The following construct will fail, because the &#39;d%p&#39; descriptor&#39;s</span>
+<span class="w">  </span><span class="c">! base_addr is now the host address not accessible on the device.</span>
+<span class="w">  </span><span class="c">! Without the second &#39;acc_detach&#39; it will work correctly.</span>
+<span class="w">  </span><span class="c">!$acc serial present(d)</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">  </span><span class="c">!$acc end serial</span>
+</pre></div>
+</div>
+<p>Let’s discuss in more detail what happens during the second <code class="docutils literal notranslate"><span class="pre">acc_detach</span></code>.</p>
+<p>OpenACC 2.6.4:</p>
+<blockquote>
+<div><p>1360 An attach action updates the pointer in device memory to point to the device copy of the data
+1361 that the host pointer targets; see Section 2.7.2. For Fortran array pointers and allocatable arrays,
+1362 this includes copying any associated descriptor (dope vector) to the device copy of the pointer.
+1363 When the device pointer target is deallocated, the pointer in device memory should be restored
+1364 to the host value, so it can be safely copied back to host memory. A detach action updates the
+1365 pointer in device memory to have the same value as the corresponding pointer in local memory;
+1366 see Section 2.7.2.</p>
+</div></blockquote>
+<p>It explicitly says that the associated descriptor copy happens during the attach action, but it does not specify the same for the detach action.  So one interpretation of this could be that only the <code class="docutils literal notranslate"><span class="pre">base_addr</span></code> member is updated, but this would allow chimera descriptors in codes like this:</p>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c">!$acc enter data copyin(d)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(d%p)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">(</span><span class="mi">10</span><span class="p">:,</span><span class="mi">10</span><span class="p">:)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span>
+<span class="w">  </span><span class="k">call </span><span class="n">acc_detach</span><span class="p">(</span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="c">!$acc exit data copyout(d)</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="nb">lbound</span><span class="p">(</span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>At the point of <code class="docutils literal notranslate"><span class="pre">acc_detach</span></code> the host descriptor of <code class="docutils literal notranslate"><span class="pre">d%p</span></code> points to <code class="docutils literal notranslate"><span class="pre">t1</span></code> data and has the lower bounds <code class="docutils literal notranslate"><span class="pre">(10:,</span> <span class="pre">10:)</span></code>, so if the detach action only updates the <code class="docutils literal notranslate"><span class="pre">base_addr</span></code> member of the device descriptor and does not update the auxiliary members from their current host values, then during the <code class="docutils literal notranslate"><span class="pre">copyout(d)</span></code> the host descriptor <code class="docutils literal notranslate"><span class="pre">d%p</span></code> will have the stale lower bounds <code class="docutils literal notranslate"><span class="pre">(2:,</span> <span class="pre">2:)</span></code>.</p>
+<p>So the proposed reading of the spec here is that the same note about the descriptor applies equally to the attach and the detach actions.</p>
+<section id="moving-target">
+<h4>“Moving target”<a class="headerlink" href="#moving-target" title="Permalink to this heading">¶</a></h4>
+<p>According to OpenACC 2.6.8:</p>
+<blockquote>
+<div><p>1535 when the pointer is allocated in device memory. <strong>The attachment counter for a pointer is set to one</strong>
+<strong>1536 whenever the pointer is attached to new target address</strong>, and incremented whenever an attach action
+1537 for that pointer is performed for the same target address.</p>
+</div></blockquote>
+<p>This clearly applies to the following example, where the second attach action is executed while the host pointer is attached to new target address comparing to the first attach action:</p>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c">!$acc enter data copyin(d)</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(t1, t2)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span><span class="c">!$acc enter data attach(d%p)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t2</span>
+<span class="w">  </span><span class="c">!$acc enter data attach(d%p)</span>
+</pre></div>
+</div>
+<p>The spec is not too explicit about the following example, though:</p>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c">!$acc enter data copyin(d)</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(t1, t2)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span><span class="c">!$acc enter data attach(d%p)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">(</span><span class="mi">10</span><span class="p">:,</span><span class="mi">10</span><span class="p">:)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span>
+<span class="w">  </span><span class="c">!$acc enter data attach(d%p)</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">d%p</span></code> pointer has not been attached to <strong>new target address</strong> between the two attach actions, so the device descriptor update is not strictly required, but the proposed spec reading is to execute the update as if the pointer has changed its association between the two attach actions (i.e. the attachment counter of <code class="docutils literal notranslate"><span class="pre">d%p</span></code> is 1 after the second attach, not 2; and the device descriptor is updated with the current values).</p>
+<p>In other words, the Fortran pointer in the context of the attach actions should be considered not just as the target address but as a combination of all the values embedded inside its Fortran descriptor.</p>
+</section>
+<section id="pointer-dummy-arguments">
+<h4>Pointer dummy arguments<a class="headerlink" href="#pointer-dummy-arguments" title="Permalink to this heading">¶</a></h4>
+<p>All the same rules apply to the pointer dummy arguments even though OpenACC spec, again, mentions the descriptor copying only in the context of member pointers.  The following test demonstrates that a consistent implementation should apply 2.6.4 for pointer dummy arguments, otherwise, OpenACC programs may exhibit unexpected behavior after seemingly straightforward subroutine inlining/outlining:</p>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">ty1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">d</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t1</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+<span class="w">  </span><span class="k">call </span><span class="n">wrapper</span><span class="p">(</span><span class="n">d</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="n">t1</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">wrapper</span><span class="p">(</span><span class="n">d</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="n">t1</span><span class="p">)</span>
+<span class="w">    </span><span class="k">type</span><span class="p">(</span><span class="n">ty1</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">d</span>
+<span class="w">    </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span><span class="p">(:,:)</span>
+<span class="w">    </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t1</span><span class="p">(:,:)</span>
+<span class="w">    </span><span class="c">!$acc enter data copyin(d)</span>
+<span class="w">    </span><span class="c">!$acc enter data copyin(t1)</span>
+<span class="w">    </span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">    </span><span class="c">!$acc enter data copyin(p)</span>
+<span class="w">    </span><span class="c">!$acc serial present(d)</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">    </span><span class="c">!$acc end serial</span>
+</pre></div>
+</div>
+<p>If the descriptor contents is not copied during the attach action implied by <code class="docutils literal notranslate"><span class="pre">copyin(p)</span></code>, then this code does not behave the same way as:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">ty1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">d</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t1</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(d)</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(t1)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(d%p)</span>
+<span class="w">  </span><span class="c">!$acc serial present(d)</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">  </span><span class="c">!$acc end serial</span>
+<span class="w">  </span><span class="c">!call wrapper(d, d%p, t1)</span>
+</pre></div>
+</div>
+</section>
+<section id="the-descriptor-storage-allocation">
+<h4>The descriptor storage allocation<a class="headerlink" href="#the-descriptor-storage-allocation" title="Permalink to this heading">¶</a></h4>
+<p>For POINTER members of aggregate variables the descriptor storage is allocated on the device as part of the allocation of the aggregate variable, which is done either explicitly in the user code or implicitly due to 2.6.2:</p>
+<blockquote>
+<div><p>1292 On a compute or combined construct, if a variable appears in a reduction clause but no other
+1293 data clause, it is treated as if it also appears in a copy clause. Otherwise, for any variable, the
+1294 compiler will implicitly determine its data attribute on a compute construct if all of the following
+1295 conditions are met:
+…
+1299 An aggregate variable will be treated as if it appears either:
+1300 • In a present clause if there is a default(present) clause visible at the compute con
+1301 struct.
+1302 • In a copy clause otherwise.</p>
+</div></blockquote>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">ty1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">d</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(d%p)</span>
+<span class="w">  </span><span class="c">!$acc serial present(d%p)</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">  </span><span class="c">!$acc end serial</span>
+</pre></div>
+</div>
+<p>Due to <code class="docutils literal notranslate"><span class="pre">d%p</span></code> reference in the <code class="docutils literal notranslate"><span class="pre">present</span></code> clause of the <code class="docutils literal notranslate"><span class="pre">serial</span></code> region, the compiler must produce an implicit copy of <code class="docutils literal notranslate"><span class="pre">d</span></code>. In order for the <code class="docutils literal notranslate"><span class="pre">d%p</span></code> pointer attachment to happen the descriptor storage must be created before the attachment happens, so the following order of the clauses must be implied:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c">!$acc serial copy(d) present(d%p)</span>
+</pre></div>
+</div>
+<p>In the case of POINTER dummy argument, if the descriptor storage is not explicitly created in the user code, the pointer attachment may not happen due to 2.7.2:</p>
+<blockquote>
+<div><p>1693 If the pointer var is in shared memory or is not present in the current device memory, or if the
+1694 address to which var points is not present in the current device memory, no action is taken.</p>
+</div></blockquote>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">t1</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(t1)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">wrapper</span><span class="p">(</span><span class="n">d</span><span class="p">%</span><span class="n">p</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">wrapper</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span><span class="p">(:,:)</span>
+<span class="w">    </span><span class="c">!$acc serial attach(p)</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">    </span><span class="c">!$acc end serial</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="allocatable-variables">
+<h3>Allocatable variables<a class="headerlink" href="#allocatable-variables" title="Permalink to this heading">¶</a></h3>
+<p>OpenACC 2.6.4 names both POINTER and ALLOCATABLE members of data structures as <em>pointer</em>, so the same attachment rules apply to both, including the case of dummy ALLOCATABLE arguments:</p>
+<p>Example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">types</span>
+<span class="w">  </span><span class="k">type </span><span class="n">ty2</span>
+<span class="w">     </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="k">end type </span><span class="n">ty2</span>
+<span class="k">end module </span><span class="n">types</span>
+<span class="w">  </span><span class="k">use </span><span class="n">types</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">ty2</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dd</span>
+<span class="w">  </span><span class="n">dd</span><span class="p">%</span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">reshape</span><span class="p">((</span><span class="o">/</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">,</span><span class="mi">4</span><span class="o">/</span><span class="p">),(</span><span class="o">/</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="o">/</span><span class="p">))</span>
+<span class="w">  </span><span class="k">call </span><span class="n">wrapper</span><span class="p">(</span><span class="n">dd</span><span class="p">,</span><span class="w"> </span><span class="n">dd</span><span class="p">%</span><span class="n">a</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">wrapper</span><span class="p">(</span><span class="n">dd</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">)</span>
+<span class="w">    </span><span class="k">type</span><span class="p">(</span><span class="n">ty2</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dd</span>
+<span class="w">    </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">allocatable</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(:,:)</span>
+<span class="w">    </span><span class="c">!$acc enter data copyin(dd)</span>
+<span class="w">    </span><span class="c">!$acc enter data copyin(a)</span>
+<span class="w">    </span><span class="c">!$acc serial present(dd)</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">dd</span><span class="p">%</span><span class="n">a</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">    </span><span class="c">!$acc end serial</span>
+</pre></div>
+</div>
+</section>
+<section id="other-variables">
+<h3>Other variables<a class="headerlink" href="#other-variables" title="Permalink to this heading">¶</a></h3>
+<p>F18 compiler also uses descriptors for assumed-shape, assumed-rank, polymorphic, … variables.  The OpenACC specification does not prescribe how an implementation should manage the descriptors for such variables.  In many (all?) cases the descriptors of these variables have a local scope of a single subprogram, and if a descriptor of such a variable is created on the device, then its live range must be limited on the device by the invocation of the subprogram (with any OpenACC constructs inside it).</p>
+<p>For example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">ty2</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dd</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">call </span><span class="n">wrapper</span><span class="p">(</span><span class="n">dd</span><span class="p">%</span><span class="n">a</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">wrapper</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="mi">10</span><span class="p">:,</span><span class="mi">10</span><span class="p">:)</span>
+<span class="w">    </span><span class="c">!$acc serial copyin(a)</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="mi">11</span><span class="p">)</span>
+<span class="w">    </span><span class="c">!$acc end serial</span>
+</pre></div>
+</div>
+<p>The dummy assumed-shape argument <code class="docutils literal notranslate"><span class="pre">a</span></code> is represented with a descriptor, which has no storage overlap with <code class="docutils literal notranslate"><span class="pre">dd%a</span></code>, i.e. it is a temporary descriptor created to represent the data <code class="docutils literal notranslate"><span class="pre">dd%a</span></code> in a shape according to the declaration of the dummy argument <code class="docutils literal notranslate"><span class="pre">a</span></code>.  The implementation is not strictly required to transfer all the values embedded inside the descriptor for <code class="docutils literal notranslate"><span class="pre">a</span></code> to the device.  The only required actions for this code are the ones prescribed by the <code class="docutils literal notranslate"><span class="pre">copyin(a)</span></code> clause in 2.7.7.</p>
+</section>
+<section id="summary">
+<h3>Summary<a class="headerlink" href="#summary" title="Permalink to this heading">¶</a></h3>
+<p>Pointer attachment for POINTER and ALLOCATABLE variables is a “composite” runtime action that involves the following:</p>
+<ul class="simple">
+<li><p>Getting the device address corresponding to the device copy of the descriptor.</p></li>
+<li><p>Comparing the current host descriptor contents with the device descriptor contents (for proper attachment counter updates).</p></li>
+<li><p>Getting the device address corresponding to the device copy of the data pointed to by the descriptor.</p></li>
+<li><p>Copying data from the host to the device to update the device copy of the descriptor: this data may include the device address of the data, the descriptor data describing the element size, dimensions, etc.</p></li>
+<li><p>Descriptors with an F18 addendum may also require mapping the data pointed to by the addendum pointer(s) and attaching this pointer(s) into the device copy of the descriptor.</p></li>
+</ul>
+</section>
+</section>
+<section id="representing-pointer-attachment-in-mlir-openacc-dialect">
+<h2>Representing pointer attachment in MLIR OpenACC dialect<a class="headerlink" href="#representing-pointer-attachment-in-mlir-openacc-dialect" title="Permalink to this heading">¶</a></h2>
+<p>The Fortran pointer attachment logic specified by OpenACC is not trivial, and in order to be expressed in a language independent MLIR OpenACC dialect we propose to use recipes for delegating the complexity of the implementation to F18 runtime.</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c">!$acc enter data attach(d%p)</span>
+</pre></div>
+</div>
+<p>The frontend generates an <code class="docutils literal notranslate"><span class="pre">acc.attach</span></code> data operation with <code class="docutils literal notranslate"><span class="pre">augPtr</span></code> being an address of the F18 descriptor representing a POINTER/ALLOCATABLE variable.  Note that <code class="docutils literal notranslate"><span class="pre">augPtr</span></code> refers to an abstract augmented pointer structure, which is handled in a language specific manner by the code provided by the <code class="docutils literal notranslate"><span class="pre">attachRecipe</span></code> reference.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">attachRecipe</span></code> is a callback that takes <code class="docutils literal notranslate"><span class="pre">varPtr</span></code> and <code class="docutils literal notranslate"><span class="pre">augPtr</span></code> pointers, and the section’s <code class="docutils literal notranslate"><span class="pre">offset</span></code> and <code class="docutils literal notranslate"><span class="pre">size</span></code> computed from the <code class="docutils literal notranslate"><span class="pre">bounds</span></code> operand of <code class="docutils literal notranslate"><span class="pre">acc.attach</span></code>.  Fortran FE passes these arguments directly to F18 runtime that is aware of the descriptor structure and does all the required checks and device memory updates for the device copy of the descriptor, including the attachment counters updates.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>acc.attach.recipe @attach_ref :
+    (!fir.ref&lt;none&gt;, !fir.ref&lt;!fir.box&lt;none&gt;&gt;, index, index) {
+^bb0(%base_addr_val : !fir.ref&lt;none&gt;,
+     %aug_ptr : !fir.ref&lt;!fir.box&lt;none&gt;&gt;,
+     %offset : index,
+     %size : index):
+  fir.call _FortranAOpenACCAttachDescriptor(%aug_ptr, %base_addr_val, %offset, %size) :
+      (!fir.ref&lt;none&gt;, !fir.ref&lt;!fir.box&lt;none&gt;&gt;, index, index) -&gt; none
+  acc.yield
+}
+
+%descref = hlfir.designate %0#0{&quot;p&quot;}
+    {fortran_attrs = #fir.var_attrs&lt;pointer&gt;} :
+    (!fir.ref&lt;!fir.type&lt;_QMtypesTty1{p:!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;&gt;}&gt;&gt;) -&gt;
+    !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;&gt;&gt;
+%descval = fir.load %descref : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;&gt;&gt;
+%base_addr_val = fir.box_addr %descval : (!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;&gt;) -&gt;
+    !fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;
+%attach_op = acc.attach
+    varPtr(%base_addr_val : !fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;)
+    augPtr(%descref : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;&gt;&gt;)
+    bounds(...)
+    attachRecipe(@attach_ref) -&gt;
+    !fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt; {name = &quot;d%p&quot;, structured = false}
+acc.enter_data dataOperands(%attach_op : !fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;)
+</pre></div>
+</div>
+<blockquote>
+<div><p>Note that for languages not using augmented pointers, we can still use <code class="docutils literal notranslate"><span class="pre">varPtrPtr</span></code> operand to represent the “simple” pointer attachment.  The recipe should be omitted in this case.</p>
+</div></blockquote>
+<p>For other data clauses there is an implied ordering that the data action happens before the attachment:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c">!$acc enter data copyin(d%p)</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%copyin_op = acc.copyin
+    varPtr(%base_addr_val : !fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;)
+    augPtr(%descref : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt;&gt;&gt;)
+    bounds(...)
+    attachRecipe(@attach_ref) -&gt;
+    !fir.ptr&lt;!fir.array&lt;?x?xf32&gt;&gt; {name = &quot;d%p&quot;, structured = false}
+</pre></div>
+</div>
+<p>Here, the <code class="docutils literal notranslate"><span class="pre">copyin</span></code> of the data is followed by the pointer attachment.</p>
+<section id="f18-runtime-support">
+<h3>F18 runtime support<a class="headerlink" href="#f18-runtime-support" title="Permalink to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">OpenACCAttachDescriptor</span></code> API is defined like this:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="c1">/// Implement OpenACC attach semantics for the given Fortran descriptor.</span>
+<span class="c1">/// The \p data_ptr must match the descriptor&#39;s base_addr member value,</span>
+<span class="c1">/// it is only used for verification.</span>
+<span class="c1">/// The given \p offset and \p size specify an array section starting</span>
+<span class="c1">/// offset and the size of the contiguous section for the array cases,</span>
+<span class="c1">/// e.g. &#39;attach(array(2:3))&#39;. For scalar cases, the offset must be 0,</span>
+<span class="c1">/// and the size must match the scalar size.</span>
+<span class="c1">///</span>
+<span class="c1">/// TODO: The API needs to take the device id.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">RTNAME</span><span class="p">(</span><span class="n">OpenACCAttachDescriptor</span><span class="p">)(</span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">*</span><span class="n">descriptor_ptr</span><span class="p">,</span>
+<span class="w">                                     </span><span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">data_ptr</span><span class="p">,</span>
+<span class="w">                                     </span><span class="n">std</span><span class="o">::</span><span class="kt">size_t</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span>
+<span class="w">                                     </span><span class="n">std</span><span class="o">::</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span>
+<span class="w">                                     </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">sourceFile</span><span class="p">,</span>
+<span class="w">                                     </span><span class="kt">int</span><span class="w"> </span><span class="n">sourceLine</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The implementation’s behavior may be described as (OpenACC 2.7.2):</p>
+<ul class="simple">
+<li><p>If the data described by the host address <code class="docutils literal notranslate"><span class="pre">data_ptr</span></code>, <code class="docutils literal notranslate"><span class="pre">offset</span></code> and <code class="docutils literal notranslate"><span class="pre">size</span></code> is not present on the device, RETURN.</p></li>
+<li><p>If the data described by <code class="docutils literal notranslate"><span class="pre">descriptor_ptr</span></code> and the descriptor size is not present on the device, RETURN.</p></li>
+<li><p>If the descriptor’s attachment counter is not 0 and the host descriptor contents matches the host descriptor contents used for the previous attachment, then increment the attachment counter and RETURN.</p></li>
+<li><p>Update descriptor on the device:</p>
+<ul>
+<li><p>Copy the host descriptor contents to device memory.</p></li>
+<li><p>Copy the device address corresponding to <code class="docutils literal notranslate"><span class="pre">data_ptr</span></code> into the <code class="docutils literal notranslate"><span class="pre">base_addr</span></code> member of the descriptor in device memory.</p></li>
+<li><p>Perform an appropriate data action for all auxiliary pointers, e.g. <code class="docutils literal notranslate"><span class="pre">present(addendum_ptr)</span></code>/<code class="docutils literal notranslate"><span class="pre">copyin(addendum_ptr[:size])</span></code>, and copy the corresponding device addresses into their locations in the descriptor in device memory.</p></li>
+<li><p>Set the descriptor’s attachment counter to 1.</p></li>
+</ul>
+</li>
+<li><p>RETURN</p></li>
+</ul>
+<p>All the “is-present” checks and the data actions for the auxiliary pointers must be performed atomically with regards to the present counters bookkeeping.</p>
+<p>The API relies on the primitives provided by <code class="docutils literal notranslate"><span class="pre">liboffload</span></code>, so it is provided by a new F18 runtime library, e.g. <code class="docutils literal notranslate"><span class="pre">FortranOffloadRuntime</span></code>, that depends on <code class="docutils literal notranslate"><span class="pre">FortranRuntime</span></code> and <code class="docutils literal notranslate"><span class="pre">liboffload</span></code>.  The F18 driver adds <code class="docutils literal notranslate"><span class="pre">FortranOffloadRuntime</span></code> for linking under <code class="docutils literal notranslate"><span class="pre">-fopenacc</span></code>/<code class="docutils literal notranslate"><span class="pre">-fopenmp</span></code> (and maybe additional switches like <code class="docutils literal notranslate"><span class="pre">-fopenmp-targets</span></code>).</p>
+</section>
+</section>
+</section>
+<section id="todos">
+<h1>TODOs:<a class="headerlink" href="#todos" title="Permalink to this heading">¶</a></h1>
+<ul class="simple">
+<li><p>Cover the detach action.</p></li>
+</ul>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+<! TODO: Change the webpage  >
+  <li><a href="https://flang.llvm.org">Flang Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+        <li class="nav-item nav-item-this"><a href="">OpenACC dialect: Fortran descriptor management in the offload data environment</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2024, The Flang Team.
+      Last updated on Mar 22, 2024.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>
