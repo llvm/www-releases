@@ -1,0 +1,514 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Scudo Hardened Allocator &#8212; LLVM 18.1.4 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=be84393e" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=409d885a"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="MemTagSanitizer" href="MemTagSanitizer.html" />
+    <link rel="prev" title="Pointer Authentication" href="PointerAuth.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="MemTagSanitizer.html" title="MemTagSanitizer"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="PointerAuth.html" title="Pointer Authentication"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" accesskey="U">Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Scudo Hardened Allocator</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/ScudoHardenedAllocator.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="scudo-hardened-allocator">
+<h1>Scudo Hardened Allocator<a class="headerlink" href="#scudo-hardened-allocator" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#design" id="id2">Design</a></p>
+<ul>
+<li><p><a class="reference internal" href="#allocator" id="id3">Allocator</a></p></li>
+<li><p><a class="reference internal" href="#allocations-header" id="id4">Allocations Header</a></p></li>
+<li><p><a class="reference internal" href="#randomness" id="id5">Randomness</a></p></li>
+<li><p><a class="reference internal" href="#memory-reclaiming" id="id6">Memory reclaiming</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#usage" id="id7">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#platform" id="id8">Platform</a></p></li>
+<li><p><a class="reference internal" href="#library" id="id9">Library</a></p></li>
+<li><p><a class="reference internal" href="#clang" id="id10">Clang</a></p></li>
+<li><p><a class="reference internal" href="#options" id="id11">Options</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#error-types" id="id12">Error Types</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this heading">¶</a></h2>
+<p>The Scudo Hardened Allocator is a user-mode allocator, originally based on LLVM
+Sanitizers’
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/compiler-rt/lib/sanitizer_common/sanitizer_allocator_combined.h">CombinedAllocator</a>.
+It aims at providing additional mitigation against heap based vulnerabilities,
+while maintaining good performance. Scudo is currently the default allocator in
+<a class="reference external" href="https://fuchsia.dev/">Fuchsia</a>, and in <a class="reference external" href="https://www.android.com/">Android</a>
+since Android 11.</p>
+<p>The name “Scudo” comes from the Italian word for
+<a class="reference external" href="https://www.collinsdictionary.com/dictionary/italian-english/scudo">shield</a>
+(and Escudo in Spanish).</p>
+</section>
+<section id="design">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Design</a><a class="headerlink" href="#design" title="Permalink to this heading">¶</a></h2>
+<section id="allocator">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Allocator</a><a class="headerlink" href="#allocator" title="Permalink to this heading">¶</a></h3>
+<p>Scudo was designed with security in mind, but aims at striking a good balance
+between security and performance. It was designed to be highly tunable and
+configurable, and while we provide some default configurations, we encourage
+consumers to come up with the parameters that will work best for their use
+cases.</p>
+<p>The allocator combines several components that serve distinct purposes:</p>
+<ul class="simple">
+<li><p>the Primary allocator: fast and efficient, it services smaller allocation
+sizes by carving reserved memory regions into blocks of identical size. There
+are currently two Primary allocators implemented, specific to 32 and 64 bit
+architectures. It is configurable via compile time options.</p></li>
+<li><p>the Secondary allocator: slower, it services larger allocation sizes via the
+memory mapping primitives of the underlying operating system. Secondary backed
+allocations are surrounded by Guard Pages. It is also configurable via compile
+time options.</p></li>
+<li><p>the thread specific data Registry: defines how local caches operate for each
+thread. There are currently two models implemented: the exclusive model where
+each thread holds its own caches (using the ELF TLS); or the shared model
+where threads share a fixed size pool of caches.</p></li>
+<li><p>the Quarantine: offers a way to delay the deallocation operations, preventing
+blocks to be immediately available for reuse. Blocks held will be recycled
+once certain size criteria are reached. This is essentially a delayed freelist
+which can help mitigate some use-after-free situations. This feature is fairly
+costly in terms of performance and memory footprint, is mostly controlled by
+runtime options and is disabled by default.</p></li>
+</ul>
+</section>
+<section id="allocations-header">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Allocations Header</a><a class="headerlink" href="#allocations-header" title="Permalink to this heading">¶</a></h3>
+<p>Every chunk of heap memory returned to an application by the allocator will be
+preceded by a header. This has two purposes:</p>
+<ul class="simple">
+<li><p>being to store various information about the chunk, that can be leveraged to
+ensure consistency of the heap operations;</p></li>
+<li><p>being able to detect potential corruption. For this purpose, the header is
+checksummed and corruption of the header will be detected when said header is
+accessed (note that if the corrupted header is not accessed, the corruption
+will remain undetected).</p></li>
+</ul>
+<p>The following information is stored in the header:</p>
+<ul class="simple">
+<li><p>the class ID for that chunk, which identifies the region where the chunk
+resides for Primary backed allocations, or 0 for Secondary backed allocations;</p></li>
+<li><p>the state of the chunk (available, allocated or quarantined);</p></li>
+<li><p>the allocation type (malloc, new, new[] or memalign), to detect potential
+mismatches in the allocation APIs used;</p></li>
+<li><p>the size (Primary) or unused bytes amount (Secondary) for that chunk, which is
+necessary for reallocation or sized-deallocation operations;</p></li>
+<li><p>the offset of the chunk, which is the distance in bytes from the beginning of
+the returned chunk to the beginning of the backend allocation (the “block”);</p></li>
+<li><p>the 16-bit checksum;</p></li>
+</ul>
+<p>This header fits within 8 bytes on all platforms supported, and contributes to a
+small overhead for each allocation.</p>
+<p>The checksum is computed using a CRC32 (made faster with hardware support)
+of the global secret, the chunk pointer itself, and the 8 bytes of header with
+the checksum field zeroed out. It is not intended to be cryptographically
+strong.</p>
+<p>The header is atomically loaded and stored to prevent races. This is important
+as two consecutive chunks could belong to different threads. We work on local
+copies and use compare-exchange primitives to update the headers in the heap
+memory, and avoid any type of double-fetching.</p>
+</section>
+<section id="randomness">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Randomness</a><a class="headerlink" href="#randomness" title="Permalink to this heading">¶</a></h3>
+<p>Randomness is a critical factor to the additional security provided by the
+allocator. The allocator trusts the memory mapping primitives of the OS to
+provide pages at (mostly) non-predictable locations in memory, as well as the
+binaries to be compiled with ASLR. In the event one of those assumptions is
+incorrect, the security will be greatly reduced. Scudo further randomizes how
+blocks are allocated in the Primary, can randomize how caches are assigned to
+threads.</p>
+</section>
+<section id="memory-reclaiming">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Memory reclaiming</a><a class="headerlink" href="#memory-reclaiming" title="Permalink to this heading">¶</a></h3>
+<p>Primary and Secondary allocators have different behaviors with regard to
+reclaiming. While Secondary mapped allocations can be unmapped on deallocation,
+it isn’t the case for the Primary, which could lead to a steady growth of the
+RSS of a process. To counteract this, if the underlying OS allows it, pages
+that are covered by contiguous free memory blocks in the Primary can be
+released: this generally means they won’t count towards the RSS of a process and
+be zero filled on subsequent accesses). This is done in the deallocation path,
+and several options exist to tune this behavior.</p>
+</section>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Permalink to this heading">¶</a></h2>
+<section id="platform">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Platform</a><a class="headerlink" href="#platform" title="Permalink to this heading">¶</a></h3>
+<p>If using Fuchsia or an Android version greater than 11, your memory allocations
+are already service by Scudo (note that Android Svelte configurations still use
+jemalloc).</p>
+</section>
+<section id="library">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Library</a><a class="headerlink" href="#library" title="Permalink to this heading">¶</a></h3>
+<p>The allocator static library can be built from the LLVM tree thanks to the
+<code class="docutils literal notranslate"><span class="pre">scudo_standalone</span></code> CMake rule. The associated tests can be exercised thanks to
+the <code class="docutils literal notranslate"><span class="pre">check-scudo_standalone</span></code> CMake rule.</p>
+<p>Linking the static library to your project can require the use of the
+<code class="docutils literal notranslate"><span class="pre">whole-archive</span></code> linker flag (or equivalent), depending on your linker.
+Additional flags might also be necessary.</p>
+<p>Your linked binary should now make use of the Scudo allocation and deallocation
+functions.</p>
+<p>You may also build Scudo like this:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">cd $LLVM/compiler-rt/lib</span>
+<span class="go">clang++ -fPIC -std=c++17 -msse4.2 -O2 -pthread -shared \</span>
+<span class="go">  -I scudo/standalone/include \</span>
+<span class="go">  scudo/standalone/*.cpp \</span>
+<span class="go">  -o $HOME/libscudo.so</span>
+</pre></div>
+</div>
+<p>and then use it with existing binaries as follows:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">LD_PRELOAD=$HOME/libscudo.so ./a.out</span>
+</pre></div>
+</div>
+</section>
+<section id="clang">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Clang</a><a class="headerlink" href="#clang" title="Permalink to this heading">¶</a></h3>
+<p>With a recent version of Clang (post rL317337), the “old” version of the
+allocator can be linked with a binary at compilation using the
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=scudo</span></code> command-line argument, if the target platform is supported.
+Currently, the only other sanitizer Scudo is compatible with is UBSan
+(eg: <code class="docutils literal notranslate"><span class="pre">-fsanitize=scudo,undefined</span></code>). Compiling with Scudo will also enforce
+PIE for the output binary.</p>
+<p>We will transition this to the standalone Scudo version in the future.</p>
+</section>
+<section id="options">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Options</a><a class="headerlink" href="#options" title="Permalink to this heading">¶</a></h3>
+<p>Several aspects of the allocator can be configured on a per process basis
+through the following ways:</p>
+<ul class="simple">
+<li><p>at compile time, by defining <code class="docutils literal notranslate"><span class="pre">SCUDO_DEFAULT_OPTIONS</span></code> to the options string
+you want set by default;</p></li>
+<li><p>by defining a <code class="docutils literal notranslate"><span class="pre">__scudo_default_options</span></code> function in one’s program that
+returns the options string to be parsed. Said function must have the following
+prototype: <code class="docutils literal notranslate"><span class="pre">extern</span> <span class="pre">&quot;C&quot;</span> <span class="pre">const</span> <span class="pre">char*</span> <span class="pre">__scudo_default_options(void)</span></code>, with a
+default visibility. This will override the compile time define;</p></li>
+<li><p>through the environment variable SCUDO_OPTIONS, containing the options string
+to be parsed. Options defined this way will override any definition made
+through <code class="docutils literal notranslate"><span class="pre">__scudo_default_options</span></code>.</p></li>
+<li><p>via the standard <code class="docutils literal notranslate"><span class="pre">mallopt</span></code> <a class="reference external" href="https://man7.org/linux/man-pages/man3/mallopt.3.html">API</a>,
+using parameters that are Scudo specific.</p></li>
+</ul>
+<p>When dealing with the options string, it follows a syntax similar to ASan, where
+distinct options can be assigned in the same string, separated by colons.</p>
+<p>For example, using the environment variable:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">SCUDO_OPTIONS=&quot;delete_size_mismatch=false:release_to_os_interval_ms=-1&quot; ./a.out</span>
+</pre></div>
+</div>
+<p>Or using the function:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">__scudo_default_options</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;delete_size_mismatch=false:release_to_os_interval_ms=-1&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The following “string” options are available:</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Option</p></td>
+<td><p>Default</p></td>
+<td><p>Description</p></td>
+</tr>
+<tr class="row-even"><td><p>quarantine_size_kb</p></td>
+<td><p>0</p></td>
+<td><p>The size (in Kb) of quarantine used to delay
+the actual deallocation of chunks. Lower value
+may reduce memory usage but decrease the
+effectiveness of the mitigation; a negative
+value will fallback to the defaults. Setting
+<em>both</em> this and thread_local_quarantine_size_kb
+to zero will disable the quarantine entirely.</p></td>
+</tr>
+<tr class="row-odd"><td><p>quarantine_max_chunk_size</p></td>
+<td><p>0</p></td>
+<td><p>Size (in bytes) up to which chunks can be
+quarantined.</p></td>
+</tr>
+<tr class="row-even"><td><p>thread_local_quarantine_size_kb</p></td>
+<td><p>0</p></td>
+<td><p>The size (in Kb) of per-thread cache use to
+offload the global quarantine. Lower value may
+reduce memory usage but might increase
+contention on the global quarantine. Setting
+<em>both</em> this and quarantine_size_kb to zero will
+disable the quarantine entirely.</p></td>
+</tr>
+<tr class="row-odd"><td><p>dealloc_type_mismatch</p></td>
+<td><p>false</p></td>
+<td><p>Whether or not we report errors on
+malloc/delete, new/free, new/delete[], etc.</p></td>
+</tr>
+<tr class="row-even"><td><p>delete_size_mismatch</p></td>
+<td><p>true</p></td>
+<td><p>Whether or not we report errors on mismatch
+between sizes of new and delete.</p></td>
+</tr>
+<tr class="row-odd"><td><p>zero_contents</p></td>
+<td><p>false</p></td>
+<td><p>Whether or not we zero chunk contents on
+allocation.</p></td>
+</tr>
+<tr class="row-even"><td><p>pattern_fill_contents</p></td>
+<td><p>false</p></td>
+<td><p>Whether or not we fill chunk contents with a
+byte pattern on allocation.</p></td>
+</tr>
+<tr class="row-odd"><td><p>may_return_null</p></td>
+<td><p>true</p></td>
+<td><p>Whether or not a non-fatal failure can return a
+NULL pointer (as opposed to terminating).</p></td>
+</tr>
+<tr class="row-even"><td><p>release_to_os_interval_ms</p></td>
+<td><p>5000</p></td>
+<td><p>The minimum interval (in ms) at which a release
+can be attempted (a negative value disables
+reclaiming).</p></td>
+</tr>
+<tr class="row-odd"><td><p>allocation_ring_buffer_size</p></td>
+<td><p>32768</p></td>
+<td><p>If stack trace collection is requested, how
+many previous allocations to keep in the
+allocation ring buffer.</p>
+<p>This buffer is used to provide allocation and
+deallocation stack traces for MTE fault
+reports. The larger the buffer, the more
+unrelated allocations can happen between
+(de)allocation and the fault.
+If your sync-mode MTE faults do not have
+(de)allocation stack traces, try increasing the
+buffer size.</p>
+<p>Stack trace collection can be requested using
+the scudo_malloc_set_track_allocation_stacks
+function.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<p>Additional flags can be specified, for example if Scudo if compiled with
+<a class="reference external" href="https://llvm.org/docs/GwpAsan.html">GWP-ASan</a> support.</p>
+<p>The following “mallopt” options are available (options are defined in
+<code class="docutils literal notranslate"><span class="pre">include/scudo/interface.h</span></code>):</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Option</p></td>
+<td><p>Description</p></td>
+</tr>
+<tr class="row-even"><td><p>M_DECAY_TIME</p></td>
+<td><p>Sets the release interval option to the specified
+value (Android only allows 0 or 1 to respectively set
+the interval to the minimum and maximum value as
+specified at compile time).</p></td>
+</tr>
+<tr class="row-odd"><td><p>M_PURGE</p></td>
+<td><p>Forces immediate memory reclaiming but does not
+reclaim everything. For smaller size classes, there
+is still some memory that is not reclaimed due to the
+extra time it takes and the small amount of memory
+that can be reclaimed.
+The value is ignored.</p></td>
+</tr>
+<tr class="row-even"><td><p>M_PURGE_ALL</p></td>
+<td><p>Same as M_PURGE but will force release all possible
+memory regardless of how long it takes.
+The value is ignored.</p></td>
+</tr>
+<tr class="row-odd"><td><p>M_MEMTAG_TUNING</p></td>
+<td><p>Tunes the allocator’s choice of memory tags to make
+it more likely that a certain class of memory errors
+will be detected. The value argument should be one of
+the enumerators of <code class="docutils literal notranslate"><span class="pre">scudo_memtag_tuning</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>M_THREAD_DISABLE_MEM_INIT</p></td>
+<td><p>Tunes the per-thread memory initialization, 0 being
+the normal behavior, 1 disabling the automatic heap
+initialization.</p></td>
+</tr>
+<tr class="row-odd"><td><p>M_CACHE_COUNT_MAX</p></td>
+<td><p>Set the maximum number of entries than can be cached
+in the Secondary cache.</p></td>
+</tr>
+<tr class="row-even"><td><p>M_CACHE_SIZE_MAX</p></td>
+<td><p>Sets the maximum size of entries that can be cached
+in the Secondary cache.</p></td>
+</tr>
+<tr class="row-odd"><td><p>M_TSDS_COUNT_MAX</p></td>
+<td><p>Increases the maximum number of TSDs that can be used
+up to the limit specified at compile time.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="error-types">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Error Types</a><a class="headerlink" href="#error-types" title="Permalink to this heading">¶</a></h2>
+<p>The allocator will output an error message, and potentially terminate the
+process, when an unexpected behavior is detected. The output usually starts with
+<code class="docutils literal notranslate"><span class="pre">&quot;Scudo</span> <span class="pre">ERROR:&quot;</span></code> followed by a short summary of the problem that occurred as
+well as the pointer(s) involved. Once again, Scudo is meant to be a mitigation,
+and might not be the most useful of tools to help you root-cause the issue,
+please consider <a class="reference external" href="https://github.com/google/sanitizers/wiki/AddressSanitizer">ASan</a>
+for this purpose.</p>
+<p>Here is a list of the current error messages and their potential cause:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;corrupted</span> <span class="pre">chunk</span> <span class="pre">header&quot;</span></code>: the checksum verification of the chunk header
+has failed. This is likely due to one of two things: the header was
+overwritten (partially or totally), or the pointer passed to the function is
+not a chunk at all;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;race</span> <span class="pre">on</span> <span class="pre">chunk</span> <span class="pre">header&quot;</span></code>: two different threads are attempting to manipulate
+the same header at the same time. This is usually symptomatic of a
+race-condition or general lack of locking when performing operations on that
+chunk;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;invalid</span> <span class="pre">chunk</span> <span class="pre">state&quot;</span></code>: the chunk is not in the expected state for a given
+operation, eg: it is not allocated when trying to free it, or it’s not
+quarantined when trying to recycle it, etc. A double-free is the typical
+reason this error would occur;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;misaligned</span> <span class="pre">pointer&quot;</span></code>: we strongly enforce basic alignment requirements, 8
+bytes on 32-bit platforms, 16 bytes on 64-bit platforms. If a pointer passed
+to our functions does not fit those, something is definitely wrong.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;allocation</span> <span class="pre">type</span> <span class="pre">mismatch&quot;</span></code>: when the optional deallocation type mismatch
+check is enabled, a deallocation function called on a chunk has to match the
+type of function that was called to allocate it. Security implications of such
+a mismatch are not necessarily obvious but situational at best;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;invalid</span> <span class="pre">sized</span> <span class="pre">delete&quot;</span></code>: when the C++14 sized delete operator is used, and
+the optional check enabled, this indicates that the size passed when
+deallocating a chunk is not congruent with the one requested when allocating
+it. This is likely to be a <a class="reference external" href="https://software.intel.com/en-us/forums/intel-c-compiler/topic/783942">compiler issue</a>,
+as was the case with Intel C++ Compiler, or some type confusion on the object
+being deallocated;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;RSS</span> <span class="pre">limit</span> <span class="pre">exhausted&quot;</span></code>: the maximum RSS optionally specified has been
+exceeded;</p></li>
+</ul>
+<p>Several other error messages relate to parameter checking on the libc allocation
+APIs and are fairly straightforward to understand.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="MemTagSanitizer.html" title="MemTagSanitizer"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="PointerAuth.html" title="Pointer Authentication"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" >Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Scudo Hardened Allocator</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2024, LLVM Project.
+      Last updated on 2024-04-17.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>
