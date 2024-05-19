@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Introduction to the Clang AST &#8212; Clang 18.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=d31d8629"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="LibTooling" href="LibTooling.html" />
+    <link rel="prev" title="External Clang Examples" href="ExternalClangExamples.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.6 documentation</span></a></h1>
+        <h2 class="heading"><span>Introduction to the Clang AST</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ExternalClangExamples.html">External Clang Examples</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LibTooling.html">LibTooling</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="introduction-to-the-clang-ast">
+<h1>Introduction to the Clang AST<a class="headerlink" href="#introduction-to-the-clang-ast" title="Permalink to this heading">¶</a></h1>
+<p>This document gives a gentle introduction to the mysteries of the Clang
+AST. It is targeted at developers who either want to contribute to
+Clang, or use tools that work based on Clang’s AST, like the AST
+matchers.</p>
+<center><iframe width="560" height="315" src="https://www.youtube.com/embed/VqCkCDFLSsc?vq=hd720" frameborder="0" allowfullscreen></iframe></center><p><a class="reference external" href="https://llvm.org/devmtg/2013-04/klimek-slides.pdf">Slides</a></p>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Permalink to this heading">¶</a></h2>
+<p>Clang’s AST is different from ASTs produced by some other compilers in
+that it closely resembles both the written C++ code and the C++
+standard. For example, parenthesis expressions and compile time
+constants are available in an unreduced form in the AST. This makes
+Clang’s AST a good fit for refactoring tools.</p>
+<p>Documentation for all Clang AST nodes is available via the generated
+<a class="reference external" href="https://clang.llvm.org/doxygen">Doxygen</a>. The doxygen online
+documentation is also indexed by your favorite search engine, which will
+make a search for clang and the AST node’s class name usually turn up
+the doxygen of the class you’re looking for (for example, search for:
+clang ParenExpr).</p>
+</section>
+<section id="examining-the-ast">
+<h2>Examining the AST<a class="headerlink" href="#examining-the-ast" title="Permalink to this heading">¶</a></h2>
+<p>A good way to familiarize yourself with the Clang AST is to actually look
+at it on some simple example code. Clang has a builtin AST-dump mode,
+which can be enabled with the flag <code class="docutils literal notranslate"><span class="pre">-ast-dump</span></code>.</p>
+<p>Let’s look at a simple example AST:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ cat test.cc
+int f(int x) {
+  int result = (x / 42);
+  return result;
+}
+
+# Clang by default is a frontend for many tools; -Xclang is used to pass
+# options directly to the C++ frontend.
+$ clang -Xclang -ast-dump -fsyntax-only test.cc
+TranslationUnitDecl 0x5aea0d0 &lt;&lt;invalid sloc&gt;&gt;
+... cutting out internal declarations of clang ...
+`-FunctionDecl 0x5aeab50 &lt;test.cc:1:1, line:4:1&gt; f &#39;int (int)&#39;
+  |-ParmVarDecl 0x5aeaa90 &lt;line:1:7, col:11&gt; x &#39;int&#39;
+  `-CompoundStmt 0x5aead88 &lt;col:14, line:4:1&gt;
+    |-DeclStmt 0x5aead10 &lt;line:2:3, col:24&gt;
+    | `-VarDecl 0x5aeac10 &lt;col:3, col:23&gt; result &#39;int&#39;
+    |   `-ParenExpr 0x5aeacf0 &lt;col:16, col:23&gt; &#39;int&#39;
+    |     `-BinaryOperator 0x5aeacc8 &lt;col:17, col:21&gt; &#39;int&#39; &#39;/&#39;
+    |       |-ImplicitCastExpr 0x5aeacb0 &lt;col:17&gt; &#39;int&#39; &lt;LValueToRValue&gt;
+    |       | `-DeclRefExpr 0x5aeac68 &lt;col:17&gt; &#39;int&#39; lvalue ParmVar 0x5aeaa90 &#39;x&#39; &#39;int&#39;
+    |       `-IntegerLiteral 0x5aeac90 &lt;col:21&gt; &#39;int&#39; 42
+    `-ReturnStmt 0x5aead68 &lt;line:3:3, col:10&gt;
+      `-ImplicitCastExpr 0x5aead50 &lt;col:10&gt; &#39;int&#39; &lt;LValueToRValue&gt;
+        `-DeclRefExpr 0x5aead28 &lt;col:10&gt; &#39;int&#39; lvalue Var 0x5aeac10 &#39;result&#39; &#39;int&#39;
+</pre></div>
+</div>
+<p>The toplevel declaration in
+a translation unit is always the <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1TranslationUnitDecl.html">translation unit
+declaration</a>.
+In this example, our first user written declaration is the <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1FunctionDecl.html">function
+declaration</a>
+of “<code class="docutils literal notranslate"><span class="pre">f</span></code>”. The body of “<code class="docutils literal notranslate"><span class="pre">f</span></code>” is a <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1CompoundStmt.html">compound
+statement</a>,
+whose child nodes are a <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1DeclStmt.html">declaration
+statement</a>
+that declares our result variable, and the <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1ReturnStmt.html">return
+statement</a>.</p>
+</section>
+<section id="ast-context">
+<h2>AST Context<a class="headerlink" href="#ast-context" title="Permalink to this heading">¶</a></h2>
+<p>All information about the AST for a translation unit is bundled up in
+the class
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1ASTContext.html">ASTContext</a>.
+It allows traversal of the whole translation unit starting from
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1ASTContext.html#abd909fb01ef10cfd0244832a67b1dd64">getTranslationUnitDecl</a>,
+or to access Clang’s <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1ASTContext.html#a4f95adb9958e22fbe55212ae6482feb4">table of
+identifiers</a>
+for the parsed translation unit.</p>
+</section>
+<section id="ast-nodes">
+<h2>AST Nodes<a class="headerlink" href="#ast-nodes" title="Permalink to this heading">¶</a></h2>
+<p>Clang’s AST nodes are modeled on a class hierarchy that does not have a
+common ancestor. Instead, there are multiple larger hierarchies for
+basic node types like
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Decl.html">Decl</a> and
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Stmt.html">Stmt</a>. Many
+important AST nodes derive from
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Type.html">Type</a>,
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Decl.html">Decl</a>,
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1DeclContext.html">DeclContext</a>
+or <a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Stmt.html">Stmt</a>, with
+some classes deriving from both Decl and DeclContext.</p>
+<p>There are also a multitude of nodes in the AST that are not part of a
+larger hierarchy, and are only reachable from specific other nodes, like
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1CXXBaseSpecifier.html">CXXBaseSpecifier</a>.</p>
+<p>Thus, to traverse the full AST, one starts from the
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1TranslationUnitDecl.html">TranslationUnitDecl</a>
+and then recursively traverses everything that can be reached from that
+node - this information has to be encoded for each specific node type.
+This algorithm is encoded in the
+<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1RecursiveASTVisitor.html">RecursiveASTVisitor</a>.
+See the <a class="reference external" href="https://clang.llvm.org/docs/RAVFrontendAction.html">RecursiveASTVisitor
+tutorial</a>.</p>
+<p>The two most basic nodes in the Clang AST are statements
+(<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Stmt.html">Stmt</a>) and
+declarations
+(<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Decl.html">Decl</a>). Note
+that expressions
+(<a class="reference external" href="https://clang.llvm.org/doxygen/classclang_1_1Expr.html">Expr</a>) are
+also statements in Clang’s AST.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ExternalClangExamples.html">External Clang Examples</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LibTooling.html">LibTooling</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

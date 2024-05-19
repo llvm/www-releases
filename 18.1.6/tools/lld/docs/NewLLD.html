@@ -1,0 +1,413 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>The ELF, COFF and Wasm Linkers &#8212; lld 18.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm.css?v=1cf7c864" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=d31d8629"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="icon" href="_static/favicon.ico"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Missing Key Function" href="missingkeyfunction.html" />
+    <link rel="prev" title="LLD - The LLVM Linker" href="index.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+<a href="index.html"><img src="_static/logo.png" alt="LLVM Documentation"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="missingkeyfunction.html" title="Missing Key Function"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="index.html" title="LLD - The LLVM Linker"
+             accesskey="P">previous</a> |</li>
+  <li><a href="index.html">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">The ELF, COFF and Wasm Linkers</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <div>
+    <h3><a href="index.html">Table of Contents</a></h3>
+    <ul>
+<li><a class="reference internal" href="#">The ELF, COFF and Wasm Linkers</a><ul>
+<li><a class="reference internal" href="#the-elf-linker-as-a-library">The ELF Linker as a Library</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#design">Design</a><ul>
+<li><a class="reference internal" href="#key-concepts">Key Concepts</a></li>
+<li><a class="reference internal" href="#numbers-you-want-to-know">Numbers You Want to Know</a></li>
+<li><a class="reference internal" href="#important-data-structures">Important Data Structures</a></li>
+<li><a class="reference internal" href="#link-time-optimization">Link-Time Optimization</a></li>
+<li><a class="reference internal" href="#glossary">Glossary</a></li>
+<li><a class="reference internal" href="#other-info">Other Info</a></li>
+</ul>
+</li>
+</ul>
+
+  </div>
+  <div>
+    <h4>Previous topic</h4>
+    <p class="topless"><a href="index.html"
+                          title="previous chapter">LLD - The LLVM Linker</a></p>
+  </div>
+  <div>
+    <h4>Next topic</h4>
+    <p class="topless"><a href="missingkeyfunction.html"
+                          title="next chapter">Missing Key Function</a></p>
+  </div>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/NewLLD.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="the-elf-coff-and-wasm-linkers">
+<h1>The ELF, COFF and Wasm Linkers<a class="headerlink" href="#the-elf-coff-and-wasm-linkers" title="Permalink to this heading">¶</a></h1>
+<section id="the-elf-linker-as-a-library">
+<h2>The ELF Linker as a Library<a class="headerlink" href="#the-elf-linker-as-a-library" title="Permalink to this heading">¶</a></h2>
+<p>You can embed LLD to your program by linking against it and calling the linker’s
+entry point function <code class="docutils literal notranslate"><span class="pre">lld::lldMain</span></code>.</p>
+<p>The current policy is that it is your responsibility to give trustworthy object
+files. The function is guaranteed to return as long as you do not pass corrupted
+or malicious object files. A corrupted file could cause a fatal error or SEGV.
+That being said, you don’t need to worry too much about it if you create object
+files in the usual way and give them to the linker. It is naturally expected to
+work, or otherwise it’s a linker’s bug.</p>
+</section>
+</section>
+<section id="design">
+<h1>Design<a class="headerlink" href="#design" title="Permalink to this heading">¶</a></h1>
+<p>We will describe the design of the linkers in the rest of the document.</p>
+<section id="key-concepts">
+<h2>Key Concepts<a class="headerlink" href="#key-concepts" title="Permalink to this heading">¶</a></h2>
+<p>Linkers are fairly large pieces of software.
+There are many design choices you have to make to create a complete linker.</p>
+<p>This is a list of design choices we’ve made for ELF and COFF LLD.
+We believe that these high-level design choices achieved a right balance
+between speed, simplicity and extensibility.</p>
+<ul>
+<li><p>Implement as native linkers</p>
+<p>We implemented the linkers as native linkers for each file format.</p>
+<p>The linkers share the same design but share very little code.
+Sharing code makes sense if the benefit is worth its cost.
+In our case, the object formats are different enough that we thought the layer
+to abstract the differences wouldn’t be worth its complexity and run-time
+cost.  Elimination of the abstract layer has greatly simplified the
+implementation.</p>
+</li>
+<li><p>Speed by design</p>
+<p>One of the most important things in archiving high performance is to
+do less rather than do it efficiently.
+Therefore, the high-level design matters more than local optimizations.
+Since we are trying to create a high-performance linker,
+it is very important to keep the design as efficient as possible.</p>
+<p>Broadly speaking, we do not do anything until we have to do it.
+For example, we do not read section contents or relocations
+until we need them to continue linking.
+When we need to do some costly operation (such as looking up
+a hash table for each symbol), we do it only once.
+We obtain a handle (which is typically just a pointer to actual data)
+on the first operation and use it throughout the process.</p>
+</li>
+<li><p>Efficient archive file handling</p>
+<p>LLD’s handling of archive files (the files with “.a” file extension) is
+different from the traditional Unix linkers and similar to Windows linkers.
+We’ll describe how the traditional Unix linker handles archive files, what the
+problem is, and how LLD approached the problem.</p>
+<p>The traditional Unix linker maintains a set of undefined symbols during
+linking.  The linker visits each file in the order as they appeared in the
+command line until the set becomes empty. What the linker would do depends on
+file type.</p>
+<ul class="simple">
+<li><p>If the linker visits an object file, the linker links object files to the
+result, and undefined symbols in the object file are added to the set.</p></li>
+<li><p>If the linker visits an archive file, it checks for the archive file’s
+symbol table and extracts all object files that have definitions for any
+symbols in the set.</p></li>
+</ul>
+<p>This algorithm sometimes leads to a counter-intuitive behavior.  If you give
+archive files before object files, nothing will happen because when the linker
+visits archives, there is no undefined symbols in the set.  As a result, no
+files are extracted from the first archive file, and the link is done at that
+point because the set is empty after it visits one file.</p>
+<p>You can fix the problem by reordering the files,
+but that cannot fix the issue of mutually-dependent archive files.</p>
+<p>Linking mutually-dependent archive files is tricky.  You may specify the same
+archive file multiple times to let the linker visit it more than once.  Or,
+you may use the special command line options, <cite>–start-group</cite> and
+<cite>–end-group</cite>, to let the linker loop over the files between the options until
+no new symbols are added to the set.</p>
+<p>Visiting the same archive files multiple times makes the linker slower.</p>
+<p>Here is how LLD approaches the problem. Instead of memorizing only undefined
+symbols, we program LLD so that it memorizes all symbols.  When it sees an
+undefined symbol that can be resolved by extracting an object file from an
+archive file it previously visited, it immediately extracts the file and links
+it.  It is doable because LLD does not forget symbols it has seen in archive
+files.</p>
+<p>We believe that LLD’s way is efficient and easy to justify.</p>
+<p>The semantics of LLD’s archive handling are different from the traditional
+Unix’s.  You can observe it if you carefully craft archive files to exploit
+it.  However, in reality, we don’t know any program that cannot link with our
+algorithm so far, so it’s not going to cause trouble.</p>
+</li>
+</ul>
+</section>
+<section id="numbers-you-want-to-know">
+<h2>Numbers You Want to Know<a class="headerlink" href="#numbers-you-want-to-know" title="Permalink to this heading">¶</a></h2>
+<p>To give you intuition about what kinds of data the linker is mainly working on,
+I’ll give you the list of objects and their numbers LLD has to read and process
+in order to link a very large executable. In order to link Chrome with debug
+info, which is roughly 2 GB in output size, LLD reads</p>
+<ul class="simple">
+<li><p>17,000 files,</p></li>
+<li><p>1,800,000 sections,</p></li>
+<li><p>6,300,000 symbols, and</p></li>
+<li><p>13,000,000 relocations.</p></li>
+</ul>
+<p>LLD produces the 2 GB executable in 15 seconds.</p>
+<p>These numbers vary depending on your program, but in general,
+you have a lot of relocations and symbols for each file.
+If your program is written in C++, symbol names are likely to be
+pretty long because of name mangling.</p>
+<p>It is important to not waste time on relocations and symbols.</p>
+<p>In the above case, the total amount of symbol strings is 450 MB,
+and inserting all of them to a hash table takes 1.5 seconds.
+Therefore, if you causally add a hash table lookup for each symbol,
+it would slow down the linker by 10%. So, don’t do that.</p>
+<p>On the other hand, you don’t have to pursue efficiency
+when handling files.</p>
+</section>
+<section id="important-data-structures">
+<h2>Important Data Structures<a class="headerlink" href="#important-data-structures" title="Permalink to this heading">¶</a></h2>
+<p>We will describe the key data structures in LLD in this section.  The linker can
+be understood as the interactions between them.  Once you understand their
+functions, the code of the linker should look obvious to you.</p>
+<ul>
+<li><p>Symbol</p>
+<p>This class represents a symbol.
+They are created for symbols in object files or archive files.
+The linker creates linker-defined symbols as well.</p>
+<p>There are basically three types of Symbols: Defined, Undefined, or Lazy.</p>
+<ul class="simple">
+<li><p>Defined symbols are for all symbols that are considered as “resolved”,
+including real defined symbols, COMDAT symbols, common symbols,
+absolute symbols, linker-created symbols, etc.</p></li>
+<li><p>Undefined symbols represent undefined symbols, which need to be replaced by
+Defined symbols by the resolver until the link is complete.</p></li>
+<li><p>Lazy symbols represent symbols we found in archive file headers
+which can turn into Defined if we read archive members.</p></li>
+</ul>
+<p>There’s only one Symbol instance for each unique symbol name. This uniqueness
+is guaranteed by the symbol table. As the resolver reads symbols from input
+files, it replaces an existing Symbol with the “best” Symbol for its symbol
+name using the placement new.</p>
+<p>The above mechanism allows you to use pointers to Symbols as a very cheap way
+to access name resolution results. Assume for example that you have a pointer
+to an undefined symbol before name resolution. If the symbol is resolved to a
+defined symbol by the resolver, the pointer will “automatically” point to the
+defined symbol, because the undefined symbol the pointer pointed to will have
+been replaced by the defined symbol in-place.</p>
+</li>
+<li><p>SymbolTable</p>
+<p>SymbolTable is basically a hash table from strings to Symbols
+with logic to resolve symbol conflicts. It resolves conflicts by symbol type.</p>
+<ul class="simple">
+<li><p>If we add Defined and Undefined symbols, the symbol table will keep the
+former.</p></li>
+<li><p>If we add Defined and Lazy symbols, it will keep the former.</p></li>
+<li><p>If we add Lazy and Undefined, it will keep the former,
+but it will also trigger the Lazy symbol to load the archive member
+to actually resolve the symbol.</p></li>
+</ul>
+</li>
+<li><p>Chunk (COFF specific)</p>
+<p>Chunk represents a chunk of data that will occupy space in an output.
+Each regular section becomes a chunk.
+Chunks created for common or BSS symbols are not backed by sections.
+The linker may create chunks to append additional data to an output as well.</p>
+<p>Chunks know about their size, how to copy their data to mmap’ed outputs,
+and how to apply relocations to them.
+Specifically, section-based chunks know how to read relocation tables
+and how to apply them.</p>
+</li>
+<li><p>InputSection (ELF specific)</p>
+<p>Since we have less synthesized data for ELF, we don’t abstract slices of
+input files as Chunks for ELF. Instead, we directly use the input section
+as an internal data type.</p>
+<p>InputSection knows about their size and how to copy themselves to
+mmap’ed outputs, just like COFF Chunks.</p>
+</li>
+<li><p>OutputSection</p>
+<p>OutputSection is a container of InputSections (ELF) or Chunks (COFF).
+An InputSection or Chunk belongs to at most one OutputSection.</p>
+</li>
+</ul>
+<p>There are mainly three actors in this linker.</p>
+<ul>
+<li><p>InputFile</p>
+<p>InputFile is a superclass of file readers.
+We have a different subclass for each input file type,
+such as regular object file, archive file, etc.
+They are responsible for creating and owning Symbols and InputSections/Chunks.</p>
+</li>
+<li><p>Writer</p>
+<p>The writer is responsible for writing file headers and InputSections/Chunks to
+a file.  It creates OutputSections, put all InputSections/Chunks into them,
+assign unique, non-overlapping addresses and file offsets to them, and then
+write them down to a file.</p>
+</li>
+<li><p>Driver</p>
+<p>The linking process is driven by the driver. The driver:</p>
+<ul class="simple">
+<li><p>processes command line options,</p></li>
+<li><p>creates a symbol table,</p></li>
+<li><p>creates an InputFile for each input file and puts all symbols within into
+the symbol table,</p></li>
+<li><p>checks if there’s no remaining undefined symbols,</p></li>
+<li><p>creates a writer,</p></li>
+<li><p>and passes the symbol table to the writer to write the result to a file.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="link-time-optimization">
+<h2>Link-Time Optimization<a class="headerlink" href="#link-time-optimization" title="Permalink to this heading">¶</a></h2>
+<p>LTO is implemented by handling LLVM bitcode files as object files.
+The linker resolves symbols in bitcode files normally. If all symbols
+are successfully resolved, it then runs LLVM passes
+with all bitcode files to convert them to one big regular ELF/COFF file.
+Finally, the linker replaces bitcode symbols with ELF/COFF symbols,
+so that they are linked as if they were in the native format from the beginning.</p>
+<p>The details are described in this document.
+<a class="reference external" href="https://llvm.org/docs/LinkTimeOptimization.html">https://llvm.org/docs/LinkTimeOptimization.html</a></p>
+</section>
+<section id="glossary">
+<h2>Glossary<a class="headerlink" href="#glossary" title="Permalink to this heading">¶</a></h2>
+<ul>
+<li><p>RVA (COFF)</p>
+<p>Short for Relative Virtual Address.</p>
+<p>Windows executables or DLLs are not position-independent; they are
+linked against a fixed address called an image base. RVAs are
+offsets from an image base.</p>
+<p>Default image bases are 0x140000000 for executables and 0x18000000
+for DLLs. For example, when we are creating an executable, we assume
+that the executable will be loaded at address 0x140000000 by the
+loader, so we apply relocations accordingly. Result texts and data
+will contain raw absolute addresses.</p>
+</li>
+<li><p>VA</p>
+<p>Short for Virtual Address. For COFF, it is equivalent to RVA + image base.</p>
+</li>
+<li><p>Base relocations (COFF)</p>
+<p>Relocation information for the loader. If the loader decides to map
+an executable or a DLL to a different address than their image
+bases, it fixes up binaries using information contained in the base
+relocation table. A base relocation table consists of a list of
+locations containing addresses. The loader adds a difference between
+RVA and actual load address to all locations listed there.</p>
+<p>Note that this run-time relocation mechanism is much simpler than ELF.
+There’s no PLT or GOT. Images are relocated as a whole just
+by shifting entire images in memory by some offsets. Although doing
+this breaks text sharing, I think this mechanism is not actually bad
+on today’s computers.</p>
+</li>
+<li><p>ICF</p>
+<p>Short for Identical COMDAT Folding (COFF) or Identical Code Folding (ELF).</p>
+<p>ICF is an optimization to reduce output size by merging read-only sections
+by not only their names but by their contents. If two read-only sections
+happen to have the same metadata, actual contents and relocations,
+they are merged by ICF. It is known as an effective technique,
+and it usually reduces C++ program’s size by a few percent or more.</p>
+<p>Note that this is not an entirely sound optimization. C/C++ require
+different functions have different addresses. If a program depends on
+that property, it would fail at runtime.</p>
+<p>On Windows, that’s not really an issue because MSVC link.exe enabled
+the optimization by default. As long as your program works
+with the linker’s default settings, your program should be safe with ICF.</p>
+<p>On Unix, your program is generally not guaranteed to be safe with ICF,
+although large programs happen to work correctly.
+LLD works fine with ICF for example.</p>
+</li>
+</ul>
+</section>
+<section id="other-info">
+<h2>Other Info<a class="headerlink" href="#other-info" title="Permalink to this heading">¶</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="missingkeyfunction.html">Missing Key Function</a></li>
+</ul>
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="missingkeyfunction.html" title="Missing Key Function"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="index.html" title="LLD - The LLVM Linker"
+             >previous</a> |</li>
+  <li><a href="index.html">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">The ELF, COFF and Wasm Linkers</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2024, LLVM Project.
+      Last updated on 2024-05-18.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>
