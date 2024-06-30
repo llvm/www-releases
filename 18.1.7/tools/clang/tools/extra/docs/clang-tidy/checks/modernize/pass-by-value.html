@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - modernize-pass-by-value &#8212; Extra Clang Tools 18.1.7 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script data-url_root="../../../" id="documentation_options" src="../../../_static/documentation_options.js?v=77650230"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="modernize-raw-string-literal" href="raw-string-literal.html" />
+    <link rel="prev" title="modernize-make-unique" href="make-unique.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 18.1.7 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - modernize-pass-by-value</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="make-unique.html">modernize-make-unique</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="raw-string-literal.html">modernize-raw-string-literal</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="modernize-pass-by-value">
+<h1>modernize-pass-by-value<a class="headerlink" href="#modernize-pass-by-value" title="Permalink to this heading">¶</a></h1>
+<p>With move semantics added to the language and the standard library updated with
+move constructors added for many types it is now interesting to take an
+argument directly by value, instead of by const-reference, and then copy. This
+check allows the compiler to take care of choosing the best way to construct
+the copy.</p>
+<p>The transformation is usually beneficial when the calling code passes an
+<em>rvalue</em> and assumes the move construction is a cheap operation. This short
+example illustrates how the construction of the value happens:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">s</span><span class="p">);</span>
+<span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_str</span><span class="p">();</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">foo</span><span class="p">(</span><span class="n">str</span><span class="p">);</span><span class="w">       </span><span class="c1">// lvalue  -&gt; copy construction</span>
+<span class="w">  </span><span class="n">foo</span><span class="p">(</span><span class="n">get_str</span><span class="p">());</span><span class="w"> </span><span class="c1">// prvalue -&gt; move construction</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Currently, only constructors are transformed to make use of pass-by-value.
+Contributions that handle other situations are welcome!</p>
+</div>
+<section id="pass-by-value-in-constructors">
+<h2>Pass-by-value in constructors<a class="headerlink" href="#pass-by-value-in-constructors" title="Permalink to this heading">¶</a></h2>
+<p>Replaces the uses of const-references constructor parameters that are copied
+into class fields. The parameter is then moved with <cite>std::move()</cite>.</p>
+<p>Since <code class="docutils literal notranslate"><span class="pre">std::move()</span></code> is a library function declared in <cite>&lt;utility&gt;</cite> it may be
+necessary to add this include. The check will add the include directive when
+necessary.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="w"> </span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string&gt;</span>
+
+<span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w"> </span><span class="k">public</span><span class="o">:</span>
+<span class="o">-</span><span class="w">  </span><span class="n">Foo</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Copied</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">ReadOnly</span><span class="p">)</span>
+<span class="o">-</span><span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="n">Copied</span><span class="p">(</span><span class="n">Copied</span><span class="p">),</span><span class="w"> </span><span class="n">ReadOnly</span><span class="p">(</span><span class="n">ReadOnly</span><span class="p">)</span>
+<span class="o">+</span><span class="w">  </span><span class="n">Foo</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">Copied</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">ReadOnly</span><span class="p">)</span>
+<span class="o">+</span><span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="n">Copied</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Copied</span><span class="p">)),</span><span class="w"> </span><span class="n">ReadOnly</span><span class="p">(</span><span class="n">ReadOnly</span><span class="p">)</span>
+<span class="w">   </span><span class="p">{}</span>
+
+<span class="w"> </span><span class="k">private</span><span class="o">:</span>
+<span class="w">   </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">Copied</span><span class="p">;</span>
+<span class="w">   </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">ReadOnly</span><span class="p">;</span>
+<span class="w"> </span><span class="p">};</span>
+
+<span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="nf">get_cwd</span><span class="p">();</span>
+
+<span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Path</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="c1">// The parameter corresponding to &#39;get_cwd()&#39; is move-constructed. By</span>
+<span class="w">   </span><span class="c1">// using pass-by-value in the Foo constructor we managed to avoid a</span>
+<span class="w">   </span><span class="c1">// copy-construction.</span>
+<span class="w">   </span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">(</span><span class="n">get_cwd</span><span class="p">(),</span><span class="w"> </span><span class="n">Path</span><span class="p">);</span>
+<span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>If the parameter is used more than once no transformation is performed since
+moved objects have an undefined state. It means the following code will be left
+untouched:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string&gt;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">pass</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">S</span><span class="p">);</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Foo</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">Str</span><span class="p">(</span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">pass</span><span class="p">(</span><span class="n">S</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">Str</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<section id="known-limitations">
+<h3>Known limitations<a class="headerlink" href="#known-limitations" title="Permalink to this heading">¶</a></h3>
+<p>A situation where the generated code can be wrong is when the object referenced
+is modified before the assignment in the init-list through a “hidden” reference.</p>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">s</span><span class="p">(</span><span class="s">&quot;foo&quot;</span><span class="p">);</span>
+
+<span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Base</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">Base</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">     </span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;bar&quot;</span><span class="p">;</span>
+<span class="w">   </span><span class="p">}</span>
+<span class="w"> </span><span class="p">};</span>
+
+<span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Derived</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">Base</span><span class="w"> </span><span class="p">{</span>
+<span class="o">-</span><span class="w">  </span><span class="n">Derived</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">Field</span><span class="p">(</span><span class="n">S</span><span class="p">)</span>
+<span class="o">+</span><span class="w">  </span><span class="n">Derived</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">Field</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">S</span><span class="p">))</span>
+<span class="w">   </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">   </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">Field</span><span class="p">;</span>
+<span class="w"> </span><span class="p">};</span>
+
+<span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="o">-</span><span class="w">  </span><span class="n">Derived</span><span class="w"> </span><span class="n">d</span><span class="p">(</span><span class="n">s</span><span class="p">);</span><span class="w"> </span><span class="c1">// d.Field holds &quot;bar&quot;</span>
+<span class="o">+</span><span class="w">  </span><span class="n">Derived</span><span class="w"> </span><span class="n">d</span><span class="p">(</span><span class="n">s</span><span class="p">);</span><span class="w"> </span><span class="c1">// d.Field holds &quot;foo&quot;</span>
+<span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="note-about-delayed-template-parsing">
+<h3>Note about delayed template parsing<a class="headerlink" href="#note-about-delayed-template-parsing" title="Permalink to this heading">¶</a></h3>
+<p>When delayed template parsing is enabled, constructors part of templated
+contexts; templated constructors, constructors in class templates, constructors
+of inner classes of template classes, etc., are not transformed. Delayed
+template parsing is enabled by default on Windows as a Microsoft extension:
+<a class="reference external" href="https://clang.llvm.org/docs/UsersManual.html#microsoft-extensions">Clang Compiler User’s Manual - Microsoft extensions</a>.</p>
+<p>Delayed template parsing can be enabled using the <cite>-fdelayed-template-parsing</cite>
+flag and disabled using <cite>-fno-delayed-template-parsing</cite>.</p>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">C</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">S</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">public</span><span class="o">:</span>
+<span class="o">=</span><span class="w">  </span><span class="c1">// using -fdelayed-template-parsing (default on Windows)</span>
+<span class="o">=</span><span class="w">  </span><span class="n">C</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">S</span><span class="p">(</span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="o">+</span><span class="w">  </span><span class="c1">// using -fno-delayed-template-parsing (default on non-Windows systems)</span>
+<span class="o">+</span><span class="w">  </span><span class="n">C</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="n">S</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">S</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">S</span><span class="p">))</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">  </span><span class="p">};</span>
+</pre></div>
+</div>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<p>For more information about the pass-by-value idiom, read: <a class="reference external" href="https://web.archive.org/web/20140205194657/http://cpp-next.com/archive/2009/08/want-speed-pass-by-value/">Want Speed? Pass by Value</a>.</p>
+</div>
+</section>
+</section>
+<section id="options">
+<h2>Options<a class="headerlink" href="#options" title="Permalink to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-IncludeStyle">
+<span class="sig-name descname"><span class="pre">IncludeStyle</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-IncludeStyle" title="Permalink to this definition">¶</a></dt>
+<dd><p>A string specifying which include-style is used, <cite>llvm</cite> or <cite>google</cite>. Default
+is <cite>llvm</cite>.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ValuesOnly">
+<span class="sig-name descname"><span class="pre">ValuesOnly</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-ValuesOnly" title="Permalink to this definition">¶</a></dt>
+<dd><p>When <cite>true</cite>, the check only warns about copied parameters that are already
+passed by value. Default is <cite>false</cite>.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="make-unique.html">modernize-make-unique</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="raw-string-literal.html">modernize-raw-string-literal</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

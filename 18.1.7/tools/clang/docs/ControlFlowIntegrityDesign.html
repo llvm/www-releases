@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Control Flow Integrity Design Documentation &#8212; Clang 18.1.7 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=77650230"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="LTO Visibility" href="LTOVisibility.html" />
+    <link rel="prev" title="Control Flow Integrity" href="ControlFlowIntegrity.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.7 documentation</span></a></h1>
+        <h2 class="heading"><span>Control Flow Integrity Design Documentation</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ControlFlowIntegrity.html">Control Flow Integrity</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LTOVisibility.html">LTO Visibility</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="control-flow-integrity-design-documentation">
+<h1>Control Flow Integrity Design Documentation<a class="headerlink" href="#control-flow-integrity-design-documentation" title="Permalink to this heading">¶</a></h1>
+<p>This page documents the design of the <a class="reference internal" href="ControlFlowIntegrity.html"><span class="doc">Control Flow Integrity</span></a> schemes
+supported by Clang.</p>
+<section id="forward-edge-cfi-for-virtual-calls">
+<h2>Forward-Edge CFI for Virtual Calls<a class="headerlink" href="#forward-edge-cfi-for-virtual-calls" title="Permalink to this heading">¶</a></h2>
+<p>This scheme works by allocating, for each static type used to make a virtual
+call, a region of read-only storage in the object file holding a bit vector
+that maps onto to the region of storage used for those virtual tables. Each
+set bit in the bit vector corresponds to the <a class="reference external" href="https://itanium-cxx-abi.github.io/cxx-abi/abi.html#vtable-general">address point</a> for a virtual
+table compatible with the static type for which the bit vector is being built.</p>
+<p>For example, consider the following three C++ classes:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">B</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">C</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">();</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>The scheme will cause the virtual tables for A, B and C to be laid out
+consecutively:</p>
+<table class="docutils align-default" id="id5">
+<caption><span class="caption-text">Virtual Table Layout for A, B, C</span><a class="headerlink" href="#id5" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>9</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>11</p></th>
+<th class="head"><p>12</p></th>
+<th class="head"><p>13</p></th>
+<th class="head"><p>14</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A::offset-to-top</p></td>
+<td><p>&amp;A::rtti</p></td>
+<td><p>&amp;A::f1</p></td>
+<td><p>&amp;A::f2</p></td>
+<td><p>&amp;A::f3</p></td>
+<td><p>B::offset-to-top</p></td>
+<td><p>&amp;B::rtti</p></td>
+<td><p>&amp;B::f1</p></td>
+<td><p>&amp;B::f2</p></td>
+<td><p>&amp;B::f3</p></td>
+<td><p>C::offset-to-top</p></td>
+<td><p>&amp;C::rtti</p></td>
+<td><p>&amp;C::f1</p></td>
+<td><p>&amp;C::f2</p></td>
+<td><p>&amp;C::f3</p></td>
+</tr>
+</tbody>
+</table>
+<p>The bit vector for static types A, B and C will look like this:</p>
+<table class="docutils align-default" id="id6">
+<caption><span class="caption-text">Bit Vectors for A, B, C</span><a class="headerlink" href="#id6" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Class</p></th>
+<th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>9</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>11</p></th>
+<th class="head"><p>12</p></th>
+<th class="head"><p>13</p></th>
+<th class="head"><p>14</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+</tr>
+<tr class="row-odd"><td><p>B</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+</tr>
+<tr class="row-even"><td><p>C</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+</tr>
+</tbody>
+</table>
+<p>Bit vectors are represented in the object file as byte arrays. By loading
+from indexed offsets into the byte array and applying a mask, a program can
+test bits from the bit set with a relatively short instruction sequence. Bit
+vectors may overlap so long as they use different bits. For the full details,
+see the <a class="reference external" href="https://llvm.org/docs/doxygen/html/structllvm_1_1ByteArrayBuilder.html">ByteArrayBuilder</a> class.</p>
+<p>In this case, assuming A is laid out at offset 0 in bit 0, B at offset 0 in
+bit 1 and C at offset 0 in bit 2, the byte array would look like this:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span><span class="w"> </span><span class="n">bits</span><span class="p">[]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">};</span>
+</pre></div>
+</div>
+<p>To emit a virtual call, the compiler will assemble code that checks that
+the object’s virtual table pointer is in-bounds and aligned and that the
+relevant bit is set in the bit vector.</p>
+<p>For example on x86 a typical virtual call may look like this:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>ca7fbb:       48 8b 0f                mov    (%rdi),%rcx
+ca7fbe:       48 8d 15 c3 42 fb 07    lea    0x7fb42c3(%rip),%rdx
+ca7fc5:       48 89 c8                mov    %rcx,%rax
+ca7fc8:       48 29 d0                sub    %rdx,%rax
+ca7fcb:       48 c1 c0 3d             rol    $0x3d,%rax
+ca7fcf:       48 3d 7f 01 00 00       cmp    $0x17f,%rax
+ca7fd5:       0f 87 36 05 00 00       ja     ca8511
+ca7fdb:       48 8d 15 c0 0b f7 06    lea    0x6f70bc0(%rip),%rdx
+ca7fe2:       f6 04 10 10             testb  $0x10,(%rax,%rdx,1)
+ca7fe6:       0f 84 25 05 00 00       je     ca8511
+ca7fec:       ff 91 98 00 00 00       callq  *0x98(%rcx)
+  [...]
+ca8511:       0f 0b                   ud2
+</pre></div>
+</div>
+<p>The compiler relies on co-operation from the linker in order to assemble
+the bit vectors for the whole program. It currently does this using LLVM’s
+<a class="reference external" href="https://llvm.org/docs/TypeMetadata.html">type metadata</a> mechanism together with link-time optimization.</p>
+<section id="optimizations">
+<h3>Optimizations<a class="headerlink" href="#optimizations" title="Permalink to this heading">¶</a></h3>
+<p>The scheme as described above is the fully general variant of the scheme.
+Most of the time we are able to apply one or more of the following
+optimizations to improve binary size or performance.</p>
+<p>In fact, if you try the above example with the current version of the
+compiler, you will probably find that it will not use the described virtual
+table layout or machine instructions. Some of the optimizations we are about
+to introduce cause the compiler to use a different layout or a different
+sequence of machine instructions.</p>
+<section id="stripping-leading-trailing-zeros-in-bit-vectors">
+<h4>Stripping Leading/Trailing Zeros in Bit Vectors<a class="headerlink" href="#stripping-leading-trailing-zeros-in-bit-vectors" title="Permalink to this heading">¶</a></h4>
+<p>If a bit vector contains leading or trailing zeros, we can strip them from
+the vector. The compiler will emit code to check if the pointer is in range
+of the region covered by ones, and perform the bit vector check using a
+truncated version of the bit vector. For example, the bit vectors for our
+example class hierarchy will be emitted like this:</p>
+<table class="docutils align-default" id="id7">
+<caption><span class="caption-text">Bit Vectors for A, B, C</span><a class="headerlink" href="#id7" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Class</p></th>
+<th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>9</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>11</p></th>
+<th class="head"><p>12</p></th>
+<th class="head"><p>13</p></th>
+<th class="head"><p>14</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A</p></td>
+<td></td>
+<td></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>B</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td><p>1</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>C</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td><p>1</p></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="short-inline-bit-vectors">
+<h4>Short Inline Bit Vectors<a class="headerlink" href="#short-inline-bit-vectors" title="Permalink to this heading">¶</a></h4>
+<p>If the vector is sufficiently short, we can represent it as an inline constant
+on x86. This saves us a few instructions when reading the correct element
+of the bit vector.</p>
+<p>If the bit vector fits in 32 bits, the code looks like this:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span> dc2:       48 8b 03                mov    (%rbx),%rax
+ dc5:       48 8d 15 14 1e 00 00    lea    0x1e14(%rip),%rdx
+ dcc:       48 89 c1                mov    %rax,%rcx
+ dcf:       48 29 d1                sub    %rdx,%rcx
+ dd2:       48 c1 c1 3d             rol    $0x3d,%rcx
+ dd6:       48 83 f9 03             cmp    $0x3,%rcx
+ dda:       77 2f                   ja     e0b &lt;main+0x9b&gt;
+ ddc:       ba 09 00 00 00          mov    $0x9,%edx
+ de1:       0f a3 ca                bt     %ecx,%edx
+ de4:       73 25                   jae    e0b &lt;main+0x9b&gt;
+ de6:       48 89 df                mov    %rbx,%rdi
+ de9:       ff 10                   callq  *(%rax)
+[...]
+ e0b:       0f 0b                   ud2
+</pre></div>
+</div>
+<p>Or if the bit vector fits in 64 bits:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>11a6:       48 8b 03                mov    (%rbx),%rax
+11a9:       48 8d 15 d0 28 00 00    lea    0x28d0(%rip),%rdx
+11b0:       48 89 c1                mov    %rax,%rcx
+11b3:       48 29 d1                sub    %rdx,%rcx
+11b6:       48 c1 c1 3d             rol    $0x3d,%rcx
+11ba:       48 83 f9 2a             cmp    $0x2a,%rcx
+11be:       77 35                   ja     11f5 &lt;main+0xb5&gt;
+11c0:       48 ba 09 00 00 00 00    movabs $0x40000000009,%rdx
+11c7:       04 00 00
+11ca:       48 0f a3 ca             bt     %rcx,%rdx
+11ce:       73 25                   jae    11f5 &lt;main+0xb5&gt;
+11d0:       48 89 df                mov    %rbx,%rdi
+11d3:       ff 10                   callq  *(%rax)
+[...]
+11f5:       0f 0b                   ud2
+</pre></div>
+</div>
+<p>If the bit vector consists of a single bit, there is only one possible
+virtual table, and the check can consist of a single equality comparison:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>9a2:   48 8b 03                mov    (%rbx),%rax
+9a5:   48 8d 0d a4 13 00 00    lea    0x13a4(%rip),%rcx
+9ac:   48 39 c8                cmp    %rcx,%rax
+9af:   75 25                   jne    9d6 &lt;main+0x86&gt;
+9b1:   48 89 df                mov    %rbx,%rdi
+9b4:   ff 10                   callq  *(%rax)
+[...]
+9d6:   0f 0b                   ud2
+</pre></div>
+</div>
+</section>
+<section id="virtual-table-layout">
+<h4>Virtual Table Layout<a class="headerlink" href="#virtual-table-layout" title="Permalink to this heading">¶</a></h4>
+<p>The compiler lays out classes of disjoint hierarchies in separate regions
+of the object file. At worst, bit vectors in disjoint hierarchies only
+need to cover their disjoint hierarchy. But the closer that classes in
+sub-hierarchies are laid out to each other, the smaller the bit vectors for
+those sub-hierarchies need to be (see “Stripping Leading/Trailing Zeros in Bit
+Vectors” above). The <a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/llvm/include/llvm/Transforms/IPO/LowerTypeTests.h">GlobalLayoutBuilder</a> class is responsible for laying
+out the globals efficiently to minimize the sizes of the underlying bitsets.</p>
+</section>
+<section id="alignment">
+<h4>Alignment<a class="headerlink" href="#alignment" title="Permalink to this heading">¶</a></h4>
+<p>If all gaps between address points in a particular bit vector are multiples
+of powers of 2, the compiler can compress the bit vector by strengthening
+the alignment requirements of the virtual table pointer. For example, given
+this class hierarchy:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">B</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f4</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f5</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f6</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">C</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>The virtual tables will be laid out like this:</p>
+<table class="docutils align-default" id="id8">
+<caption><span class="caption-text">Virtual Table Layout for A, B, C</span><a class="headerlink" href="#id8" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>9</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>11</p></th>
+<th class="head"><p>12</p></th>
+<th class="head"><p>13</p></th>
+<th class="head"><p>14</p></th>
+<th class="head"><p>15</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A::offset-to-top</p></td>
+<td><p>&amp;A::rtti</p></td>
+<td><p>&amp;A::f1</p></td>
+<td><p>&amp;A::f2</p></td>
+<td><p>B::offset-to-top</p></td>
+<td><p>&amp;B::rtti</p></td>
+<td><p>&amp;B::f1</p></td>
+<td><p>&amp;B::f2</p></td>
+<td><p>&amp;B::f3</p></td>
+<td><p>&amp;B::f4</p></td>
+<td><p>&amp;B::f5</p></td>
+<td><p>&amp;B::f6</p></td>
+<td><p>C::offset-to-top</p></td>
+<td><p>&amp;C::rtti</p></td>
+<td><p>&amp;C::f1</p></td>
+<td><p>&amp;C::f2</p></td>
+</tr>
+</tbody>
+</table>
+<p>Notice that each address point for A is separated by 4 words. This lets us
+emit a compressed bit vector for A that looks like this:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>2</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>14</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>1</p></td>
+</tr>
+</tbody>
+</table>
+<p>At call sites, the compiler will strengthen the alignment requirements by
+using a different rotate count. For example, on a 64-bit machine where the
+address points are 4-word aligned (as in A from our example), the <code class="docutils literal notranslate"><span class="pre">rol</span></code>
+instruction may look like this:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>dd2:       48 c1 c1 3b             rol    $0x3b,%rcx
+</pre></div>
+</div>
+</section>
+<section id="padding-to-powers-of-2">
+<h4>Padding to Powers of 2<a class="headerlink" href="#padding-to-powers-of-2" title="Permalink to this heading">¶</a></h4>
+<p>Of course, this alignment scheme works best if the address points are
+in fact aligned correctly. To make this more likely to happen, we insert
+padding between virtual tables that in many cases aligns address points to
+a power of 2. Specifically, our padding aligns virtual tables to the next
+highest power of 2 bytes; because address points for specific base classes
+normally appear at fixed offsets within the virtual table, this normally
+has the effect of aligning the address points as well.</p>
+<p>This scheme introduces tradeoffs between decreased space overhead for
+instructions and bit vectors and increased overhead in the form of padding. We
+therefore limit the amount of padding so that we align to no more than 128
+bytes. This number was found experimentally to provide a good tradeoff.</p>
+</section>
+<section id="eliminating-bit-vector-checks-for-all-ones-bit-vectors">
+<h4>Eliminating Bit Vector Checks for All-Ones Bit Vectors<a class="headerlink" href="#eliminating-bit-vector-checks-for-all-ones-bit-vectors" title="Permalink to this heading">¶</a></h4>
+<p>If the bit vector is all ones, the bit vector check is redundant; we simply
+need to check that the address is in range and well aligned. This is more
+likely to occur if the virtual tables are padded.</p>
+</section>
+</section>
+<section id="forward-edge-cfi-for-virtual-calls-by-interleaving-virtual-tables">
+<h3>Forward-Edge CFI for Virtual Calls by Interleaving Virtual Tables<a class="headerlink" href="#forward-edge-cfi-for-virtual-calls-by-interleaving-virtual-tables" title="Permalink to this heading">¶</a></h3>
+<p>Dimitar et. al. proposed a novel approach that interleaves virtual tables in <a class="footnote-reference brackets" href="#id3" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>.
+This approach is more efficient in terms of space because padding and bit vectors are no longer needed.
+At the same time, it is also more efficient in terms of performance because in the interleaved layout
+address points of the virtual tables are consecutive, thus the validity check of a virtual
+vtable pointer is always a range check.</p>
+<p>At a high level, the interleaving scheme consists of three steps: 1) split virtual table groups into
+separate virtual tables, 2) order virtual tables by a pre-order traversal of the class hierarchy
+and 3) interleave virtual tables.</p>
+<p>The interleaving scheme implemented in LLVM is inspired by <a class="footnote-reference brackets" href="#id3" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> but has its own
+enhancements (more in <a class="reference internal" href="#interleave-virtual-tables">Interleave virtual tables</a>).</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id3" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
+<span class="backrefs">(<a role="doc-backlink" href="#id1">1</a>,<a role="doc-backlink" href="#id2">2</a>,<a role="doc-backlink" href="#id4">3</a>)</span>
+<p><a class="reference external" href="https://cseweb.ucsd.edu/~lerner/papers/ivtbl-ndss16.pdf">Protecting C++ Dynamic Dispatch Through VTable Interleaving</a>. Dimitar Bounov, Rami Gökhan Kıcı, Sorin Lerner.</p>
+</aside>
+</aside>
+<section id="split-virtual-table-groups-into-separate-virtual-tables">
+<h4>Split virtual table groups into separate virtual tables<a class="headerlink" href="#split-virtual-table-groups-into-separate-virtual-tables" title="Permalink to this heading">¶</a></h4>
+<p>The Itanium C++ ABI glues multiple individual virtual tables for a class into a combined virtual table (virtual table group).
+The interleaving scheme, however, can only work with individual virtual tables so it must split the combined virtual tables first.
+In comparison, the old scheme does not require the splitting but it is more efficient when the combined virtual tables have been split.
+The <a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/llvm/lib/Transforms/IPO/GlobalSplit.cpp">GlobalSplit</a> pass is responsible for splitting combined virtual tables into individual ones.</p>
+</section>
+<section id="order-virtual-tables-by-a-pre-order-traversal-of-the-class-hierarchy">
+<h4>Order virtual tables by a pre-order traversal of the class hierarchy<a class="headerlink" href="#order-virtual-tables-by-a-pre-order-traversal-of-the-class-hierarchy" title="Permalink to this heading">¶</a></h4>
+<p>This step is common to both the old scheme described above and the interleaving scheme.
+For the interleaving scheme, since the combined virtual tables have been split in the previous step,
+this step ensures that for any class all the compatible virtual tables will appear consecutively.
+For the old scheme, the same property may not hold since it may work on combined virtual tables.</p>
+<p>For example, consider the following four C++ classes:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">B</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">C</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">D</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">B</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">();</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">();</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>This step will arrange the virtual tables for A, B, C, and D in the order of <em>vtable-of-A, vtable-of-B, vtable-of-D, vtable-of-C</em>.</p>
+</section>
+<section id="interleave-virtual-tables">
+<h4>Interleave virtual tables<a class="headerlink" href="#interleave-virtual-tables" title="Permalink to this heading">¶</a></h4>
+<p>This step is where the interleaving scheme deviates from the old scheme. Instead of laying out
+whole virtual tables in the previously computed order, the interleaving scheme lays out table
+entries of the virtual tables strategically to ensure the following properties:</p>
+<ol class="arabic simple">
+<li><p>offset-to-top and RTTI fields layout property</p></li>
+</ol>
+<p>The Itanium C++ ABI specifies that offset-to-top and RTTI fields appear at the offsets behind the
+address point. Note that libraries like libcxxabi do assume this property.</p>
+<ol class="arabic simple" start="2">
+<li><p>virtual function entry layout property</p></li>
+</ol>
+<p>For each virtual function the distance between a virtual table entry for this function and the corresponding
+address point is always the same. This property ensures that dynamic dispatch still works with the interleaving layout.</p>
+<p>Note that the interleaving scheme in the CFI implementation guarantees both properties above whereas the original scheme proposed
+in <a class="footnote-reference brackets" href="#id3" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> only guarantees the second property.</p>
+<p>To illustrate how the interleaving algorithm works, let us continue with the running example.
+The algorithm first separates all the virtual table entries into two work lists. To do so,
+it starts by allocating two work lists, one initialized with all the offset-to-top entries of virtual tables in the order
+computed in the last step, one initialized with all the RTTI entries in the same order.</p>
+<table class="docutils align-default" id="id9">
+<caption><span class="caption-text">Work list 1 Layout</span><a class="headerlink" href="#id9" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A::offset-to-top</p></td>
+<td><p>B::offset-to-top</p></td>
+<td><p>D::offset-to-top</p></td>
+<td><p>C::offset-to-top</p></td>
+</tr>
+</tbody>
+</table>
+<table class="docutils align-default" id="id10">
+<caption><span class="caption-text">Work list 2 layout</span><a class="headerlink" href="#id10" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>&amp;A::rtti</p></td>
+<td><p>&amp;B::rtti</p></td>
+<td><p>&amp;D::rtti</p></td>
+<td><p>&amp;C::rtti</p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Then for each virtual function the algorithm goes through all the virtual tables in the previously computed order
+to collect all the related entries into a virtual function list.
+After this step, there are the following virtual function lists:</p>
+<table class="docutils align-default" id="id11">
+<caption><span class="caption-text">f1 list</span><a class="headerlink" href="#id11" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>&amp;A::f1</p></td>
+<td><p>&amp;B::f1</p></td>
+<td><p>&amp;D::f1</p></td>
+<td><p>&amp;C::f1</p></td>
+</tr>
+</tbody>
+</table>
+<table class="docutils align-default" id="id12">
+<caption><span class="caption-text">f2 list</span><a class="headerlink" href="#id12" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>&amp;B::f2</p></td>
+<td><p>&amp;D::f2</p></td>
+</tr>
+</tbody>
+</table>
+<table class="docutils align-default" id="id13">
+<caption><span class="caption-text">f3 list</span><a class="headerlink" href="#id13" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>&amp;C::f3</p></td>
+</tr>
+</tbody>
+</table>
+<p>Next, the algorithm picks the longest remaining virtual function list and appends the whole list to the shortest work list
+until no function lists are left, and pads the shorter work list so that they are of the same length.
+In the example, f1 list will be first added to work list 1, then f2 list will be added
+to work list 2, and finally f3 list will be added to the work list 2. Since work list 1 now has one more entry than
+work list 2, a padding entry is added to the latter. After this step, the two work lists look like:</p>
+<table class="docutils align-default" id="id14">
+<caption><span class="caption-text">Work list 1 Layout</span><a class="headerlink" href="#id14" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A::offset-to-top</p></td>
+<td><p>B::offset-to-top</p></td>
+<td><p>D::offset-to-top</p></td>
+<td><p>C::offset-to-top</p></td>
+<td><p>&amp;A::f1</p></td>
+<td><p>&amp;B::f1</p></td>
+<td><p>&amp;D::f1</p></td>
+<td><p>&amp;C::f1</p></td>
+</tr>
+</tbody>
+</table>
+<table class="docutils align-default" id="id15">
+<caption><span class="caption-text">Work list 2 layout</span><a class="headerlink" href="#id15" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>&amp;A::rtti</p></td>
+<td><p>&amp;B::rtti</p></td>
+<td><p>&amp;D::rtti</p></td>
+<td><p>&amp;C::rtti</p></td>
+<td><p>&amp;B::f2</p></td>
+<td><p>&amp;D::f2</p></td>
+<td><p>&amp;C::f3</p></td>
+<td><p>padding</p></td>
+</tr>
+</tbody>
+</table>
+<p>Finally, the algorithm merges the two work lists into the interleaved layout by alternatingly
+moving the head of each list to the final layout. After this step, the final interleaved layout looks like:</p>
+<table class="docutils align-default" id="id16">
+<caption><span class="caption-text">Interleaved layout</span><a class="headerlink" href="#id16" title="Permalink to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>0</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>9</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>11</p></th>
+<th class="head"><p>12</p></th>
+<th class="head"><p>13</p></th>
+<th class="head"><p>14</p></th>
+<th class="head"><p>15</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A::offset-to-top</p></td>
+<td><p>&amp;A::rtti</p></td>
+<td><p>B::offset-to-top</p></td>
+<td><p>&amp;B::rtti</p></td>
+<td><p>D::offset-to-top</p></td>
+<td><p>&amp;D::rtti</p></td>
+<td><p>C::offset-to-top</p></td>
+<td><p>&amp;C::rtti</p></td>
+<td><p>&amp;A::f1</p></td>
+<td><p>&amp;B::f2</p></td>
+<td><p>&amp;B::f1</p></td>
+<td><p>&amp;D::f2</p></td>
+<td><p>&amp;D::f1</p></td>
+<td><p>&amp;C::f3</p></td>
+<td><p>&amp;C::f1</p></td>
+<td><p>padding</p></td>
+</tr>
+</tbody>
+</table>
+<p>In the above interleaved layout, each virtual table’s offset-to-top and RTTI are always adjacent, which shows that the layout has the first property.
+For the second property, let us look at f2 as an example. In the interleaved layout,
+there are two entries for f2: B::f2 and D::f2. The distance between &amp;B::f2
+and its address point D::offset-to-top (the entry immediately after &amp;B::rtti) is 5 entry-length, so is the distance between &amp;D::f2 and C::offset-to-top (the entry immediately after &amp;D::rtti).</p>
+</section>
+</section>
+</section>
+<section id="forward-edge-cfi-for-indirect-function-calls">
+<h2>Forward-Edge CFI for Indirect Function Calls<a class="headerlink" href="#forward-edge-cfi-for-indirect-function-calls" title="Permalink to this heading">¶</a></h2>
+<p>Under forward-edge CFI for indirect function calls, each unique function
+type has its own bit vector, and at each call site we need to check that the
+function pointer is a member of the function type’s bit vector. This scheme
+works in a similar way to forward-edge CFI for virtual calls, the distinction
+being that we need to build bit vectors of function entry points rather than
+of virtual tables.</p>
+<p>Unlike when re-arranging global variables, we cannot re-arrange functions
+in a particular order and base our calculations on the layout of the
+functions’ entry points, as we have no idea how large a particular function
+will end up being (the function sizes could even depend on how we arrange
+the functions). Instead, we build a jump table, which is a block of code
+consisting of one branch instruction for each of the functions in the bit
+set that branches to the target function, and redirect any taken function
+addresses to the corresponding jump table entry. In this way, the distance
+between function entry points is predictable and controllable. In the object
+file’s symbol table, the symbols for the target functions also refer to the
+jump table entries, so that addresses taken outside the module will pass
+any verification done inside the module.</p>
+<p>In more concrete terms, suppose we have three functions <code class="docutils literal notranslate"><span class="pre">f</span></code>, <code class="docutils literal notranslate"><span class="pre">g</span></code>,
+<code class="docutils literal notranslate"><span class="pre">h</span></code> which are all of the same type, and a function foo that returns their
+addresses:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>f:
+mov 0, %eax
+ret
+
+g:
+mov 1, %eax
+ret
+
+h:
+mov 2, %eax
+ret
+
+foo:
+mov f, %eax
+mov g, %edx
+mov h, %ecx
+ret
+</pre></div>
+</div>
+<p>Our jump table will (conceptually) look like this:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>f:
+jmp .Ltmp0 ; 5 bytes
+int3       ; 1 byte
+int3       ; 1 byte
+int3       ; 1 byte
+
+g:
+jmp .Ltmp1 ; 5 bytes
+int3       ; 1 byte
+int3       ; 1 byte
+int3       ; 1 byte
+
+h:
+jmp .Ltmp2 ; 5 bytes
+int3       ; 1 byte
+int3       ; 1 byte
+int3       ; 1 byte
+
+.Ltmp0:
+mov 0, %eax
+ret
+
+.Ltmp1:
+mov 1, %eax
+ret
+
+.Ltmp2:
+mov 2, %eax
+ret
+
+foo:
+mov f, %eax
+mov g, %edx
+mov h, %ecx
+ret
+</pre></div>
+</div>
+<p>Because the addresses of <code class="docutils literal notranslate"><span class="pre">f</span></code>, <code class="docutils literal notranslate"><span class="pre">g</span></code>, <code class="docutils literal notranslate"><span class="pre">h</span></code> are evenly spaced at a power of
+2, and function types do not overlap (unlike class types with base classes),
+we can normally apply the <a class="reference internal" href="#alignment">Alignment</a> and <a class="reference internal" href="#eliminating-bit-vector-checks-for-all-ones-bit-vectors">Eliminating Bit Vector Checks
+for All-Ones Bit Vectors</a> optimizations thus simplifying the check at each
+call site to a range and alignment check.</p>
+</section>
+<section id="shared-library-support">
+<h2>Shared library support<a class="headerlink" href="#shared-library-support" title="Permalink to this heading">¶</a></h2>
+<p><strong>EXPERIMENTAL</strong></p>
+<p>The basic CFI mode described above assumes that the application is a
+monolithic binary; at least that all possible virtual/indirect call
+targets and the entire class hierarchy are known at link time. The
+cross-DSO mode, enabled with <strong>-f[no-]sanitize-cfi-cross-dso</strong> relaxes
+this requirement by allowing virtual and indirect calls to cross the
+DSO boundary.</p>
+<p>Assuming the following setup: the binary consists of several
+instrumented and several uninstrumented DSOs. Some of them may be
+dlopen-ed/dlclose-d periodically, even frequently.</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Calls made from uninstrumented DSOs are not checked and just work.</p></li>
+<li><p>Calls inside any instrumented DSO are fully protected.</p></li>
+<li><dl class="simple">
+<dt>Calls between different instrumented DSOs are also protected, with</dt><dd><p>a performance penalty (in addition to the monolithic CFI
+overhead).</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt>Calls from an instrumented DSO to an uninstrumented one are</dt><dd><p>unchecked and just work, with performance penalty.</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt>Calls from an instrumented DSO outside of any known DSO are</dt><dd><p>detected as CFI violations.</p>
+</dd>
+</dl>
+</li>
+</ul>
+</div></blockquote>
+<p>In the monolithic scheme a call site is instrumented as</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>if (!InlinedFastCheck(f))
+  abort();
+call *f
+</pre></div>
+</div>
+<p>In the cross-DSO scheme it becomes</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>if (!InlinedFastCheck(f))
+  __cfi_slowpath(CallSiteTypeId, f);
+call *f
+</pre></div>
+</div>
+<section id="callsitetypeid">
+<h3>CallSiteTypeId<a class="headerlink" href="#callsitetypeid" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">CallSiteTypeId</span></code> is a stable process-wide identifier of the
+call-site type. For a virtual call site, the type in question is the class
+type; for an indirect function call it is the function signature. The
+mapping from a type to an identifier is an ABI detail. In the current,
+experimental, implementation the identifier of type T is calculated as
+follows:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Obtain the mangled name for “typeinfo name for T”.</p></li>
+<li><p>Calculate MD5 hash of the name as a string.</p></li>
+<li><p>Reinterpret the first 8 bytes of the hash as a little-endian
+64-bit integer.</p></li>
+</ul>
+</div></blockquote>
+<p>It is possible, but unlikely, that collisions in the
+<code class="docutils literal notranslate"><span class="pre">CallSiteTypeId</span></code> hashing will result in weaker CFI checks that would
+still be conservatively correct.</p>
+</section>
+<section id="cfi-check">
+<h3>CFI_Check<a class="headerlink" href="#cfi-check" title="Permalink to this heading">¶</a></h3>
+<p>In the general case, only the target DSO knows whether the call to
+function <code class="docutils literal notranslate"><span class="pre">f</span></code> with type <code class="docutils literal notranslate"><span class="pre">CallSiteTypeId</span></code> is valid or not.  To
+export this information, every DSO implements</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>void __cfi_check(uint64 CallSiteTypeId, void *TargetAddr, void *DiagData)
+</pre></div>
+</div>
+<p>This function provides external modules with access to CFI checks for
+the targets inside this DSO.  For each known <code class="docutils literal notranslate"><span class="pre">CallSiteTypeId</span></code>, this
+function performs an <code class="docutils literal notranslate"><span class="pre">llvm.type.test</span></code> with the corresponding type
+identifier. It reports an error if the type is unknown, or if the
+check fails. Depending on the values of compiler flags
+<code class="docutils literal notranslate"><span class="pre">-fsanitize-trap</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsanitize-recover</span></code>, this function may
+print an error, abort and/or return to the caller. <code class="docutils literal notranslate"><span class="pre">DiagData</span></code> is an
+opaque pointer to the diagnostic information about the error, or
+<code class="docutils literal notranslate"><span class="pre">null</span></code> if the caller does not provide this information.</p>
+<p>The basic implementation is a large switch statement over all values
+of CallSiteTypeId supported by this DSO, and each case is similar to
+the InlinedFastCheck() in the basic CFI mode.</p>
+</section>
+<section id="cfi-shadow">
+<h3>CFI Shadow<a class="headerlink" href="#cfi-shadow" title="Permalink to this heading">¶</a></h3>
+<p>To route CFI checks to the target DSO’s __cfi_check function, a
+mapping from possible virtual / indirect call targets to the
+corresponding __cfi_check functions is maintained. This mapping is
+implemented as a sparse array of 2 bytes for every possible page (4096
+bytes) of memory. The table is kept readonly most of the time.</p>
+<p>There are 3 types of shadow values:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Address in a CFI-instrumented DSO.</p></li>
+<li><p>Unchecked address (a “trusted” non-instrumented DSO). Encoded as
+value 0xFFFF.</p></li>
+<li><p>Invalid address (everything else). Encoded as value 0.</p></li>
+</ul>
+</div></blockquote>
+<p>For a CFI-instrumented DSO, a shadow value encodes the address of the
+__cfi_check function for all call targets in the corresponding memory
+page. If Addr is the target address, and V is the shadow value, then
+the address of __cfi_check is calculated as</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>__cfi_check = AlignUpTo(Addr, 4096) - (V + 1) * 4096
+</pre></div>
+</div>
+<p>This works as long as __cfi_check is aligned by 4096 bytes and located
+below any call targets in its DSO, but not more than 256MB apart from
+them.</p>
+</section>
+<section id="cfi-slowpath">
+<h3>CFI_SlowPath<a class="headerlink" href="#cfi-slowpath" title="Permalink to this heading">¶</a></h3>
+<p>The slow path check is implemented in a runtime support library as</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>void __cfi_slowpath(uint64 CallSiteTypeId, void *TargetAddr)
+void __cfi_slowpath_diag(uint64 CallSiteTypeId, void *TargetAddr, void *DiagData)
+</pre></div>
+</div>
+<p>These functions loads a shadow value for <code class="docutils literal notranslate"><span class="pre">TargetAddr</span></code>, finds the
+address of <code class="docutils literal notranslate"><span class="pre">__cfi_check</span></code> as described above and calls
+that. <code class="docutils literal notranslate"><span class="pre">DiagData</span></code> is an opaque pointer to diagnostic data which is
+passed verbatim to <code class="docutils literal notranslate"><span class="pre">__cfi_check</span></code>, and <code class="docutils literal notranslate"><span class="pre">__cfi_slowpath</span></code> passes
+<code class="docutils literal notranslate"><span class="pre">nullptr</span></code> instead.</p>
+<p>Compiler-RT library contains reference implementations of slowpath
+functions, but they have unresolvable issues with correctness and
+performance in the handling of dlopen(). It is recommended that
+platforms provide their own implementations, usually as part of libc
+or libdl.</p>
+</section>
+<section id="position-independent-executable-requirement">
+<h3>Position-independent executable requirement<a class="headerlink" href="#position-independent-executable-requirement" title="Permalink to this heading">¶</a></h3>
+<p>Cross-DSO CFI mode requires that the main executable is built as PIE.
+In non-PIE executables the address of an external function (taken from
+the main executable) is the address of that function’s PLT record in
+the main executable. This would break the CFI checks.</p>
+</section>
+</section>
+<section id="backward-edge-cfi-for-return-statements-rcfi">
+<h2>Backward-edge CFI for return statements (RCFI)<a class="headerlink" href="#backward-edge-cfi-for-return-statements-rcfi" title="Permalink to this heading">¶</a></h2>
+<p>This section is a proposal. As of March 2017 it is not implemented.</p>
+<p>Backward-edge control flow (<cite>RET</cite> instructions) can be hijacked
+via overwriting the return address (<cite>RA</cite>) on stack.
+Various mitigation techniques (e.g. <a class="reference external" href="https://clang.llvm.org/docs/SafeStack.html">SafeStack</a>, <a class="reference external" href="https://xlab.tencent.com/en/2016/11/02/return-flow-guard">RFG</a>, <a class="reference external" href="https://software.intel.com/en-us/blogs/2016/06/09/intel-release-new-technology-specifications-protect-rop-attacks">Intel CET</a>)
+try to detect or prevent <cite>RA</cite> corruption on stack.</p>
+<p>RCFI enforces the expected control flow in several different ways described below.
+RCFI heavily relies on LTO.</p>
+<section id="leaf-functions">
+<h3>Leaf Functions<a class="headerlink" href="#leaf-functions" title="Permalink to this heading">¶</a></h3>
+<p>If <cite>f()</cite> is a leaf function (i.e. it has no calls
+except maybe no-return calls) it can be called using a special calling convention
+that stores <cite>RA</cite> in a dedicated register <cite>R</cite> before the <cite>CALL</cite> instruction.
+<cite>f()</cite> does not spill <cite>R</cite> and does not use the <cite>RET</cite> instruction,
+instead it uses the value in <cite>R</cite> to <cite>JMP</cite> to <cite>RA</cite>.</p>
+<p>This flavour of CFI is <em>precise</em>, i.e. the function is guaranteed to return
+to the point exactly following the call.</p>
+<p>An alternative approach is to
+copy <cite>RA</cite> from stack to <cite>R</cite> in the first instruction of <cite>f()</cite>,
+then <cite>JMP</cite> to <cite>R</cite>.
+This approach is simpler to implement (does not require changing the caller)
+but weaker (there is a small window when <cite>RA</cite> is actually stored on stack).</p>
+</section>
+<section id="functions-called-once">
+<h3>Functions called once<a class="headerlink" href="#functions-called-once" title="Permalink to this heading">¶</a></h3>
+<p>Suppose <cite>f()</cite> is called in just one place in the program
+(assuming we can verify this in LTO mode).
+In this case we can replace the <cite>RET</cite> instruction with a <cite>JMP</cite> instruction
+with the immediate constant for <cite>RA</cite>.
+This will <em>precisely</em> enforce the return control flow no matter what is stored on stack.</p>
+<p>Another variant is to compare <cite>RA</cite> on stack with the known constant and abort
+if they don’t match; then <cite>JMP</cite> to the known constant address.</p>
+</section>
+<section id="functions-called-in-a-small-number-of-call-sites">
+<h3>Functions called in a small number of call sites<a class="headerlink" href="#functions-called-in-a-small-number-of-call-sites" title="Permalink to this heading">¶</a></h3>
+<p>We may extend the above approach to cases where <cite>f()</cite>
+is called more than once (but still a small number of times).
+With LTO we know all possible values of <cite>RA</cite> and we check them
+one-by-one (or using binary search) against the value on stack.
+If the match is found, we <cite>JMP</cite> to the known constant address, otherwise abort.</p>
+<p>This protection is <em>near-precise</em>, i.e. it guarantees that the control flow will
+be transferred to one of the valid return addresses for this function,
+but not necessary to the point of the most recent <cite>CALL</cite>.</p>
+</section>
+<section id="general-case">
+<h3>General case<a class="headerlink" href="#general-case" title="Permalink to this heading">¶</a></h3>
+<p>For functions called multiple times a <em>return jump table</em> is constructed
+in the same manner as jump tables for indirect function calls (see above).
+The correct jump table entry (or its index) is passed by <cite>CALL</cite> to <cite>f()</cite>
+(as an extra argument) and then spilled to stack.
+The <cite>RET</cite> instruction is replaced with a load of the jump table entry,
+jump table range check, and <cite>JMP</cite> to the jump table entry.</p>
+<p>This protection is also <em>near-precise</em>.</p>
+</section>
+<section id="returns-from-functions-called-indirectly">
+<h3>Returns from functions called indirectly<a class="headerlink" href="#returns-from-functions-called-indirectly" title="Permalink to this heading">¶</a></h3>
+<p>If a function is called indirectly, the return jump table is constructed for the
+equivalence class of functions instead of a single function.</p>
+</section>
+<section id="cross-dso-calls">
+<h3>Cross-DSO calls<a class="headerlink" href="#cross-dso-calls" title="Permalink to this heading">¶</a></h3>
+<p>Consider two instrumented DSOs, <cite>A</cite> and <cite>B</cite>. <cite>A</cite> defines <cite>f()</cite> and <cite>B</cite> calls it.</p>
+<p>This case will be handled similarly to the cross-DSO scheme using the slow path callback.</p>
+</section>
+<section id="non-goals">
+<h3>Non-goals<a class="headerlink" href="#non-goals" title="Permalink to this heading">¶</a></h3>
+<dl class="simple">
+<dt>RCFI does not protect <cite>RET</cite> instructions:</dt><dd><ul class="simple">
+<li><p>in non-instrumented DSOs,</p></li>
+<li><p>in instrumented DSOs for functions that are called from non-instrumented DSOs,</p></li>
+<li><p>embedded into other instructions (e.g. <cite>0f4fc3 cmovg %ebx,%eax</cite>).</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+</section>
+<section id="hardware-support">
+<h2>Hardware support<a class="headerlink" href="#hardware-support" title="Permalink to this heading">¶</a></h2>
+<p>We believe that the above design can be efficiently implemented in hardware.
+A single new instruction added to an ISA would allow to perform the forward-edge CFI check
+with fewer bytes per check (smaller code size overhead) and potentially more
+efficiently. The current software-only instrumentation requires at least
+32-bytes per check (on x86_64).
+A hardware instruction may probably be less than ~ 12 bytes.
+Such instruction would check that the argument pointer is in-bounds,
+and is properly aligned, and if the checks fail it will either trap (in monolithic scheme)
+or call the slow path function (cross-DSO scheme).
+The bit vector lookup is probably too complex for a hardware implementation.</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>//  This instruction checks that &#39;Ptr&#39;
+//   * is aligned by (1 &lt;&lt; kAlignment) and
+//   * is inside [kRangeBeg, kRangeBeg+(kRangeSize&lt;&lt;kAlignment))
+//  and if the check fails it jumps to the given target (slow path).
+//
+// &#39;Ptr&#39; is a register, pointing to the virtual function table
+//    or to the function which we need to check. We may require an explicit
+//    fixed register to be used.
+// &#39;kAlignment&#39; is a 4-bit constant.
+// &#39;kRangeSize&#39; is a ~20-bit constant.
+// &#39;kRangeBeg&#39; is a PC-relative constant (~28 bits)
+//    pointing to the beginning of the allowed range for &#39;Ptr&#39;.
+// &#39;kFailedCheckTarget&#39;: is a PC-relative constant (~28 bits)
+//    representing the target to branch to when the check fails.
+//    If kFailedCheckTarget==0, the process will trap
+//    (monolithic binary scheme).
+//    Otherwise it will jump to a handler that implements `CFI_SlowPath`
+//    (cross-DSO scheme).
+CFI_Check(Ptr, kAlignment, kRangeSize, kRangeBeg, kFailedCheckTarget) {
+   if (Ptr &lt; kRangeBeg ||
+       Ptr &gt;= kRangeBeg + (kRangeSize &lt;&lt; kAlignment) ||
+       Ptr &amp; ((1 &lt;&lt; kAlignment) - 1))
+         Jump(kFailedCheckTarget);
+}
+</pre></div>
+</div>
+<p>An alternative and more compact encoding would not use <cite>kFailedCheckTarget</cite>,
+and will trap on check failure instead.
+This will allow us to fit the instruction into <strong>8-9 bytes</strong>.
+The cross-DSO checks will be performed by a trap handler and
+performance-critical ones will have to be black-listed and checked using the
+software-only scheme.</p>
+<p>Note that such hardware extension would be complementary to checks
+at the callee side, such as e.g. <strong>Intel ENDBRANCH</strong>.
+Moreover, CFI would have two benefits over ENDBRANCH: a) precision and b)
+ability to protect against invalid casts between polymorphic types.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ControlFlowIntegrity.html">Control Flow Integrity</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LTOVisibility.html">LTO Visibility</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,356 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debug Info Assignment Tracking &#8212; LLVM 18.1.7 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=be84393e" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=77650230"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="User Guide for SPIR-V Target" href="SPIRVUsage.html" />
+    <link rel="prev" title="Source Level Debugging with LLVM" href="SourceLevelDebugging.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="SPIRVUsage.html" title="User Guide for SPIR-V Target"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="SourceLevelDebugging.html" title="Source Level Debugging with LLVM"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="SourceLevelDebugging.html" accesskey="U">Source Level Debugging with LLVM</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debug Info Assignment Tracking</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/AssignmentTracking.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="debug-info-assignment-tracking">
+<h1>Debug Info Assignment Tracking<a class="headerlink" href="#debug-info-assignment-tracking" title="Permalink to this heading">¶</a></h1>
+<p>Assignment Tracking is an alternative technique for tracking variable location
+debug info through optimisations in LLVM. It provides accurate variable
+locations for assignments where a local variable (or a field of one) is the
+LHS. In rare and complicated circumstances indirect assignments might be
+optimized away without being tracked, but otherwise we make our best effort to
+track all variable locations.</p>
+<p>The core idea is to track more information about source assignments in order
+and preserve enough information to be able to defer decisions about whether to
+use non-memory locations (register, constant) or memory locations until after
+middle end optimisations have run. This is in opposition to using
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.declare</span></code> and <code class="docutils literal notranslate"><span class="pre">llvm.dbg.value</span></code>, which is to make the decision for most
+variables early on, which can result in suboptimal variable locations that may
+be either incorrect or incomplete.</p>
+<p>A secondary goal of assignment tracking is to cause minimal additional work for
+LLVM pass writers, and minimal disruption to LLVM in general.</p>
+<section id="status-and-usage">
+<h2>Status and usage<a class="headerlink" href="#status-and-usage" title="Permalink to this heading">¶</a></h2>
+<p><strong>Status</strong>: Experimental work in progress. Enabling is strongly advised against
+except for development and testing.</p>
+<p><strong>Enable in Clang</strong>: <code class="docutils literal notranslate"><span class="pre">-Xclang</span> <span class="pre">-fexperimental-assignment-tracking</span></code></p>
+<p>That causes Clang to get LLVM to run the pass <code class="docutils literal notranslate"><span class="pre">declare-to-assign</span></code>. The pass
+converts conventional debug intrinsics to assignment tracking metadata and sets
+the module flag <code class="docutils literal notranslate"><span class="pre">debug-info-assignment-tracking</span></code> to the value <code class="docutils literal notranslate"><span class="pre">i1</span> <span class="pre">true</span></code>. To
+check whether assignment tracking is enabled for a module call
+<code class="docutils literal notranslate"><span class="pre">isAssignmentTrackingEnabled(const</span> <span class="pre">Module</span> <span class="pre">&amp;M)</span></code> (from <code class="docutils literal notranslate"><span class="pre">llvm/IR/DebugInfo.h</span></code>).</p>
+</section>
+<section id="design-and-implementation">
+<h2>Design and implementation<a class="headerlink" href="#design-and-implementation" title="Permalink to this heading">¶</a></h2>
+<section id="assignment-markers-llvm-dbg-assign">
+<h3>Assignment markers: <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code><a class="headerlink" href="#assignment-markers-llvm-dbg-assign" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">llvm.dbg.value</span></code>, a conventional debug intrinsic, marks out a position in the
+IR where a variable takes a particular value. Similarly, Assignment Tracking
+marks out the position of assignments with a new intrinsic called
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>.</p>
+<p>In order to know where in IR it is appropriate to use a memory location for a
+variable, each assignment marker must in some way refer to the store, if any
+(or multiple!), that performs the assignment. That way, the position of the
+store and marker can be considered together when making that choice. Another
+important benefit of referring to the store is that we can then build a two-way
+mapping of stores&lt;-&gt;markers that can be used to find markers that need to be
+updated when stores are modified.</p>
+<p>An <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> marker that is not linked to any instruction signals that
+the store that performed the assignment has been optimised out, and therefore
+the memory location will not be valid for at least some part of the program.</p>
+<p>Here’s the <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> signature. Each parameter is wrapped in
+<code class="docutils literal notranslate"><span class="pre">MetadataAsValue</span></code>, and <code class="docutils literal notranslate"><span class="pre">Value</span> <span class="pre">*</span></code> type parameters are first wrapped in
+<code class="docutils literal notranslate"><span class="pre">ValueAsMetadata</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="nd">@llvm</span><span class="o">.</span><span class="n">dbg</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="n">Value</span> <span class="o">*</span><span class="n">Value</span><span class="p">,</span>
+                      <span class="n">DIExpression</span> <span class="o">*</span><span class="n">ValueExpression</span><span class="p">,</span>
+                      <span class="n">DILocalVariable</span> <span class="o">*</span><span class="n">Variable</span><span class="p">,</span>
+                      <span class="n">DIAssignID</span> <span class="o">*</span><span class="n">ID</span><span class="p">,</span>
+                      <span class="n">Value</span> <span class="o">*</span><span class="n">Address</span><span class="p">,</span>
+                      <span class="n">DIExpression</span> <span class="o">*</span><span class="n">AddressExpression</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The first three parameters look and behave like an <code class="docutils literal notranslate"><span class="pre">llvm.dbg.value</span></code>. <code class="docutils literal notranslate"><span class="pre">ID</span></code> is a
+reference to a store (see next section). <code class="docutils literal notranslate"><span class="pre">Address</span></code> is the destination address
+of the store and it is modified by <code class="docutils literal notranslate"><span class="pre">AddressExpression</span></code>. An empty/undef/poison
+address means the address component has been killed (the memory address is no
+longer a valid location). LLVM currently encodes variable fragment information
+in <code class="docutils literal notranslate"><span class="pre">DIExpression</span></code>s, so as an implementation quirk the <code class="docutils literal notranslate"><span class="pre">FragmentInfo</span></code> for
+<code class="docutils literal notranslate"><span class="pre">Variable</span></code> is contained within <code class="docutils literal notranslate"><span class="pre">ValueExpression</span></code> only.</p>
+<p>The formal LLVM-IR signature is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="nd">@llvm</span><span class="o">.</span><span class="n">dbg</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="n">metadata</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">metadata</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="instruction-link-diassignid">
+<h3>Instruction link: <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code><a class="headerlink" href="#instruction-link-diassignid" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> metadata is the mechanism that is currently used to encode the
+store&lt;-&gt;marker link. The metadata node has no operands and all instances are
+<code class="docutils literal notranslate"><span class="pre">distinct</span></code>; equality is checked for by comparing addresses.</p>
+<p><code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics use a <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> metadata node instance as an
+operand. This way it refers to any store-like instruction that has the same
+<code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> attachment. E.g. For this test.cpp,</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">fun</span><span class="p">(</span><span class="nb">int</span> <span class="n">a</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">a</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>compiled without optimisations:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ clang++ test.cpp -o test.ll -emit-llvm -S -g -O0 -Xclang -fexperimental-assignment-tracking
+</pre></div>
+</div>
+<p>we get:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>define dso_local noundef i32 @_Z3funi(i32 noundef %a) #0 !dbg !8 {
+entry:
+  %a.addr = alloca i32, align 4, !DIAssignID !13
+  call void @llvm.dbg.assign(metadata i1 undef, metadata !14, metadata !DIExpression(), metadata !13, metadata i32* %a.addr, metadata !DIExpression()), !dbg !15
+  store i32 %a, i32* %a.addr, align 4, !DIAssignID !16
+  call void @llvm.dbg.assign(metadata i32 %a, metadata !14, metadata !DIExpression(), metadata !16, metadata i32* %a.addr, metadata !DIExpression()), !dbg !15
+  %0 = load i32, i32* %a.addr, align 4, !dbg !17
+  ret i32 %0, !dbg !18
+}
+
+...
+!13 = distinct !DIAssignID()
+!14 = !DILocalVariable(name: &quot;a&quot;, ...)
+...
+!16 = distinct !DIAssignID()
+</pre></div>
+</div>
+<p>The first <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> refers to the <code class="docutils literal notranslate"><span class="pre">alloca</span></code> through <code class="docutils literal notranslate"><span class="pre">!DIAssignID</span> <span class="pre">!13</span></code>,
+and the second refers to the <code class="docutils literal notranslate"><span class="pre">store</span></code> through <code class="docutils literal notranslate"><span class="pre">!DIAssignID</span> <span class="pre">!16</span></code>.</p>
+</section>
+<section id="store-like-instructions">
+<h3>Store-like instructions<a class="headerlink" href="#store-like-instructions" title="Permalink to this heading">¶</a></h3>
+<p>In the absence of a linked <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>, a store to an address that is
+known to be the backing storage for a variable is considered to represent an
+assignment to that variable.</p>
+<p>This gives us a safe fall-back in cases where <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics have
+been deleted, the <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> attachment on the store has been dropped, or the
+optimiser has made a once-indirect store (not tracked with Assignment Tracking)
+direct.</p>
+</section>
+<section id="middle-end-considerations-for-pass-writers">
+<h3>Middle-end: Considerations for pass-writers<a class="headerlink" href="#middle-end-considerations-for-pass-writers" title="Permalink to this heading">¶</a></h3>
+<section id="non-debug-instruction-updates">
+<h4>Non-debug instruction updates<a class="headerlink" href="#non-debug-instruction-updates" title="Permalink to this heading">¶</a></h4>
+<p><strong>Cloning</strong> an instruction: nothing new to do. Cloning automatically clones a
+<code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> attachment. Multiple instructions may have the same <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code>
+instruction. In this case, the assignment is considered to take place in
+multiple positions in the program.</p>
+<p><strong>Moving</strong> a non-debug instruction: nothing new to do. Instructions linked to an
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> have their initial IR position marked by the position of the
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>.</p>
+<p><strong>Deleting</strong> a non-debug instruction: nothing new to do. Simple DSE does not
+require any change; it’s safe to delete an instruction with a <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code>
+attachment. An <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> that uses a <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> that is not attached
+to any instruction indicates that the memory location isn’t valid.</p>
+<p><strong>Merging</strong> stores: In many cases no change is required as <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code>
+attachments are automatically merged if <code class="docutils literal notranslate"><span class="pre">combineMetadata</span></code> is called. One way or
+another, the <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> attachments must be merged such that new store
+becomes linked to all the <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics that the merged stores
+were linked to. This can be achieved simply by calling a helper function
+<code class="docutils literal notranslate"><span class="pre">Instruction::mergeDIAssignID</span></code>.</p>
+<p><strong>Inlining</strong> stores: As stores are inlined we generate <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>
+intrinsics and <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> attachments as if the stores represent source
+assignments, just like the in frontend. This isn’t perfect, as stores may have
+been moved, modified or deleted before inlining, but it does at least keep the
+information about the variable correct within the non-inlined scope.</p>
+<p><strong>Splitting</strong> stores: SROA and passes that split stores treat <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>
+intrinsics similarly to <code class="docutils literal notranslate"><span class="pre">llvm.dbg.declare</span></code> intrinsics. Clone the
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics linked to the store, update the FragmentInfo in
+the <code class="docutils literal notranslate"><span class="pre">ValueExpression</span></code>, and give the split stores (and cloned intrinsics) new
+<code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> attachments each. In other words, treat the split stores as
+separate assignments. For partial DSE (e.g. shortening a memset), we do the
+same except that <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> for the dead fragment gets an <code class="docutils literal notranslate"><span class="pre">Undef</span></code>
+<code class="docutils literal notranslate"><span class="pre">Address</span></code>.</p>
+<p><strong>Promoting</strong> allocas and store/loads: <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics implicitly
+describe joined values in memory locations at CFG joins, but this is not
+necessarily the case after promoting (or partially promoting) the
+variable. Passes that promote variables are responsible for inserting
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics after the resultant PHIs generated during
+promotion. <code class="docutils literal notranslate"><span class="pre">mem2reg</span></code> already has to do this (with <code class="docutils literal notranslate"><span class="pre">llvm.dbg.value</span></code>) for
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.declare</span></code>s. Where a store has no linked intrinsic, the store is
+assumed to represent an assignment for variables stored at the destination
+address.</p>
+</section>
+<section id="debug-intrinsic-updates">
+<h4>Debug intrinsic updates<a class="headerlink" href="#debug-intrinsic-updates" title="Permalink to this heading">¶</a></h4>
+<p><strong>Moving</strong> a debug intrinsic: avoid moving <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics where
+possible, as they represent a source-level assignment, whose position in the
+program should not be affected by optimization passes.</p>
+<p><strong>Deleting</strong> a debug intrinsic: Nothing new to do. Just like for conventional
+debug intrinsics, unless it is unreachable, it’s almost always incorrect to
+delete a <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsic.</p>
+</section>
+</section>
+<section id="lowering-llvm-dbg-assign-to-mir">
+<h3>Lowering <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> to MIR<a class="headerlink" href="#lowering-llvm-dbg-assign-to-mir" title="Permalink to this heading">¶</a></h3>
+<p>To begin with only SelectionDAG ISel will be supported. <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>
+intrinsics are lowered to MIR <code class="docutils literal notranslate"><span class="pre">DBG_INSTR_REF</span></code> instructions. Before this happens
+we need to decide where it is appropriate to use memory locations and where we
+must use a non-memory location (or no location) for each variable. In order to
+make those decisions we run a standard fixed-point dataflow analysis that makes
+the choice at each instruction, iteratively joining the results for each block.</p>
+</section>
+<section id="todo-list">
+<h3>TODO list<a class="headerlink" href="#todo-list" title="Permalink to this heading">¶</a></h3>
+<p>As this is an experimental work in progress so there are some items we still need
+to tackle:</p>
+<ul class="simple">
+<li><p>As mentioned in test llvm/test/DebugInfo/assignment-tracking/X86/diamond-3.ll,
+the analysis should treat escaping calls like untagged stores.</p></li>
+<li><p>The system expects locals to be backed by a local alloca. This isn’t always
+the case - sometimes a pointer to storage is passed into a function
+(e.g. sret, byval). We need to be able to handle those cases. See
+llvm/test/DebugInfo/Generic/assignment-tracking/track-assignments.ll and
+clang/test/CodeGen/assignment-tracking/assignment-tracking.cpp for examples.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">trackAssignments</span></code> doesn’t yet work for variables that have their
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.declare</span></code> location modified by a <code class="docutils literal notranslate"><span class="pre">DIExpression</span></code>, e.g. when the
+address of the variable is itself stored in an <code class="docutils literal notranslate"><span class="pre">alloca</span></code> with the
+<code class="docutils literal notranslate"><span class="pre">llvm.dbg.declare</span></code> using <code class="docutils literal notranslate"><span class="pre">DIExpression(DW_OP_deref)</span></code>. See <code class="docutils literal notranslate"><span class="pre">indirectReturn</span></code> in
+llvm/test/DebugInfo/Generic/assignment-tracking/track-assignments.ll and in
+clang/test/CodeGen/assignment-tracking/assignment-tracking.cpp for an
+example.</p></li>
+<li><p>In order to solve the first bullet-point we need to be able to specify that a
+memory location is available without using a <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code>. This is because
+the storage address is not computed by an instruction (it’s an argument
+value) and therefore we have nowhere to put the metadata attachment. To solve
+this we probably need another marker intrinsic to denote “the variable’s
+stack home is X address” - similar to <code class="docutils literal notranslate"><span class="pre">llvm.dbg.declare</span></code> except that it needs
+to compose with <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code> intrinsics such that the stack home address
+is only selected as a location for the variable when the <code class="docutils literal notranslate"><span class="pre">llvm.dbg.assign</span></code>
+intrinsics agree it should be.</p></li>
+<li><p>Given the above (a special “the stack home is X” intrinsic), and the fact
+that we can only track assignments with fixed offsets and sizes, I think we
+can probably get rid of the address and address-expression part, since it
+will always be computable with the info we have.</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="SPIRVUsage.html" title="User Guide for SPIR-V Target"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="SourceLevelDebugging.html" title="Source Level Debugging with LLVM"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="SourceLevelDebugging.html" >Source Level Debugging with LLVM</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debug Info Assignment Tracking</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2024, LLVM Project.
+      Last updated on 2024-06-06.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

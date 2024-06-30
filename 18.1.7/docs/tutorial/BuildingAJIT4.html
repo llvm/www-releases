@@ -1,0 +1,428 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>4. Building a JIT: Extreme Laziness - Using LazyReexports to JIT from ASTs &#8212; LLVM 18.1.7 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm-theme.css?v=be84393e" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js?v=77650230"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="MyFirstTypoFix" href="../MyFirstTypoFix.html" />
+    <link rel="prev" title="3. Building a JIT: Per-function Lazy Compilation" href="BuildingAJIT3.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="../index.html">
+    <img src="../_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../MyFirstTypoFix.html" title="MyFirstTypoFix"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="BuildingAJIT3.html" title="3. Building a JIT: Per-function Lazy Compilation"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../GettingStartedTutorials.html" >Getting Started/Tutorials</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" accesskey="U">LLVM Tutorial: Table of Contents</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href=""><span class="section-number">4. </span>Building a JIT: Extreme Laziness - Using LazyReexports to JIT from ASTs</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/tutorial/BuildingAJIT4.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="building-a-jit-extreme-laziness-using-lazyreexports-to-jit-from-asts">
+<h1><span class="section-number">4. </span>Building a JIT: Extreme Laziness - Using LazyReexports to JIT from ASTs<a class="headerlink" href="#building-a-jit-extreme-laziness-using-lazyreexports-to-jit-from-asts" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#chapter-4-introduction" id="id1">Chapter 4 Introduction</a></p></li>
+<li><p><a class="reference internal" href="#full-code-listing" id="id2">Full Code Listing</a></p></li>
+</ul>
+</nav>
+<p><strong>This tutorial is under active development. It is incomplete and details may
+change frequently.</strong> Nonetheless we invite you to try it out as it stands, and
+we welcome any feedback.</p>
+<section id="chapter-4-introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink"><span class="section-number">4.1. </span>Chapter 4 Introduction</a><a class="headerlink" href="#chapter-4-introduction" title="Permalink to this heading">¶</a></h2>
+<p>Welcome to Chapter 4 of the “Building an ORC-based JIT in LLVM” tutorial. This
+chapter introduces custom MaterializationUnits and Layers, and the lazy
+reexports API. Together these will be used to replace the CompileOnDemandLayer
+from <a class="reference external" href="BuildingAJIT3.html">Chapter 3</a> with a custom lazy-JITing scheme that JITs
+directly from Kaleidoscope ASTs.</p>
+<p><strong>To be done:</strong></p>
+<p><strong>(1) Describe the drawbacks of JITing from IR (have to compile to IR first,
+which reduces the benefits of laziness).</strong></p>
+<p><strong>(2) Describe CompileCallbackManagers and IndirectStubManagers in detail.</strong></p>
+<p><strong>(3) Run through the implementation of addFunctionAST.</strong></p>
+</section>
+<section id="full-code-listing">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink"><span class="section-number">4.2. </span>Full Code Listing</a><a class="headerlink" href="#full-code-listing" title="Permalink to this heading">¶</a></h2>
+<p>Here is the complete code listing for our running example that JITs lazily from
+Kaleidoscope ASTS. To build this example, use:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Compile</span>
+clang++<span class="w"> </span>-g<span class="w"> </span>toy.cpp<span class="w"> </span><span class="sb">`</span>llvm-config<span class="w"> </span>--cxxflags<span class="w"> </span>--ldflags<span class="w"> </span>--system-libs<span class="w"> </span>--libs<span class="w"> </span>core<span class="w"> </span>orcjit<span class="w"> </span>native<span class="sb">`</span><span class="w"> </span>-O3<span class="w"> </span>-o<span class="w"> </span>toy
+<span class="c1"># Run</span>
+./toy
+</pre></div>
+</div>
+<p>Here is the code:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">//===- KaleidoscopeJIT.h - A simple JIT for Kaleidoscope --------*- C++ -*-===//</span>
+<span class="c1">//</span>
+<span class="c1">// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.</span>
+<span class="c1">// See https://llvm.org/LICENSE.txt for license information.</span>
+<span class="c1">// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception</span>
+<span class="c1">//</span>
+<span class="c1">//===----------------------------------------------------------------------===//</span>
+<span class="c1">//</span>
+<span class="c1">// Contains a simple JIT definition for use in the kaleidoscope tutorials.</span>
+<span class="c1">//</span>
+<span class="c1">//===----------------------------------------------------------------------===//</span>
+
+<span class="cp">#ifndef LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H</span>
+<span class="cp">#define LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ADT/StringRef.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/CompileOnDemandLayer.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/CompileUtils.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/Core.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/EPCIndirectionUtils.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/ExecutionUtils.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/ExecutorProcessControl.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/IRCompileLayer.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/IRTransformLayer.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/ExecutionEngine/SectionMemoryManager.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/IR/DataLayout.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/IR/LLVMContext.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/IR/LegacyPassManager.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Transforms/InstCombine/InstCombine.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Transforms/Scalar.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Transforms/Scalar/GVN.h&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;memory&gt;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PrototypeAST</span><span class="p">;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ExprAST</span><span class="p">;</span>
+
+<span class="c1">/// FunctionAST - This class represents a function definition itself.</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">FunctionAST</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">PrototypeAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Proto</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ExprAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Body</span><span class="p">;</span>
+
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">FunctionAST</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">PrototypeAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Proto</span><span class="p">,</span>
+<span class="w">              </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ExprAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Body</span><span class="p">)</span>
+<span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="n">Proto</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Proto</span><span class="p">)),</span><span class="w"> </span><span class="n">Body</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Body</span><span class="p">))</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">PrototypeAST</span><span class="o">&amp;</span><span class="w"> </span><span class="n">getProto</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="p">;</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="nf">getName</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="p">;</span>
+<span class="w">  </span><span class="n">llvm</span><span class="o">::</span><span class="n">Function</span><span class="w"> </span><span class="o">*</span><span class="nf">codegen</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="c1">/// This will compile FnAST to IR, rename the function to add the given</span>
+<span class="c1">/// suffix (needed to prevent a name-clash with the function&#39;s stub),</span>
+<span class="c1">/// and then take ownership of the module that the function was compiled</span>
+<span class="c1">/// into.</span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">orc</span><span class="o">::</span><span class="n">ThreadSafeModule</span><span class="w"> </span><span class="nf">irgenAndTakeOwnership</span><span class="p">(</span><span class="n">FunctionAST</span><span class="w"> </span><span class="o">&amp;</span><span class="n">FnAST</span><span class="p">,</span>
+<span class="w">                                                  </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Suffix</span><span class="p">);</span>
+
+<span class="k">namespace</span><span class="w"> </span><span class="nn">llvm</span><span class="w"> </span><span class="p">{</span>
+<span class="k">namespace</span><span class="w"> </span><span class="nn">orc</span><span class="w"> </span><span class="p">{</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">KaleidoscopeASTLayer</span><span class="p">;</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">KaleidoscopeJIT</span><span class="p">;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">KaleidoscopeASTMaterializationUnit</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">MaterializationUnit</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">KaleidoscopeASTMaterializationUnit</span><span class="p">(</span><span class="n">KaleidoscopeASTLayer</span><span class="w"> </span><span class="o">&amp;</span><span class="n">L</span><span class="p">,</span>
+<span class="w">                                     </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">FunctionAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">F</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">StringRef</span><span class="w"> </span><span class="nf">getName</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;KaleidoscopeASTMaterializationUnit&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">materialize</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">MaterializationResponsibility</span><span class="o">&gt;</span><span class="w"> </span><span class="n">R</span><span class="p">)</span><span class="w"> </span><span class="k">override</span><span class="p">;</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="n">discard</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">JITDylib</span><span class="w"> </span><span class="o">&amp;</span><span class="n">JD</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">SymbolStringPtr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Sym</span><span class="p">)</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">llvm_unreachable</span><span class="p">(</span><span class="s">&quot;Kaleidoscope functions are not overridable&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">KaleidoscopeASTLayer</span><span class="w"> </span><span class="o">&amp;</span><span class="n">L</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">FunctionAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">F</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">KaleidoscopeASTLayer</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">KaleidoscopeASTLayer</span><span class="p">(</span><span class="n">IRLayer</span><span class="w"> </span><span class="o">&amp;</span><span class="n">BaseLayer</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">DataLayout</span><span class="w"> </span><span class="o">&amp;</span><span class="n">DL</span><span class="p">)</span>
+<span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="n">BaseLayer</span><span class="p">(</span><span class="n">BaseLayer</span><span class="p">),</span><span class="w"> </span><span class="n">DL</span><span class="p">(</span><span class="n">DL</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">  </span><span class="n">Error</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="n">ResourceTrackerSP</span><span class="w"> </span><span class="n">RT</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">FunctionAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">F</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">RT</span><span class="o">-&gt;</span><span class="n">getJITDylib</span><span class="p">().</span><span class="n">define</span><span class="p">(</span>
+<span class="w">        </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">KaleidoscopeASTMaterializationUnit</span><span class="o">&gt;</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">,</span>
+<span class="w">                                                             </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">F</span><span class="p">)),</span>
+<span class="w">        </span><span class="n">RT</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="n">emit</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">MaterializationResponsibility</span><span class="o">&gt;</span><span class="w"> </span><span class="n">MR</span><span class="p">,</span>
+<span class="w">            </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">FunctionAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">F</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">BaseLayer</span><span class="p">.</span><span class="n">emit</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">MR</span><span class="p">),</span><span class="w"> </span><span class="n">irgenAndTakeOwnership</span><span class="p">(</span><span class="o">*</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">MaterializationUnit</span><span class="o">::</span><span class="n">Interface</span><span class="w"> </span><span class="n">getInterface</span><span class="p">(</span><span class="n">FunctionAST</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">MangleAndInterner</span><span class="w"> </span><span class="nf">Mangle</span><span class="p">(</span><span class="n">BaseLayer</span><span class="p">.</span><span class="n">getExecutionSession</span><span class="p">(),</span><span class="w"> </span><span class="n">DL</span><span class="p">);</span>
+<span class="w">    </span><span class="n">SymbolFlagsMap</span><span class="w"> </span><span class="n">Symbols</span><span class="p">;</span>
+<span class="w">    </span><span class="n">Symbols</span><span class="p">[</span><span class="n">Mangle</span><span class="p">(</span><span class="n">F</span><span class="p">.</span><span class="n">getName</span><span class="p">())]</span><span class="w"> </span><span class="o">=</span>
+<span class="w">        </span><span class="n">JITSymbolFlags</span><span class="p">(</span><span class="n">JITSymbolFlags</span><span class="o">::</span><span class="n">Exported</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">JITSymbolFlags</span><span class="o">::</span><span class="n">Callable</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">MaterializationUnit</span><span class="o">::</span><span class="n">Interface</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Symbols</span><span class="p">),</span><span class="w"> </span><span class="k">nullptr</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="n">IRLayer</span><span class="w"> </span><span class="o">&amp;</span><span class="n">BaseLayer</span><span class="p">;</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">DataLayout</span><span class="w"> </span><span class="o">&amp;</span><span class="n">DL</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="n">KaleidoscopeASTMaterializationUnit</span><span class="o">::</span><span class="n">KaleidoscopeASTMaterializationUnit</span><span class="p">(</span>
+<span class="w">    </span><span class="n">KaleidoscopeASTLayer</span><span class="w"> </span><span class="o">&amp;</span><span class="n">L</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">FunctionAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">F</span><span class="p">)</span>
+<span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="n">MaterializationUnit</span><span class="p">(</span><span class="n">L</span><span class="p">.</span><span class="n">getInterface</span><span class="p">(</span><span class="o">*</span><span class="n">F</span><span class="p">)),</span><span class="w"> </span><span class="n">L</span><span class="p">(</span><span class="n">L</span><span class="p">),</span><span class="w"> </span><span class="n">F</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">F</span><span class="p">))</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">KaleidoscopeASTMaterializationUnit</span><span class="o">::</span><span class="n">materialize</span><span class="p">(</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">MaterializationResponsibility</span><span class="o">&gt;</span><span class="w"> </span><span class="n">R</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">L</span><span class="p">.</span><span class="n">emit</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">R</span><span class="p">),</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">F</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">KaleidoscopeJIT</span><span class="w"> </span><span class="p">{</span>
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ExecutionSession</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ES</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">EPCIndirectionUtils</span><span class="o">&gt;</span><span class="w"> </span><span class="n">EPCIU</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">DataLayout</span><span class="w"> </span><span class="n">DL</span><span class="p">;</span>
+<span class="w">  </span><span class="n">MangleAndInterner</span><span class="w"> </span><span class="n">Mangle</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">RTDyldObjectLinkingLayer</span><span class="w"> </span><span class="n">ObjectLayer</span><span class="p">;</span>
+<span class="w">  </span><span class="n">IRCompileLayer</span><span class="w"> </span><span class="n">CompileLayer</span><span class="p">;</span>
+<span class="w">  </span><span class="n">IRTransformLayer</span><span class="w"> </span><span class="n">OptimizeLayer</span><span class="p">;</span>
+<span class="w">  </span><span class="n">KaleidoscopeASTLayer</span><span class="w"> </span><span class="n">ASTLayer</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">JITDylib</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MainJD</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">handleLazyCallThroughError</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;LazyCallThrough error: Could not find function body&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">KaleidoscopeJIT</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ExecutionSession</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ES</span><span class="p">,</span>
+<span class="w">                  </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">EPCIndirectionUtils</span><span class="o">&gt;</span><span class="w"> </span><span class="n">EPCIU</span><span class="p">,</span>
+<span class="w">                  </span><span class="n">JITTargetMachineBuilder</span><span class="w"> </span><span class="n">JTMB</span><span class="p">,</span><span class="w"> </span><span class="n">DataLayout</span><span class="w"> </span><span class="n">DL</span><span class="p">)</span>
+<span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="n">ES</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">ES</span><span class="p">)),</span><span class="w"> </span><span class="n">EPCIU</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">EPCIU</span><span class="p">)),</span><span class="w"> </span><span class="n">DL</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">DL</span><span class="p">)),</span>
+<span class="w">        </span><span class="n">Mangle</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ES</span><span class="p">,</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">DL</span><span class="p">),</span>
+<span class="w">        </span><span class="n">ObjectLayer</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ES</span><span class="p">,</span>
+<span class="w">                    </span><span class="p">[]()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">SectionMemoryManager</span><span class="o">&gt;</span><span class="p">();</span><span class="w"> </span><span class="p">}),</span>
+<span class="w">        </span><span class="n">CompileLayer</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ES</span><span class="p">,</span><span class="w"> </span><span class="n">ObjectLayer</span><span class="p">,</span>
+<span class="w">                     </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">ConcurrentIRCompiler</span><span class="o">&gt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">JTMB</span><span class="p">))),</span>
+<span class="w">        </span><span class="n">OptimizeLayer</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ES</span><span class="p">,</span><span class="w"> </span><span class="n">CompileLayer</span><span class="p">,</span><span class="w"> </span><span class="n">optimizeModule</span><span class="p">),</span>
+<span class="w">        </span><span class="n">ASTLayer</span><span class="p">(</span><span class="n">OptimizeLayer</span><span class="p">,</span><span class="w"> </span><span class="k">this</span><span class="o">-&gt;</span><span class="n">DL</span><span class="p">),</span>
+<span class="w">        </span><span class="n">MainJD</span><span class="p">(</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">ES</span><span class="o">-&gt;</span><span class="n">createBareJITDylib</span><span class="p">(</span><span class="s">&quot;&lt;main&gt;&quot;</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">MainJD</span><span class="p">.</span><span class="n">addGenerator</span><span class="p">(</span>
+<span class="w">        </span><span class="n">cantFail</span><span class="p">(</span><span class="n">DynamicLibrarySearchGenerator</span><span class="o">::</span><span class="n">GetForCurrentProcess</span><span class="p">(</span>
+<span class="w">            </span><span class="n">DL</span><span class="p">.</span><span class="n">getGlobalPrefix</span><span class="p">())));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="o">~</span><span class="n">KaleidoscopeJIT</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ES</span><span class="o">-&gt;</span><span class="n">endSession</span><span class="p">())</span>
+<span class="w">      </span><span class="n">ES</span><span class="o">-&gt;</span><span class="n">reportError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">EPCIU</span><span class="o">-&gt;</span><span class="n">cleanup</span><span class="p">())</span>
+<span class="w">      </span><span class="n">ES</span><span class="o">-&gt;</span><span class="n">reportError</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">KaleidoscopeJIT</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">Create</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">EPC</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SelfExecutorProcessControl</span><span class="o">::</span><span class="n">Create</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">EPC</span><span class="p">)</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">EPC</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">ES</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">ExecutionSession</span><span class="o">&gt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="o">*</span><span class="n">EPC</span><span class="p">));</span>
+
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">EPCIU</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">EPCIndirectionUtils</span><span class="o">::</span><span class="n">Create</span><span class="p">(</span><span class="o">*</span><span class="n">ES</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">EPCIU</span><span class="p">)</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">EPCIU</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+
+<span class="w">    </span><span class="p">(</span><span class="o">*</span><span class="n">EPCIU</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">createLazyCallThroughManager</span><span class="p">(</span>
+<span class="w">        </span><span class="o">*</span><span class="n">ES</span><span class="p">,</span><span class="w"> </span><span class="n">ExecutorAddr</span><span class="o">::</span><span class="n">fromPtr</span><span class="p">(</span><span class="o">&amp;</span><span class="n">handleLazyCallThroughError</span><span class="p">));</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="n">Err</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">setUpInProcessLCTMReentryViaEPCIU</span><span class="p">(</span><span class="o">**</span><span class="n">EPCIU</span><span class="p">))</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Err</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">JITTargetMachineBuilder</span><span class="w"> </span><span class="nf">JTMB</span><span class="p">(</span>
+<span class="w">        </span><span class="n">ES</span><span class="o">-&gt;</span><span class="n">getExecutorProcessControl</span><span class="p">().</span><span class="n">getTargetTriple</span><span class="p">());</span>
+
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">DL</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">JTMB</span><span class="p">.</span><span class="n">getDefaultDataLayoutForTarget</span><span class="p">();</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">DL</span><span class="p">)</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">DL</span><span class="p">.</span><span class="n">takeError</span><span class="p">();</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">KaleidoscopeJIT</span><span class="o">&gt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">ES</span><span class="p">),</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="o">*</span><span class="n">EPCIU</span><span class="p">),</span>
+<span class="w">                                             </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">JTMB</span><span class="p">),</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="o">*</span><span class="n">DL</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">DataLayout</span><span class="w"> </span><span class="o">&amp;</span><span class="n">getDataLayout</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">DL</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">JITDylib</span><span class="w"> </span><span class="o">&amp;</span><span class="n">getMainJITDylib</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">MainJD</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">Error</span><span class="w"> </span><span class="n">addModule</span><span class="p">(</span><span class="n">ThreadSafeModule</span><span class="w"> </span><span class="n">TSM</span><span class="p">,</span><span class="w"> </span><span class="n">ResourceTrackerSP</span><span class="w"> </span><span class="n">RT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">RT</span><span class="p">)</span>
+<span class="w">      </span><span class="n">RT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MainJD</span><span class="p">.</span><span class="n">getDefaultResourceTracker</span><span class="p">();</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">OptimizeLayer</span><span class="p">.</span><span class="n">add</span><span class="p">(</span><span class="n">RT</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">TSM</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">Error</span><span class="w"> </span><span class="n">addAST</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">FunctionAST</span><span class="o">&gt;</span><span class="w"> </span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="n">ResourceTrackerSP</span><span class="w"> </span><span class="n">RT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">RT</span><span class="p">)</span>
+<span class="w">      </span><span class="n">RT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MainJD</span><span class="p">.</span><span class="n">getDefaultResourceTracker</span><span class="p">();</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">ASTLayer</span><span class="p">.</span><span class="n">add</span><span class="p">(</span><span class="n">RT</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">F</span><span class="p">));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">ExecutorSymbolDef</span><span class="o">&gt;</span><span class="w"> </span><span class="n">lookup</span><span class="p">(</span><span class="n">StringRef</span><span class="w"> </span><span class="n">Name</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">ES</span><span class="o">-&gt;</span><span class="n">lookup</span><span class="p">({</span><span class="o">&amp;</span><span class="n">MainJD</span><span class="p">},</span><span class="w"> </span><span class="n">Mangle</span><span class="p">(</span><span class="n">Name</span><span class="p">.</span><span class="n">str</span><span class="p">()));</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="n">Expected</span><span class="o">&lt;</span><span class="n">ThreadSafeModule</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="n">optimizeModule</span><span class="p">(</span><span class="n">ThreadSafeModule</span><span class="w"> </span><span class="n">TSM</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">MaterializationResponsibility</span><span class="w"> </span><span class="o">&amp;</span><span class="n">R</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">TSM</span><span class="p">.</span><span class="n">withModuleDo</span><span class="p">([](</span><span class="n">Module</span><span class="w"> </span><span class="o">&amp;</span><span class="n">M</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="c1">// Create a function pass manager.</span>
+<span class="w">      </span><span class="k">auto</span><span class="w"> </span><span class="n">FPM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">legacy</span><span class="o">::</span><span class="n">FunctionPassManager</span><span class="o">&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">M</span><span class="p">);</span>
+
+<span class="w">      </span><span class="c1">// Add some optimizations.</span>
+<span class="w">      </span><span class="n">FPM</span><span class="o">-&gt;</span><span class="n">add</span><span class="p">(</span><span class="n">createInstructionCombiningPass</span><span class="p">());</span>
+<span class="w">      </span><span class="n">FPM</span><span class="o">-&gt;</span><span class="n">add</span><span class="p">(</span><span class="n">createReassociatePass</span><span class="p">());</span>
+<span class="w">      </span><span class="n">FPM</span><span class="o">-&gt;</span><span class="n">add</span><span class="p">(</span><span class="n">createGVNPass</span><span class="p">());</span>
+<span class="w">      </span><span class="n">FPM</span><span class="o">-&gt;</span><span class="n">add</span><span class="p">(</span><span class="n">createCFGSimplificationPass</span><span class="p">());</span>
+<span class="w">      </span><span class="n">FPM</span><span class="o">-&gt;</span><span class="n">doInitialization</span><span class="p">();</span>
+
+<span class="w">      </span><span class="c1">// Run the optimizations over all functions in the module being added to</span>
+<span class="w">      </span><span class="c1">// the JIT.</span>
+<span class="w">      </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">M</span><span class="p">)</span>
+<span class="w">        </span><span class="n">FPM</span><span class="o">-&gt;</span><span class="n">run</span><span class="p">(</span><span class="n">F</span><span class="p">);</span>
+<span class="w">    </span><span class="p">});</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">TSM</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="p">}</span><span class="w"> </span><span class="c1">// end namespace orc</span>
+<span class="p">}</span><span class="w"> </span><span class="c1">// end namespace llvm</span>
+
+<span class="cp">#endif </span><span class="c1">// LLVM_EXECUTIONENGINE_ORC_KALEIDOSCOPEJIT_H</span>
+</pre></div>
+</div>
+<p><a class="reference external" href="BuildingAJIT5.html">Next: Remote-JITing – Process-isolation and laziness-at-a-distance</a></p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../MyFirstTypoFix.html" title="MyFirstTypoFix"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="BuildingAJIT3.html" title="3. Building a JIT: Per-function Lazy Compilation"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../GettingStartedTutorials.html" >Getting Started/Tutorials</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >LLVM Tutorial: Table of Contents</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href=""><span class="section-number">4. </span>Building a JIT: Extreme Laziness - Using LazyReexports to JIT from ASTs</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2024, LLVM Project.
+      Last updated on 2024-06-06.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>
