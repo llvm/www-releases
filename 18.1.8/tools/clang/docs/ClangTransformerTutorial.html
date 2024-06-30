@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Clang Transformer Tutorial &#8212; Clang 18.1.8 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=d31ea6cb" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=9f7fa1f2"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="ASTImporter: Merging Clang ASTs" href="LibASTImporter.html" />
+    <link rel="prev" title="Matching the Clang AST" href="LibASTMatchers.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 18.1.8 documentation</span></a></h1>
+        <h2 class="heading"><span>Clang Transformer Tutorial</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LibASTMatchers.html">Matching the Clang AST</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LibASTImporter.html">ASTImporter: Merging Clang ASTs</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="clang-transformer-tutorial">
+<h1>Clang Transformer Tutorial<a class="headerlink" href="#clang-transformer-tutorial" title="Permalink to this heading">¶</a></h1>
+<p>A tutorial on how to write a source-to-source translation tool using Clang Transformer.</p>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#what-is-clang-transformer" id="id4">What is Clang Transformer?</a></p></li>
+<li><p><a class="reference internal" href="#who-is-clang-transformer-for" id="id5">Who is Clang Transformer for?</a></p></li>
+<li><p><a class="reference internal" href="#getting-started" id="id6">Getting Started</a></p>
+<ul>
+<li><p><a class="reference internal" href="#example-style-checking-names" id="id7">Example: style-checking names</a></p></li>
+<li><p><a class="reference internal" href="#example-renaming-a-function" id="id8">Example: renaming a function</a></p></li>
+<li><p><a class="reference internal" href="#example-method-to-function" id="id9">Example: method to function</a></p></li>
+<li><p><a class="reference internal" href="#example-rewriting-method-calls" id="id10">Example: rewriting method calls</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#reference-ranges-stencils-edits-rules" id="id11">Reference: ranges, stencils, edits, rules</a></p>
+<ul>
+<li><p><a class="reference internal" href="#rewriting-asts-to-text" id="id12">Rewriting ASTs to… Text?</a></p></li>
+<li><p><a class="reference internal" href="#range-selectors" id="id13">Range Selectors</a></p></li>
+<li><p><a class="reference internal" href="#stencils" id="id14">Stencils</a></p></li>
+<li><p><a class="reference internal" href="#edits" id="id15">Edits</a></p></li>
+<li><p><a class="reference internal" href="#editgenerators-advanced" id="id16"><code class="docutils literal notranslate"><span class="pre">EditGenerator</span></code>s (Advanced)</a></p></li>
+<li><p><a class="reference internal" href="#rules" id="id17">Rules</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#using-a-rewriterule-as-a-clang-tidy-check" id="id18">Using a RewriteRule as a clang-tidy check</a></p></li>
+<li><p><a class="reference internal" href="#related-reading" id="id19">Related Reading</a></p></li>
+</ul>
+</nav>
+<section id="what-is-clang-transformer">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">What is Clang Transformer?</a><a class="headerlink" href="#what-is-clang-transformer" title="Permalink to this heading">¶</a></h2>
+<p>Clang Transformer is a framework for writing C++ diagnostics and program
+transformations. It is built on the clang toolchain and the LibTooling library,
+but aims to hide much of the complexity of clang’s native, low-level libraries.</p>
+<p>The core abstraction of Transformer is the <em>rewrite rule</em>, which specifies how
+to change a given program pattern into a new form. Here are some examples of
+tasks you can achieve with Transformer:</p>
+<ul class="simple">
+<li><p>warn against using the name <code class="docutils literal notranslate"><span class="pre">MkX</span></code> for a declared function,</p></li>
+<li><p>change <code class="docutils literal notranslate"><span class="pre">MkX</span></code> to <code class="docutils literal notranslate"><span class="pre">MakeX</span></code>, where <code class="docutils literal notranslate"><span class="pre">MkX</span></code> is the name of a declared function,</p></li>
+<li><p>change <code class="docutils literal notranslate"><span class="pre">s.size()</span></code> to <code class="docutils literal notranslate"><span class="pre">Size(s)</span></code>, where <code class="docutils literal notranslate"><span class="pre">s</span></code> is a <code class="docutils literal notranslate"><span class="pre">string</span></code>,</p></li>
+<li><p>collapse <code class="docutils literal notranslate"><span class="pre">e.child().m()</span></code> to <code class="docutils literal notranslate"><span class="pre">e.m()</span></code>, for any expression <code class="docutils literal notranslate"><span class="pre">e</span></code> and method named
+<code class="docutils literal notranslate"><span class="pre">m</span></code>.</p></li>
+</ul>
+<p>All of the examples have a common form: they identify a pattern that is the
+target of the transformation, they specify an <em>edit</em> to the code identified by
+the pattern, and their pattern and edit refer to common variables, like <code class="docutils literal notranslate"><span class="pre">s</span></code>,
+<code class="docutils literal notranslate"><span class="pre">e</span></code>, and <code class="docutils literal notranslate"><span class="pre">m</span></code>, that range over code fragments. Our first and second examples also
+specify constraints on the pattern that aren’t apparent from the syntax alone,
+like “<code class="docutils literal notranslate"><span class="pre">s</span></code> is a <code class="docutils literal notranslate"><span class="pre">string</span></code>.” Even the first example (“warn …”) shares this form,
+even though it doesn’t change any of the code – it’s “edit” is simply a no-op.</p>
+<p>Transformer helps users succinctly specify rules of this sort and easily execute
+them locally over a collection of files, apply them to selected portions of
+a codebase, or even bundle them as a clang-tidy check for ongoing application.</p>
+</section>
+<section id="who-is-clang-transformer-for">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Who is Clang Transformer for?</a><a class="headerlink" href="#who-is-clang-transformer-for" title="Permalink to this heading">¶</a></h2>
+<p>Clang Transformer is for developers who want to write clang-tidy checks or write
+tools to modify a large number of C++ files in (roughly) the same way. What
+qualifies as “large” really depends on the nature of the change and your
+patience for repetitive editing. In our experience, automated solutions become
+worthwhile somewhere between 100 and 500 files.</p>
+</section>
+<section id="getting-started">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Getting Started</a><a class="headerlink" href="#getting-started" title="Permalink to this heading">¶</a></h2>
+<p>Patterns in Transformer are expressed with <a class="reference internal" href="LibASTMatchers.html"><span class="doc">clang’s AST matchers</span></a>.
+Matchers are a language of combinators for describing portions of a clang
+Abstract Syntax Tree (AST). Since clang’s AST includes complete type information
+(within the limits of single <a class="reference external" href="https://en.wikipedia.org/wiki/Translation_unit_(programming)">Translation Unit (TU)</a>,
+these patterns can even encode rich constraints on the type properties of AST
+nodes.</p>
+<p>We assume a familiarity with the clang AST and the corresponding AST matchers
+for the purpose of this tutorial. Users who are unfamiliar with either are
+encouraged to start with the recommended references in <a class="reference internal" href="#related-reading">Related Reading</a>.</p>
+<section id="example-style-checking-names">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Example: style-checking names</a><a class="headerlink" href="#example-style-checking-names" title="Permalink to this heading">¶</a></h3>
+<p>Assume you have a style-guide rule which forbids functions from being named
+“MkX” and you want to write a check that catches any violations of this rule. We
+can express this a Transformer rewrite rule:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">makeRule</span><span class="p">(</span><span class="n">functionDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;MkX&quot;</span><span class="p">).</span><span class="n">bind</span><span class="p">(</span><span class="s">&quot;fun&quot;</span><span class="p">),</span>
+<span class="w">         </span><span class="n">noopEdit</span><span class="p">(</span><span class="n">node</span><span class="p">(</span><span class="s">&quot;fun&quot;</span><span class="p">)),</span>
+<span class="w">         </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;The name ``MkX`` is not allowed for functions; please rename&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">makeRule</span></code> is our go-to function for generating rewrite rules. It takes three
+arguments: the pattern, the edit, and (optionally) an explanatory note. In our
+example, the pattern (<code class="docutils literal notranslate"><span class="pre">functionDecl(...)</span></code>) identifies the declaration of the
+function <code class="docutils literal notranslate"><span class="pre">MkX</span></code>. Since we’re just diagnosing the problem, but not suggesting a
+fix, our edit is an no-op. But, it contains an <em>anchor</em> for the diagnostic
+message: <code class="docutils literal notranslate"><span class="pre">node(&quot;fun&quot;)</span></code> says to associate the message with the source range of
+the AST node bound to “fun”; in this case, the ill-named function declaration.
+Finally, we use <code class="docutils literal notranslate"><span class="pre">cat</span></code> to build a message that explains the change. Regarding the
+name <code class="docutils literal notranslate"><span class="pre">cat</span></code> – we’ll discuss it in more detail below, but suffice it to say that
+it can also take multiple arguments and concatenate their results.</p>
+<p>Note that the result of <code class="docutils literal notranslate"><span class="pre">makeRule</span></code> is a value of type
+<code class="docutils literal notranslate"><span class="pre">clang::transformer::RewriteRule</span></code>, but most users don’t need to care about the
+details of this type.</p>
+</section>
+<section id="example-renaming-a-function">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Example: renaming a function</a><a class="headerlink" href="#example-renaming-a-function" title="Permalink to this heading">¶</a></h3>
+<p>Now, let’s extend this example to a <em>transformation</em>; specifically, the second
+example above:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">makeRule</span><span class="p">(</span><span class="n">declRefExpr</span><span class="p">(</span><span class="n">to</span><span class="p">(</span><span class="n">functionDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;MkX&quot;</span><span class="p">)))),</span>
+<span class="w">         </span><span class="n">changeTo</span><span class="p">(</span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;MakeX&quot;</span><span class="p">)),</span>
+<span class="w">         </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;MkX has been renamed MakeX&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+<p>In this example, the pattern (<code class="docutils literal notranslate"><span class="pre">declRefExpr(...)</span></code>) identifies any <em>reference</em> to
+the function <code class="docutils literal notranslate"><span class="pre">MkX</span></code>, rather than the declaration itself, as in our previous
+example. Our edit (<code class="docutils literal notranslate"><span class="pre">changeTo(...)</span></code>) says to <em>change</em> the code matched by the
+pattern <em>to</em> the text “MakeX”. Finally, we use <code class="docutils literal notranslate"><span class="pre">cat</span></code> again to build a message
+that explains the change.</p>
+<p>Here are some example changes that this rule would make:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Original</p></th>
+<th class="head"><p>Result</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">X</span> <span class="pre">x</span> <span class="pre">=</span> <span class="pre">MkX(3);</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">X</span> <span class="pre">x</span> <span class="pre">=</span> <span class="pre">MakeX(3);</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CallFactory(MkX,</span> <span class="pre">3);</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CallFactory(MakeX,</span> <span class="pre">3);</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto</span> <span class="pre">f</span> <span class="pre">=</span> <span class="pre">MkX;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">auto</span> <span class="pre">f</span> <span class="pre">=</span> <span class="pre">MakeX;</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example-method-to-function">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Example: method to function</a><a class="headerlink" href="#example-method-to-function" title="Permalink to this heading">¶</a></h3>
+<p>Next, let’s write a rule to replace a method call with a (free) function call,
+applied to the original method call’s target object. Specifically, “change
+<code class="docutils literal notranslate"><span class="pre">s.size()</span></code> to <code class="docutils literal notranslate"><span class="pre">Size(s)</span></code>, where <code class="docutils literal notranslate"><span class="pre">s</span></code> is a <code class="docutils literal notranslate"><span class="pre">string</span></code>.” We start with a simpler
+change that ignores the type of <code class="docutils literal notranslate"><span class="pre">s</span></code>. That is, it will modify <em>any</em> method call
+where the method is named “size”:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">llvm</span><span class="o">::</span><span class="n">StringRef</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;str&quot;</span><span class="p">;</span>
+<span class="n">makeRule</span><span class="p">(</span>
+<span class="w">  </span><span class="n">cxxMemberCallExpr</span><span class="p">(</span>
+<span class="w">    </span><span class="n">on</span><span class="p">(</span><span class="n">expr</span><span class="p">().</span><span class="n">bind</span><span class="p">(</span><span class="n">s</span><span class="p">)),</span>
+<span class="w">    </span><span class="n">callee</span><span class="p">(</span><span class="n">cxxMethodDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;size&quot;</span><span class="p">)))),</span>
+<span class="w">  </span><span class="n">changeTo</span><span class="p">(</span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;Size(&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">node</span><span class="p">(</span><span class="n">s</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;)&quot;</span><span class="p">)),</span>
+<span class="w">  </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;Method ``size`` is deprecated in favor of free function ``Size``&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+<p>We express the pattern with the given AST matcher, which binds the method call’s
+target to <code class="docutils literal notranslate"><span class="pre">s</span></code> <a class="footnote-reference brackets" href="#f1" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>. For the edit, we again use <code class="docutils literal notranslate"><span class="pre">changeTo</span></code>, but this
+time we construct the term from multiple parts, which we compose with <code class="docutils literal notranslate"><span class="pre">cat</span></code>. The
+second part of our term is <code class="docutils literal notranslate"><span class="pre">node(s)</span></code>, which selects the source code
+corresponding to the AST node <code class="docutils literal notranslate"><span class="pre">s</span></code> that was bound when a match was found in the
+AST for our rule’s pattern. <code class="docutils literal notranslate"><span class="pre">node(s)</span></code> constructs a <code class="docutils literal notranslate"><span class="pre">RangeSelector</span></code>, which, when
+used in <code class="docutils literal notranslate"><span class="pre">cat</span></code>, indicates that the selected source should be inserted in the
+output at that point.</p>
+<p>Now, we probably don’t want to rewrite <em>all</em> invocations of “size” methods, just
+those on <code class="docutils literal notranslate"><span class="pre">std::string</span></code>s. We can achieve this change simply by refining our
+matcher. The rest of the rule remains unchanged:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">llvm</span><span class="o">::</span><span class="n">StringRef</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;str&quot;</span><span class="p">;</span>
+<span class="n">makeRule</span><span class="p">(</span>
+<span class="w">  </span><span class="n">cxxMemberCallExpr</span><span class="p">(</span>
+<span class="w">    </span><span class="n">on</span><span class="p">(</span><span class="n">expr</span><span class="p">(</span><span class="n">hasType</span><span class="p">(</span><span class="n">namedDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;std::string&quot;</span><span class="p">))))</span>
+<span class="w">      </span><span class="p">.</span><span class="n">bind</span><span class="p">(</span><span class="n">s</span><span class="p">)),</span>
+<span class="w">    </span><span class="n">callee</span><span class="p">(</span><span class="n">cxxMethodDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;size&quot;</span><span class="p">)))),</span>
+<span class="w">  </span><span class="n">changeTo</span><span class="p">(</span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;Size(&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">node</span><span class="p">(</span><span class="n">s</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;)&quot;</span><span class="p">)),</span>
+<span class="w">  </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;Method ``size`` is deprecated in favor of free function ``Size``&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+</section>
+<section id="example-rewriting-method-calls">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Example: rewriting method calls</a><a class="headerlink" href="#example-rewriting-method-calls" title="Permalink to this heading">¶</a></h3>
+<p>In this example, we delete an “intermediary” method call in a string of
+invocations. This scenario can arise, for example, if you want to collapse a
+substructure into its parent.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">llvm</span><span class="o">::</span><span class="n">StringRef</span><span class="w"> </span><span class="n">e</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;expr&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;member&quot;</span><span class="p">;</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">child_call</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cxxMemberCallExpr</span><span class="p">(</span><span class="n">on</span><span class="p">(</span><span class="n">expr</span><span class="p">().</span><span class="n">bind</span><span class="p">(</span><span class="n">e</span><span class="p">)),</span>
+<span class="w">                                    </span><span class="n">callee</span><span class="p">(</span><span class="n">cxxMethodDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;child&quot;</span><span class="p">))));</span>
+<span class="n">makeRule</span><span class="p">(</span><span class="n">cxxMemberCallExpr</span><span class="p">(</span><span class="n">on</span><span class="p">(</span><span class="n">child_call</span><span class="p">),</span><span class="w"> </span><span class="n">callee</span><span class="p">(</span><span class="n">memberExpr</span><span class="p">().</span><span class="n">bind</span><span class="p">(</span><span class="n">m</span><span class="p">)),</span>
+<span class="w">         </span><span class="n">changeTo</span><span class="p">(</span><span class="n">cat</span><span class="p">(</span><span class="n">e</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;.&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">member</span><span class="p">(</span><span class="n">m</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;()&quot;</span><span class="p">))),</span>
+<span class="w">         </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;``child`` accessor is being removed; call &quot;</span><span class="p">,</span>
+<span class="w">             </span><span class="n">member</span><span class="p">(</span><span class="n">m</span><span class="p">),</span><span class="w"> </span><span class="s">&quot; directly on parent&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+<p>This rule isn’t quite what we want: it will rewrite <code class="docutils literal notranslate"><span class="pre">my_object.child().foo()</span></code> to
+<code class="docutils literal notranslate"><span class="pre">my_object.foo()</span></code>, but it will also rewrite <code class="docutils literal notranslate"><span class="pre">my_ptr-&gt;child().foo()</span></code> to
+<code class="docutils literal notranslate"><span class="pre">my_ptr.foo()</span></code>, which is not what we intend. We could fix this by restricting
+the pattern with <code class="docutils literal notranslate"><span class="pre">not(isArrow())</span></code> in the definition of <code class="docutils literal notranslate"><span class="pre">child_call</span></code>. Yet, we
+<em>want</em> to rewrite calls through pointers.</p>
+<p>To capture this idiom, we provide the <code class="docutils literal notranslate"><span class="pre">access</span></code> combinator to intelligently
+construct a field/method access. In our example, the member access is expressed
+as:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">access</span><span class="p">(</span><span class="n">e</span><span class="p">,</span><span class="w"> </span><span class="n">cat</span><span class="p">(</span><span class="n">member</span><span class="p">(</span><span class="n">m</span><span class="p">)))</span>
+</pre></div>
+</div>
+<p>The first argument specifies the object being accessed and the second, a
+description of the field/method name. In this case, we specify that the method
+name should be copied from the source – specifically, the source range of <code class="docutils literal notranslate"><span class="pre">m</span></code>’s
+member. To construct the method call, we would use this expression in <code class="docutils literal notranslate"><span class="pre">cat</span></code>:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">cat</span><span class="p">(</span><span class="n">access</span><span class="p">(</span><span class="n">e</span><span class="p">,</span><span class="w"> </span><span class="n">cat</span><span class="p">(</span><span class="n">member</span><span class="p">(</span><span class="n">m</span><span class="p">))),</span><span class="w"> </span><span class="s">&quot;()&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="reference-ranges-stencils-edits-rules">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Reference: ranges, stencils, edits, rules</a><a class="headerlink" href="#reference-ranges-stencils-edits-rules" title="Permalink to this heading">¶</a></h2>
+<p>The above examples demonstrate just the basics of rewrite rules. Every element
+we touched on has more available constructors: range selectors, stencils, edits
+and rules. In this section, we’ll briefly review each in turn, with references
+to the source headers for up-to-date information. First, though, we clarify what
+rewrite rules are actually rewriting.</p>
+<section id="rewriting-asts-to-text">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Rewriting ASTs to… Text?</a><a class="headerlink" href="#rewriting-asts-to-text" title="Permalink to this heading">¶</a></h3>
+<p>The astute reader may have noticed that we’ve been somewhat vague in our
+explanation of what the rewrite rules are actually rewriting. We’ve referred to
+“code”, but code can be represented both as raw source text and as an abstract
+syntax tree. So, which one is it?</p>
+<p>Ideally, we’d be rewriting the input AST to a new AST, but clang’s AST is not
+terribly amenable to this kind of transformation. So, we compromise: we express
+our patterns and the names that they bind in terms of the AST, but our changes
+in terms of source code text. We’ve designed Transformer’s language to bridge
+the gap between the two representations, in an attempt to minimize the user’s
+need to reason about source code locations and other, low-level syntactic
+details.</p>
+</section>
+<section id="range-selectors">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Range Selectors</a><a class="headerlink" href="#range-selectors" title="Permalink to this heading">¶</a></h3>
+<p>Transformer provides a small API for describing source ranges: the
+<code class="docutils literal notranslate"><span class="pre">RangeSelector</span></code> combinators. These ranges are most commonly used to specify the
+source code affected by an edit and to extract source code in constructing new
+text.</p>
+<p>Roughly, there are two kinds of range combinators: ones that select a source
+range based on the AST, and others that combine existing ranges into new ranges.
+For example, <code class="docutils literal notranslate"><span class="pre">node</span></code> selects the range of source spanned by a particular AST
+node, as we’ve seen, while <code class="docutils literal notranslate"><span class="pre">after</span></code> selects the (empty) range located immediately
+after its argument range. So, <code class="docutils literal notranslate"><span class="pre">after(node(&quot;id&quot;))</span></code> is the empty range immediately
+following the AST node bound to <code class="docutils literal notranslate"><span class="pre">id</span></code>.</p>
+<p>For the full collection of <code class="docutils literal notranslate"><span class="pre">RangeSelector</span></code>s, see the header,
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/clang/include/clang/Tooling/Transformer/RangeSelector.h">clang/Tooling/Transformer/RangeSelector.h</a></p>
+</section>
+<section id="stencils">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Stencils</a><a class="headerlink" href="#stencils" title="Permalink to this heading">¶</a></h3>
+<p>Transformer offers a large and growing collection of combinators for
+constructing output. Above, we demonstrated <code class="docutils literal notranslate"><span class="pre">cat</span></code>, the core function for
+constructing stencils. It takes a series of arguments, of three possible kinds:</p>
+<ol class="arabic simple">
+<li><p>Raw text, to be copied directly to the output.</p></li>
+<li><p>Selector: specified with a <code class="docutils literal notranslate"><span class="pre">RangeSelector</span></code>, indicates a range of source text
+to copy to the output.</p></li>
+<li><p>Builder: an operation that constructs a code snippet from its arguments. For
+example, the <code class="docutils literal notranslate"><span class="pre">access</span></code> function we saw above.</p></li>
+</ol>
+<p>Data of these different types are all represented (generically) by a <code class="docutils literal notranslate"><span class="pre">Stencil</span></code>.
+<code class="docutils literal notranslate"><span class="pre">cat</span></code> takes text and <code class="docutils literal notranslate"><span class="pre">RangeSelector</span></code>s directly as arguments, rather than
+requiring that they be constructed with a builder; other builders are
+constructed explicitly.</p>
+<p>In general, <code class="docutils literal notranslate"><span class="pre">Stencil</span></code>s produce text from a match result. So, they are not
+limited to generating source code, but can also be used to generate diagnostic
+messages that reference (named) elements of the matched code, like we saw in the
+example of rewriting method calls.</p>
+<p>Further details of the <code class="docutils literal notranslate"><span class="pre">Stencil</span></code> type are documented in the header file
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/clang/include/clang/Tooling/Transformer/Stencil.h">clang/Tooling/Transformer/Stencil.h</a>.</p>
+</section>
+<section id="edits">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Edits</a><a class="headerlink" href="#edits" title="Permalink to this heading">¶</a></h3>
+<p>Transformer supports additional forms of edits. First, in a <code class="docutils literal notranslate"><span class="pre">changeTo</span></code>, we can
+specify the particular portion of code to be replaced, using the same
+<code class="docutils literal notranslate"><span class="pre">RangeSelector</span></code> we saw earlier. For example, we could change the function name
+in a function declaration with:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">makeRule</span><span class="p">(</span><span class="n">functionDecl</span><span class="p">(</span><span class="n">hasName</span><span class="p">(</span><span class="s">&quot;bad&quot;</span><span class="p">)).</span><span class="n">bind</span><span class="p">(</span><span class="n">f</span><span class="p">),</span>
+<span class="w">         </span><span class="n">changeTo</span><span class="p">(</span><span class="n">name</span><span class="p">(</span><span class="n">f</span><span class="p">),</span><span class="w"> </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;good&quot;</span><span class="p">)),</span>
+<span class="w">         </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;bad is now good&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+<p>We also provide simpler editing primitives for insertion and deletion:
+<code class="docutils literal notranslate"><span class="pre">insertBefore</span></code>, <code class="docutils literal notranslate"><span class="pre">insertAfter</span></code> and <code class="docutils literal notranslate"><span class="pre">remove</span></code>. These can all be found in the header
+file
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/clang/include/clang/Tooling/Transformer/RewriteRule.h">clang/Tooling/Transformer/RewriteRule.h</a>.</p>
+<p>We are not limited one edit per match found. Some situations require making
+multiple edits for each match. For example, suppose we wanted to swap two
+arguments of a function call.</p>
+<p>For this, we provide an overload of <code class="docutils literal notranslate"><span class="pre">makeRule</span></code> that takes a list of edits,
+rather than just a single one. Our example might look like:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">makeRule</span><span class="p">(</span><span class="n">callExpr</span><span class="p">(...),</span>
+<span class="w">        </span><span class="p">{</span><span class="n">changeTo</span><span class="p">(</span><span class="n">node</span><span class="p">(</span><span class="n">arg0</span><span class="p">),</span><span class="w"> </span><span class="n">cat</span><span class="p">(</span><span class="n">node</span><span class="p">(</span><span class="n">arg2</span><span class="p">))),</span>
+<span class="w">         </span><span class="n">changeTo</span><span class="p">(</span><span class="n">node</span><span class="p">(</span><span class="n">arg2</span><span class="p">),</span><span class="w"> </span><span class="n">cat</span><span class="p">(</span><span class="n">node</span><span class="p">(</span><span class="n">arg0</span><span class="p">)))},</span>
+<span class="w">        </span><span class="n">cat</span><span class="p">(</span><span class="s">&quot;swap the first and third arguments of the call&quot;</span><span class="p">));</span>
+</pre></div>
+</div>
+</section>
+<section id="editgenerators-advanced">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">EditGenerator</span></code>s (Advanced)</a><a class="headerlink" href="#editgenerators-advanced" title="Permalink to this heading">¶</a></h3>
+<p>The particular edits we’ve seen so far are all instances of the <code class="docutils literal notranslate"><span class="pre">ASTEdit</span></code> class,
+or a list of such. But, not all edits can be expressed as <code class="docutils literal notranslate"><span class="pre">ASTEdit</span></code>s. So, we
+also support a very general signature for edit generators:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="n">EditGenerator</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MatchConsumer</span><span class="o">&lt;</span><span class="n">llvm</span><span class="o">::</span><span class="n">SmallVector</span><span class="o">&lt;</span><span class="n">Edit</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>That is, an <code class="docutils literal notranslate"><span class="pre">EditGenerator</span></code> is function that maps a <code class="docutils literal notranslate"><span class="pre">MatchResult</span></code> to a set
+of edits, or fails. This signature supports a very general form of computation
+over match results. Transformer provides a number of functions for working with
+<code class="docutils literal notranslate"><span class="pre">EditGenerator</span></code>s, most notably
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/1fabe6e51917bcd7a1242294069c682fe6dffa45/clang/include/clang/Tooling/Transformer/RewriteRule.h#L165-L167">flatten</a>
+<code class="docutils literal notranslate"><span class="pre">EditGenerator</span></code>s, like list flattening. For the full list, see the header file
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/clang/include/clang/Tooling/Transformer/RewriteRule.h">clang/Tooling/Transformer/RewriteRule.h</a>.</p>
+</section>
+<section id="rules">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Rules</a><a class="headerlink" href="#rules" title="Permalink to this heading">¶</a></h3>
+<p>We can also compose multiple <em>rules</em>, rather than just edits within a rule,
+using <code class="docutils literal notranslate"><span class="pre">applyFirst</span></code>: it composes a list of rules as an ordered choice, where
+Transformer applies the first rule whose pattern matches, ignoring others in the
+list that follow. If the matchers are independent then order doesn’t matter. In
+that case, <code class="docutils literal notranslate"><span class="pre">applyFirst</span></code> is simply joining the set of rules into one.</p>
+<p>The benefit of <code class="docutils literal notranslate"><span class="pre">applyFirst</span></code> is that, for some problems, it allows the user to
+more concisely formulate later rules in the list, since their patterns need not
+explicitly exclude the earlier patterns of the list. For example, consider a set
+of rules that rewrite compound statements, where one rule handles the case of an
+empty compound statement and the other handles non-empty compound statements.
+With <code class="docutils literal notranslate"><span class="pre">applyFirst</span></code>, these rules can be expressed compactly as:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">applyFirst</span><span class="p">({</span>
+<span class="w">  </span><span class="n">makeRule</span><span class="p">(</span><span class="n">compoundStmt</span><span class="p">(</span><span class="n">statementCountIs</span><span class="p">(</span><span class="mi">0</span><span class="p">)).</span><span class="n">bind</span><span class="p">(</span><span class="s">&quot;empty&quot;</span><span class="p">),</span><span class="w"> </span><span class="p">...),</span>
+<span class="w">  </span><span class="n">makeRule</span><span class="p">(</span><span class="n">compoundStmt</span><span class="p">().</span><span class="n">bind</span><span class="p">(</span><span class="s">&quot;non-empty&quot;</span><span class="p">),...)</span>
+<span class="p">})</span>
+</pre></div>
+</div>
+<p>The second rule does not need to explicitly specify that the compound statement
+is non-empty – it follows from the rules position in <code class="docutils literal notranslate"><span class="pre">applyFirst</span></code>. For more
+complicated examples, this can lead to substantially more readable code.</p>
+<p>Sometimes, a modification to the code might require the inclusion of a
+particular header file. To this end, users can modify rules to specify include
+directives with <code class="docutils literal notranslate"><span class="pre">addInclude</span></code>.</p>
+<p>For additional documentation on these functions, see the header file
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/clang/include/clang/Tooling/Transformer/RewriteRule.h">clang/Tooling/Transformer/RewriteRule.h</a>.</p>
+</section>
+</section>
+<section id="using-a-rewriterule-as-a-clang-tidy-check">
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">Using a RewriteRule as a clang-tidy check</a><a class="headerlink" href="#using-a-rewriterule-as-a-clang-tidy-check" title="Permalink to this heading">¶</a></h2>
+<p>Transformer supports executing a rewrite rule as a
+<a class="reference external" href="https://clang.llvm.org/extra/clang-tidy/">clang-tidy</a> check, with the class
+<code class="docutils literal notranslate"><span class="pre">clang::tidy::utils::TransformerClangTidyCheck</span></code>. It is designed to require
+minimal code in the definition. For example, given a rule
+<code class="docutils literal notranslate"><span class="pre">MyCheckAsRewriteRule</span></code>, one can define a tidy check as follows:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">MyCheck</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">TransformerClangTidyCheck</span><span class="w"> </span><span class="p">{</span>
+<span class="w"> </span><span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">MyCheck</span><span class="p">(</span><span class="n">StringRef</span><span class="w"> </span><span class="n">Name</span><span class="p">,</span><span class="w"> </span><span class="n">ClangTidyContext</span><span class="w"> </span><span class="o">*</span><span class="n">Context</span><span class="p">)</span>
+<span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="n">TransformerClangTidyCheck</span><span class="p">(</span><span class="n">MyCheckAsRewriteRule</span><span class="p">,</span><span class="w"> </span><span class="n">Name</span><span class="p">,</span><span class="w"> </span><span class="n">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">TransformerClangTidyCheck</span></code> implements the virtual <code class="docutils literal notranslate"><span class="pre">registerMatchers</span></code> and
+<code class="docutils literal notranslate"><span class="pre">check</span></code> methods based on your rule specification, so you don’t need to implement
+them yourself. If the rule needs to be configured based on the language options
+and/or the clang-tidy configuration, it can be expressed as a function taking
+these as parameters and (optionally) returning a <code class="docutils literal notranslate"><span class="pre">RewriteRule</span></code>. This would be
+useful, for example, for our method-renaming rule, which is parameterized by the
+original name and the target. For details, see
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/clang-tools-extra/clang-tidy/utils/TransformerClangTidyCheck.h">clang-tools-extra/clang-tidy/utils/TransformerClangTidyCheck.h</a></p>
+</section>
+<section id="related-reading">
+<h2><a class="toc-backref" href="#id19" role="doc-backlink">Related Reading</a><a class="headerlink" href="#related-reading" title="Permalink to this heading">¶</a></h2>
+<p>A good place to start understanding the clang AST and its matchers is with the
+introductions on clang’s site:</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="IntroductionToTheClangAST.html"><span class="doc">Introduction to the Clang AST</span></a></p></li>
+<li><p><a class="reference internal" href="LibASTMatchers.html"><span class="doc">Matching the Clang AST</span></a></p></li>
+<li><p><a class="reference external" href="https://clang.llvm.org/docs/LibASTMatchersReference.html">AST Matcher Reference</a></p></li>
+</ul>
+<p class="rubric">Footnotes</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="f1" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>Technically, it binds it to the string “str”, to which our
+variable <code class="docutils literal notranslate"><span class="pre">s</span></code> is bound. But, the choice of that id string is
+irrelevant, so elide the difference.</p>
+</aside>
+</aside>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LibASTMatchers.html">Matching the Clang AST</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LibASTImporter.html">ASTImporter: Merging Clang ASTs</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>

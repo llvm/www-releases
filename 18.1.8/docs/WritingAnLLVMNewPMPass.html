@@ -1,0 +1,391 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Writing an LLVM Pass &#8212; LLVM 18.1.8 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=be84393e" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js?v=9f7fa1f2"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=4825356b"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Writing an LLVM Backend" href="WritingAnLLVMBackend.html" />
+    <link rel="prev" title="Writing an LLVM Pass" href="WritingAnLLVMPass.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="WritingAnLLVMBackend.html" title="Writing an LLVM Backend"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="WritingAnLLVMPass.html" title="Writing an LLVM Pass"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Writing an LLVM Pass</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/WritingAnLLVMNewPMPass.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="writing-an-llvm-pass">
+<h1>Writing an LLVM Pass<a class="headerlink" href="#writing-an-llvm-pass" title="Permalink to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction-what-is-a-pass" id="id1">Introduction — What is a pass?</a></p></li>
+<li><p><a class="reference internal" href="#quick-start-writing-hello-world" id="id2">Quick Start — Writing hello world</a></p>
+<ul>
+<li><p><a class="reference internal" href="#setting-up-the-build" id="id3">Setting up the build</a></p></li>
+<li><p><a class="reference internal" href="#basic-code-required" id="id4">Basic code required</a></p></li>
+<li><p><a class="reference internal" href="#running-a-pass-with-opt" id="id5">Running a pass with <code class="docutils literal notranslate"><span class="pre">opt</span></code></a></p></li>
+<li><p><a class="reference internal" href="#testing-a-pass" id="id6">Testing a pass</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#faqs" id="id7">FAQs</a></p>
+<ul>
+<li><p><a class="reference internal" href="#required-passes" id="id8">Required passes</a></p></li>
+<li><p><a class="reference internal" href="#registering-passes-as-plugins" id="id9">Registering passes as plugins</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction-what-is-a-pass">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction — What is a pass?</a><a class="headerlink" href="#introduction-what-is-a-pass" title="Permalink to this heading">¶</a></h2>
+<p>The LLVM pass framework is an important part of the LLVM system, because LLVM
+passes are where most of the interesting parts of the compiler exist. Passes
+perform the transformations and optimizations that make up the compiler, they
+build the analysis results that are used by these transformations, and they
+are, above all, a structuring technique for compiler code.</p>
+<p>Unlike passes under the legacy pass manager where the pass interface is
+defined via inheritance, passes under the new pass manager rely on
+concept-based polymorphism, meaning there is no explicit interface (see
+comments in <code class="docutils literal notranslate"><span class="pre">PassManager.h</span></code> for more details). All LLVM passes inherit from
+the CRTP mix-in <code class="docutils literal notranslate"><span class="pre">PassInfoMixin&lt;PassT&gt;</span></code>. The pass should have a <code class="docutils literal notranslate"><span class="pre">run()</span></code>
+method which returns a <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> and takes in some unit of IR
+along with an analysis manager. For example, a function pass would have a
+<code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span> <span class="pre">run(Function</span> <span class="pre">&amp;F,</span> <span class="pre">FunctionAnalysisManager</span> <span class="pre">&amp;AM);</span></code> method.</p>
+<p>We start by showing you how to construct a pass, from setting up the build,
+creating the pass, to executing and testing it. Looking at existing passes is
+always a great way to learn details.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>This document deals with the new pass manager. LLVM uses the legacy pass
+manager for the codegen pipeline. For more details, see
+<a class="reference internal" href="WritingAnLLVMPass.html"><span class="doc">Writing an LLVM Pass</span></a> and <a class="reference internal" href="NewPassManager.html"><span class="doc">Using the New Pass Manager</span></a>.</p>
+</div>
+</section>
+<section id="quick-start-writing-hello-world">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Quick Start — Writing hello world</a><a class="headerlink" href="#quick-start-writing-hello-world" title="Permalink to this heading">¶</a></h2>
+<p>Here we describe how to write the “hello world” of passes. The “HelloWorld”
+pass is designed to simply print out the name of non-external functions that
+exist in the program being compiled. It does not modify the program at all,
+it just inspects it.</p>
+<p>The code below already exists; feel free to create a pass with a different
+name alongside the HelloWorld source files.</p>
+<section id="setting-up-the-build">
+<span id="writing-an-llvm-npm-pass-build"></span><h3><a class="toc-backref" href="#id3" role="doc-backlink">Setting up the build</a><a class="headerlink" href="#setting-up-the-build" title="Permalink to this heading">¶</a></h3>
+<p>First, configure and build LLVM as described in <a class="reference internal" href="GettingStarted.html"><span class="doc">Getting Started with the LLVM System</span></a>.</p>
+<p>Next, we will reuse an existing directory (creating a new directory involves
+messing around with more CMake files than we want). For this example, we’ll use
+<code class="docutils literal notranslate"><span class="pre">llvm/lib/Transforms/Utils/HelloWorld.cpp</span></code>, which has already been created.
+If you’d like to create your own pass, add a new source file into
+<code class="docutils literal notranslate"><span class="pre">llvm/lib/Transforms/Utils/CMakeLists.txt</span></code> (assuming you want your pass in
+the <code class="docutils literal notranslate"><span class="pre">Transforms/Utils</span></code> directory.</p>
+<p>Now that we have the build set up for a new pass, we need to write the code
+for the pass itself.</p>
+</section>
+<section id="basic-code-required">
+<span id="writing-an-llvm-npm-pass-basiccode"></span><h3><a class="toc-backref" href="#id4" role="doc-backlink">Basic code required</a><a class="headerlink" href="#basic-code-required" title="Permalink to this heading">¶</a></h3>
+<p>Now that the build is setup for a new pass, we just have to write it.</p>
+<p>First we need to define the pass in a header file. We’ll create
+<code class="docutils literal notranslate"><span class="pre">llvm/include/llvm/Transforms/Utils/HelloWorld.h</span></code>. The file should
+contain the following boilerplate:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#ifndef LLVM_TRANSFORMS_HELLONEW_HELLOWORLD_H</span>
+<span class="cp">#define LLVM_TRANSFORMS_HELLONEW_HELLOWORLD_H</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/IR/PassManager.h&quot;</span>
+
+<span class="k">namespace</span><span class="w"> </span><span class="nn">llvm</span><span class="w"> </span><span class="p">{</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">HelloWorldPass</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">PassInfoMixin</span><span class="o">&lt;</span><span class="n">HelloWorldPass</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">PreservedAnalyses</span><span class="w"> </span><span class="n">run</span><span class="p">(</span><span class="n">Function</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="n">FunctionAnalysisManager</span><span class="w"> </span><span class="o">&amp;</span><span class="n">AM</span><span class="p">);</span>
+<span class="p">};</span>
+
+<span class="p">}</span><span class="w"> </span><span class="c1">// namespace llvm</span>
+
+<span class="cp">#endif </span><span class="c1">// LLVM_TRANSFORMS_HELLONEW_HELLOWORLD_H</span>
+</pre></div>
+</div>
+<p>This creates the class for the pass with a declaration of the <code class="docutils literal notranslate"><span class="pre">run()</span></code>
+method which actually runs the pass. Inheriting from <code class="docutils literal notranslate"><span class="pre">PassInfoMixin&lt;PassT&gt;</span></code>
+sets up some more boilerplate so that we don’t have to write it ourselves.</p>
+<p>Our class is in the <code class="docutils literal notranslate"><span class="pre">llvm</span></code> namespace so that we don’t pollute the global
+namespace.</p>
+<p>Next we’ll create <code class="docutils literal notranslate"><span class="pre">llvm/lib/Transforms/Utils/HelloWorld.cpp</span></code>, starting
+with</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Transforms/Utils/HelloWorld.h&quot;</span>
+</pre></div>
+</div>
+<p>… to include the header file we just created.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="k">namespace</span><span class="w"> </span><span class="nn">llvm</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>… is required because the functions from the include files live in the llvm
+namespace. This should only be done in non-header files.</p>
+<p>Next we have the pass’s <code class="docutils literal notranslate"><span class="pre">run()</span></code> definition:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">PreservedAnalyses</span><span class="w"> </span><span class="nf">HelloWorldPass::run</span><span class="p">(</span><span class="n">Function</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">,</span>
+<span class="w">                                      </span><span class="n">FunctionAnalysisManager</span><span class="w"> </span><span class="o">&amp;</span><span class="n">AM</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">errs</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">F</span><span class="p">.</span><span class="n">getName</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="o">::</span><span class="n">all</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>… which simply prints out the name of the function to stderr. The pass
+manager will ensure that the pass will be run on every function in a module.
+The <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> return value says that all analyses (e.g. dominator
+tree) are still valid after this pass since we didn’t modify any functions.</p>
+<p>That’s it for the pass itself. Now in order to “register” the pass, we need
+to add it to a couple places. Add the following to
+<code class="docutils literal notranslate"><span class="pre">llvm/lib/Passes/PassRegistry.def</span></code> in the <code class="docutils literal notranslate"><span class="pre">FUNCTION_PASS</span></code> section</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">FUNCTION_PASS</span><span class="p">(</span><span class="s">&quot;helloworld&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">HelloWorldPass</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>… which adds the pass under the name “helloworld”.</p>
+<p><code class="docutils literal notranslate"><span class="pre">llvm/lib/Passes/PassRegistry.def</span></code> is #include’d into
+<code class="docutils literal notranslate"><span class="pre">llvm/lib/Passes/PassBuilder.cpp</span></code> multiple times for various reasons. Since
+it constructs our pass, we need to also add the proper #include in
+<code class="docutils literal notranslate"><span class="pre">llvm/lib/Passes/PassBuilder.cpp</span></code>:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Transforms/Utils/HelloWorld.h&quot;</span>
+</pre></div>
+</div>
+<p>This should be all the code necessary for our pass, now it’s time to compile
+and run it.</p>
+</section>
+<section id="running-a-pass-with-opt">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Running a pass with <code class="docutils literal notranslate"><span class="pre">opt</span></code></a><a class="headerlink" href="#running-a-pass-with-opt" title="Permalink to this heading">¶</a></h3>
+<p>Now that you have a brand new shiny pass, we can build <strong class="program">opt</strong> and use
+it to run some LLVM IR through the pass.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>ninja<span class="w"> </span>-C<span class="w"> </span>build/<span class="w"> </span>opt
+<span class="gp"># </span>or<span class="w"> </span>whatever<span class="w"> </span>build<span class="w"> </span>system/build<span class="w"> </span>directory<span class="w"> </span>you<span class="w"> </span>are<span class="w"> </span>using
+
+<span class="gp">$ </span>cat<span class="w"> </span>/tmp/a.ll
+<span class="go">define i32 @foo() {</span>
+<span class="gp">  %</span><span class="nv">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>add<span class="w"> </span>i32<span class="w"> </span><span class="m">2</span>,<span class="w"> </span><span class="m">3</span>
+<span class="go">  ret i32 %a</span>
+<span class="go">}</span>
+
+<span class="go">define void @bar() {</span>
+<span class="go">  ret void</span>
+<span class="go">}</span>
+
+<span class="gp">$ </span>build/bin/opt<span class="w"> </span>-disable-output<span class="w"> </span>/tmp/a.ll<span class="w"> </span>-passes<span class="o">=</span>helloworld
+<span class="go">foo</span>
+<span class="go">bar</span>
+</pre></div>
+</div>
+<p>Our pass ran and printed the names of functions as expected!</p>
+</section>
+<section id="testing-a-pass">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Testing a pass</a><a class="headerlink" href="#testing-a-pass" title="Permalink to this heading">¶</a></h3>
+<p>Testing our pass is important to prevent future regressions. We’ll add a lit
+test at <code class="docutils literal notranslate"><span class="pre">llvm/test/Transforms/Utils/helloworld.ll</span></code>. See
+<a class="reference internal" href="TestingGuide.html"><span class="doc">LLVM Testing Infrastructure Guide</span></a> for more information on testing.</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span>$ cat llvm/test/Transforms/Utils/helloworld.ll
+; RUN: opt -disable-output -passes=helloworld %s 2&gt;&amp;1 | FileCheck %s
+
+; CHECK: {{^}}foo{{$}}
+define i32 @foo() {
+  %a = add i32 2, 3
+  ret i32 %a
+}
+
+; CHECK-NEXT: {{^}}bar{{$}}
+define void @bar() {
+  ret void
+}
+
+$ ninja -C build check-llvm
+# runs our new test alongside all other llvm lit tests
+</pre></div>
+</div>
+</section>
+</section>
+<section id="faqs">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">FAQs</a><a class="headerlink" href="#faqs" title="Permalink to this heading">¶</a></h2>
+<section id="required-passes">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Required passes</a><a class="headerlink" href="#required-passes" title="Permalink to this heading">¶</a></h3>
+<p>A pass that defines a static <code class="docutils literal notranslate"><span class="pre">isRequired()</span></code> method that returns true is a required pass. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">HelloWorldPass</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">PassInfoMixin</span><span class="o">&lt;</span><span class="n">HelloWorldPass</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">PreservedAnalyses</span><span class="w"> </span><span class="n">run</span><span class="p">(</span><span class="n">Function</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="n">FunctionAnalysisManager</span><span class="w"> </span><span class="o">&amp;</span><span class="n">AM</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="nf">isRequired</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>A required pass is a pass that may not be skipped. An example of a required
+pass is <code class="docutils literal notranslate"><span class="pre">AlwaysInlinerPass</span></code>, which must always be run to preserve
+<code class="docutils literal notranslate"><span class="pre">alwaysinline</span></code> semantics. Pass managers are required since they may contain
+other required passes.</p>
+<p>An example of how a pass can be skipped is the <code class="docutils literal notranslate"><span class="pre">optnone</span></code> function
+attribute, which specifies that optimizations should not be run on the
+function. Required passes will still be run on <code class="docutils literal notranslate"><span class="pre">optnone</span></code> functions.</p>
+<p>For more implementation details, see
+<code class="docutils literal notranslate"><span class="pre">PassInstrumentation::runBeforePass()</span></code>.</p>
+</section>
+<section id="registering-passes-as-plugins">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Registering passes as plugins</a><a class="headerlink" href="#registering-passes-as-plugins" title="Permalink to this heading">¶</a></h3>
+<p>LLVM provides a mechanism to register pass plugins within various tools like
+<code class="docutils literal notranslate"><span class="pre">clang</span></code> or <code class="docutils literal notranslate"><span class="pre">opt</span></code>. A pass plugin can add passes to default optimization
+pipelines or to be manually run via tools like <code class="docutils literal notranslate"><span class="pre">opt</span></code>.  For more information,
+see <a class="reference internal" href="NewPassManager.html"><span class="doc">Using the New Pass Manager</span></a>.</p>
+<p>Create a CMake project at the root of the repo alongside
+other projects.  This project must contain the following minimal
+<code class="docutils literal notranslate"><span class="pre">CMakeLists.txt</span></code>:</p>
+<div class="highlight-cmake notranslate"><div class="highlight"><pre><span></span><span class="nb">add_llvm_pass_plugin</span><span class="p">(</span><span class="s">MyPassName</span><span class="w"> </span><span class="s">source.cpp</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>See the definition of <code class="docutils literal notranslate"><span class="pre">add_llvm_pass_plugin</span></code> for more CMake details.</p>
+<p>The pass must provide at least one of two entry points for the new pass manager,
+one for static registration and one for dynamically loaded plugins:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">llvm::PassPluginLibraryInfo</span> <span class="pre">get##Name##PluginInfo();</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">extern</span> <span class="pre">&quot;C&quot;</span> <span class="pre">::llvm::PassPluginLibraryInfo</span> <span class="pre">llvmGetPassPluginInfo()</span> <span class="pre">LLVM_ATTRIBUTE_WEAK;</span></code></p></li>
+</ul>
+<p>Pass plugins are compiled and linked dynamically by default. Setting
+<code class="docutils literal notranslate"><span class="pre">LLVM_${NAME}_LINK_INTO_TOOLS</span></code> to <code class="docutils literal notranslate"><span class="pre">ON</span></code> turns the project into a statically
+linked extension.</p>
+<p>For an in-tree example, see <code class="docutils literal notranslate"><span class="pre">llvm/examples/Bye/</span></code>.</p>
+<p>To make <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> aware of statically linked pass plugins:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Declare plugin extension function declarations.</span>
+<span class="cp">#define HANDLE_EXTENSION(Ext) llvm::PassPluginLibraryInfo get##Ext##PluginInfo();</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Extension.def&quot;</span>
+
+<span class="p">...</span>
+
+<span class="c1">// Register plugin extensions in PassBuilder.</span>
+<span class="cp">#define HANDLE_EXTENSION(Ext) get##Ext##PluginInfo().RegisterPassBuilderCallbacks(PB);</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Extension.def&quot;</span>
+</pre></div>
+</div>
+<p>To make <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> aware of dynamically linked pass plugins:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Load plugin dynamically.</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">Plugin</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PassPlugin</span><span class="o">::</span><span class="n">Load</span><span class="p">(</span><span class="n">PathToPlugin</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">Plugin</span><span class="p">)</span>
+<span class="w">  </span><span class="n">report_error</span><span class="p">();</span>
+<span class="c1">// Register plugin extensions in PassBuilder.</span>
+<span class="n">Plugin</span><span class="p">.</span><span class="n">registerPassBuilderCallbacks</span><span class="p">(</span><span class="n">PB</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="WritingAnLLVMBackend.html" title="Writing an LLVM Backend"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="WritingAnLLVMPass.html" title="Writing an LLVM Pass"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Writing an LLVM Pass</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2024, LLVM Project.
+      Last updated on 2024-06-19.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.1.2.
+    </div>
+  </body>
+</html>
