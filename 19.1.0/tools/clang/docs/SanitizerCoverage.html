@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>SanitizerCoverage &#8212; Clang 19.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=39b91ecf"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="SanitizerStats" href="SanitizerStats.html" />
+    <link rel="prev" title="LeakSanitizer" href="LeakSanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 19.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>SanitizerCoverage</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LeakSanitizer.html">LeakSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SanitizerStats.html">SanitizerStats</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="sanitizercoverage">
+<h1>SanitizerCoverage<a class="headerlink" href="#sanitizercoverage" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#tracing-pcs-with-guards" id="id2">Tracing PCs with guards</a></p></li>
+<li><p><a class="reference internal" href="#inline-8bit-counters" id="id3">Inline 8bit-counters</a></p></li>
+<li><p><a class="reference internal" href="#inline-bool-flag" id="id4">Inline bool-flag</a></p></li>
+<li><p><a class="reference internal" href="#pc-table" id="id5">PC-Table</a></p></li>
+<li><p><a class="reference internal" href="#tracing-pcs" id="id6">Tracing PCs</a></p></li>
+<li><p><a class="reference internal" href="#instrumentation-points" id="id7">Instrumentation points</a></p>
+<ul>
+<li><p><a class="reference internal" href="#edge-coverage" id="id8">Edge coverage</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#tracing-data-flow" id="id9">Tracing data flow</a></p></li>
+<li><p><a class="reference internal" href="#tracing-control-flow" id="id10">Tracing control flow</a></p></li>
+<li><p><a class="reference internal" href="#disabling-instrumentation-with-attribute-no-sanitize-coverage" id="id11">Disabling instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#disabling-instrumentation-without-source-modification" id="id12">Disabling instrumentation without source modification</a></p></li>
+<li><p><a class="reference internal" href="#default-implementation" id="id13">Default implementation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#sancov-data-format" id="id14">Sancov data format</a></p></li>
+<li><p><a class="reference internal" href="#sancov-tool" id="id15">Sancov Tool</a></p></li>
+<li><p><a class="reference internal" href="#coverage-reports" id="id16">Coverage Reports</a></p></li>
+<li><p><a class="reference internal" href="#output-directory" id="id17">Output directory</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>LLVM has a simple code coverage instrumentation built in (SanitizerCoverage).
+It inserts calls to user-defined functions on function-, basic-block-, and edge- levels.
+Default implementations of those callbacks are provided and implement
+simple coverage reporting and visualization,
+however if you need <em>just</em> coverage visualization you may want to use
+<a class="reference internal" href="SourceBasedCodeCoverage.html"><span class="doc">SourceBasedCodeCoverage</span></a> instead.</p>
+</section>
+<section id="tracing-pcs-with-guards">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Tracing PCs with guards</a><a class="headerlink" href="#tracing-pcs-with-guards" title="Link to this heading">¶</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-pc-guard</span></code> the compiler will insert the following code
+on every edge:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>__sanitizer_cov_trace_pc_guard(&amp;guard_variable)
+</pre></div>
+</div>
+<p>Every edge will have its own <cite>guard_variable</cite> (uint32_t).</p>
+<p>The compiler will also insert calls to a module constructor:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// The guards are [start, stop).</span>
+<span class="c1">// This function will be called at least once per DSO and may be called</span>
+<span class="c1">// more than once with the same values of start/stop.</span>
+<span class="n">__sanitizer_cov_trace_pc_guard_init</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">start</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">stop</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>With an additional <code class="docutils literal notranslate"><span class="pre">...=trace-pc,indirect-calls</span></code> flag
+<code class="docutils literal notranslate"><span class="pre">__sanitizer_cov_trace_pc_indirect(void</span> <span class="pre">*callee)</span></code> will be inserted on every indirect call.</p>
+<p>The functions <cite>__sanitizer_cov_trace_pc_*</cite> should be defined by the user.</p>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// trace-pc-guard-cb.cc</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdint.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sanitizer/coverage_interface.h&gt;</span>
+
+<span class="c1">// This callback is inserted by the compiler as a module constructor</span>
+<span class="c1">// into every DSO. &#39;start&#39; and &#39;stop&#39; correspond to the</span>
+<span class="c1">// beginning and end of the section with the guards for the entire</span>
+<span class="c1">// binary (executable or DSO). The callback will be called at least</span>
+<span class="c1">// once per DSO and may be called multiple times with the same parameters.</span>
+<span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_cov_trace_pc_guard_init</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">start</span><span class="p">,</span>
+<span class="w">                                                    </span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">stop</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">N</span><span class="p">;</span><span class="w">  </span><span class="c1">// Counter for the guards.</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">start</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">stop</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="o">*</span><span class="n">start</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="p">;</span><span class="w">  </span><span class="c1">// Initialize only once.</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;INIT: %p %p</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">start</span><span class="p">,</span><span class="w"> </span><span class="n">stop</span><span class="p">);</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">start</span><span class="p">;</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">stop</span><span class="p">;</span><span class="w"> </span><span class="n">x</span><span class="o">++</span><span class="p">)</span>
+<span class="w">    </span><span class="o">*</span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">++</span><span class="n">N</span><span class="p">;</span><span class="w">  </span><span class="c1">// Guards should start from 1.</span>
+<span class="p">}</span>
+
+<span class="c1">// This callback is inserted by the compiler on every edge in the</span>
+<span class="c1">// control flow (some optimizations apply).</span>
+<span class="c1">// Typically, the compiler will emit the code like this:</span>
+<span class="c1">//    if(*guard)</span>
+<span class="c1">//      __sanitizer_cov_trace_pc_guard(guard);</span>
+<span class="c1">// But for large functions it will emit a simple call:</span>
+<span class="c1">//    __sanitizer_cov_trace_pc_guard(guard);</span>
+<span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_cov_trace_pc_guard</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">guard</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!*</span><span class="n">guard</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="p">;</span><span class="w">  </span><span class="c1">// Duplicate the guard check.</span>
+<span class="w">  </span><span class="c1">// If you set *guard to 0 this code will not be called again for this edge.</span>
+<span class="w">  </span><span class="c1">// Now you can get the PC and do whatever you want:</span>
+<span class="w">  </span><span class="c1">//   store it somewhere or symbolize it and print right away.</span>
+<span class="w">  </span><span class="c1">// The values of `*guard` are as you set them in</span>
+<span class="w">  </span><span class="c1">// __sanitizer_cov_trace_pc_guard_init and so you can make them consecutive</span>
+<span class="w">  </span><span class="c1">// and use them to dereference an array or a bit vector.</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">PC</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__builtin_return_address</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">PcDescr</span><span class="p">[</span><span class="mi">1024</span><span class="p">];</span>
+<span class="w">  </span><span class="c1">// This function is a part of the sanitizer run-time.</span>
+<span class="w">  </span><span class="c1">// To use it, link with AddressSanitizer or other sanitizer.</span>
+<span class="w">  </span><span class="n">__sanitizer_symbolize_pc</span><span class="p">(</span><span class="n">PC</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;%p %F %L&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">PcDescr</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">PcDescr</span><span class="p">));</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;guard: %p %x PC %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">guard</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">guard</span><span class="p">,</span><span class="w"> </span><span class="n">PcDescr</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// trace-pc-guard-example.cc</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">argv</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">argc</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="n">foo</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang++ -g  -fsanitize-coverage=trace-pc-guard trace-pc-guard-example.cc -c</span>
+<span class="go">clang++ trace-pc-guard-cb.cc trace-pc-guard-example.o -fsanitize=address</span>
+<span class="go">ASAN_OPTIONS=strip_path_prefix=`pwd`/ ./a.out</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">INIT: 0x71bcd0 0x71bce0</span>
+<span class="go">guard: 0x71bcd4 2 PC 0x4ecd5b in main trace-pc-guard-example.cc:2</span>
+<span class="go">guard: 0x71bcd8 3 PC 0x4ecd9e in main trace-pc-guard-example.cc:3:7</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">ASAN_OPTIONS=strip_path_prefix=`pwd`/ ./a.out with-foo</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">INIT: 0x71bcd0 0x71bce0</span>
+<span class="go">guard: 0x71bcd4 2 PC 0x4ecd5b in main trace-pc-guard-example.cc:3</span>
+<span class="go">guard: 0x71bcdc 4 PC 0x4ecdc7 in main trace-pc-guard-example.cc:4:17</span>
+<span class="go">guard: 0x71bcd0 1 PC 0x4ecd20 in foo() trace-pc-guard-example.cc:2:14</span>
+</pre></div>
+</div>
+</section>
+<section id="inline-8bit-counters">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Inline 8bit-counters</a><a class="headerlink" href="#inline-8bit-counters" title="Link to this heading">¶</a></h2>
+<p><strong>Experimental, may change or disappear in future</strong></p>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=inline-8bit-counters</span></code> the compiler will insert
+inline counter increments on every edge.
+This is similar to <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-pc-guard</span></code> but instead of a
+callback the instrumentation simply increments a counter.</p>
+<p>Users need to implement a single function to capture the counters at startup.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_cov_8bit_counters_init</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">start</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">end</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// [start,end) is the array of 8-bit counters created for the current DSO.</span>
+<span class="w">  </span><span class="c1">// Capture this array in order to read/modify the counters.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="inline-bool-flag">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Inline bool-flag</a><a class="headerlink" href="#inline-bool-flag" title="Link to this heading">¶</a></h2>
+<p><strong>Experimental, may change or disappear in future</strong></p>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=inline-bool-flag</span></code> the compiler will insert
+setting an inline boolean to true on every edge.
+This is similar to <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=inline-8bit-counter</span></code> but instead of
+an increment of a counter, it just sets a boolean to true.</p>
+<p>Users need to implement a single function to capture the flags at startup.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_cov_bool_flag_init</span><span class="p">(</span><span class="kt">bool</span><span class="w"> </span><span class="o">*</span><span class="n">start</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="o">*</span><span class="n">end</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// [start,end) is the array of boolean flags created for the current DSO.</span>
+<span class="w">  </span><span class="c1">// Capture this array in order to read/modify the flags.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="pc-table">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">PC-Table</a><a class="headerlink" href="#pc-table" title="Link to this heading">¶</a></h2>
+<p><strong>Experimental, may change or disappear in future</strong></p>
+<p><strong>Note:</strong> this instrumentation might be incompatible with dead code stripping
+(<code class="docutils literal notranslate"><span class="pre">-Wl,-gc-sections</span></code>) for linkers other than LLD, thus resulting in a
+significant binary size overhead. For more information, see
+<a class="reference external" href="https://bugs.llvm.org/show_bug.cgi?id=34636">Bug 34636</a>.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=pc-table</span></code> the compiler will create a table of
+instrumented PCs. Requires either <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=inline-8bit-counters</span></code>,
+or <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=inline-bool-flag</span></code>, or <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-pc-guard</span></code>.</p>
+<p>Users need to implement a single function to capture the PC table at startup:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_cov_pcs_init</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">uintptr_t</span><span class="w"> </span><span class="o">*</span><span class="n">pcs_beg</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="kt">uintptr_t</span><span class="w"> </span><span class="o">*</span><span class="n">pcs_end</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// [pcs_beg,pcs_end) is the array of ptr-sized integers representing</span>
+<span class="w">  </span><span class="c1">// pairs [PC,PCFlags] for every instrumented block in the current DSO.</span>
+<span class="w">  </span><span class="c1">// Capture this array in order to read the PCs and their Flags.</span>
+<span class="w">  </span><span class="c1">// The number of PCs and PCFlags for a given DSO is the same as the number</span>
+<span class="w">  </span><span class="c1">// of 8-bit counters (-fsanitize-coverage=inline-8bit-counters), or</span>
+<span class="w">  </span><span class="c1">// boolean flags (-fsanitize-coverage=inline=bool-flags), or trace_pc_guard</span>
+<span class="w">  </span><span class="c1">// callbacks (-fsanitize-coverage=trace-pc-guard).</span>
+<span class="w">  </span><span class="c1">// A PCFlags describes the basic block:</span>
+<span class="w">  </span><span class="c1">//  * bit0: 1 if the block is the function entry block, 0 otherwise.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="tracing-pcs">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Tracing PCs</a><a class="headerlink" href="#tracing-pcs" title="Link to this heading">¶</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-pc</span></code> the compiler will insert
+<code class="docutils literal notranslate"><span class="pre">__sanitizer_cov_trace_pc()</span></code> on every edge.
+With an additional <code class="docutils literal notranslate"><span class="pre">...=trace-pc,indirect-calls</span></code> flag
+<code class="docutils literal notranslate"><span class="pre">__sanitizer_cov_trace_pc_indirect(void</span> <span class="pre">*callee)</span></code> will be inserted on every indirect call.
+These callbacks are not implemented in the Sanitizer run-time and should be defined
+by the user.
+This mechanism is used for fuzzing the Linux kernel
+(<a class="reference external" href="https://github.com/google/syzkaller">https://github.com/google/syzkaller</a>).</p>
+</section>
+<section id="instrumentation-points">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Instrumentation points</a><a class="headerlink" href="#instrumentation-points" title="Link to this heading">¶</a></h2>
+<p>Sanitizer Coverage offers different levels of instrumentation.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">edge</span></code> (default): edges are instrumented (see below).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bb</span></code>: basic blocks are instrumented.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">func</span></code>: only the entry block of every function will be instrumented.</p></li>
+</ul>
+<p>Use these flags together with <code class="docutils literal notranslate"><span class="pre">trace-pc-guard</span></code> or <code class="docutils literal notranslate"><span class="pre">trace-pc</span></code>,
+like this: <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=func,trace-pc-guard</span></code>.</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">edge</span></code> or <code class="docutils literal notranslate"><span class="pre">bb</span></code> is used, some of the edges/blocks may still be left
+uninstrumented (pruned) if such instrumentation is considered redundant.
+Use <code class="docutils literal notranslate"><span class="pre">no-prune</span></code> (e.g. <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=bb,no-prune,trace-pc-guard</span></code>)
+to disable pruning. This could be useful for better coverage visualization.</p>
+<section id="edge-coverage">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Edge coverage</a><a class="headerlink" href="#edge-coverage" title="Link to this heading">¶</a></h3>
+<p>Consider this code:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="w">    </span><span class="o">*</span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>It contains 3 basic blocks, let’s name them A, B, C:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>A
+|\
+| \
+|  B
+| /
+|/
+C
+</pre></div>
+</div>
+<p>If blocks A, B, and C are all covered we know for certain that the edges A=&gt;B
+and B=&gt;C were executed, but we still don’t know if the edge A=&gt;C was executed.
+Such edges of control flow graph are called
+<a class="reference external" href="https://en.wikipedia.org/wiki/Control_flow_graph#Special_edges">critical</a>.
+The edge-level coverage simply splits all critical edges by introducing new
+dummy blocks and then instruments those blocks:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>A
+|\
+| \
+D  B
+| /
+|/
+C
+</pre></div>
+</div>
+</section>
+</section>
+<section id="tracing-data-flow">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Tracing data flow</a><a class="headerlink" href="#tracing-data-flow" title="Link to this heading">¶</a></h2>
+<p>Support for data-flow-guided fuzzing.
+With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-cmp</span></code> the compiler will insert extra instrumentation
+around comparison instructions and switch statements.
+Similarly, with <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-div</span></code> the compiler will instrument
+integer division instructions (to capture the right argument of division)
+and with  <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-gep</span></code> –
+the <a class="reference external" href="https://llvm.org/docs/GetElementPtr.html">LLVM GEP instructions</a>
+(to capture array indices).
+Similarly, with <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-loads</span></code> and <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=trace-stores</span></code>
+the compiler will instrument loads and stores, respectively.</p>
+<p>Currently, these flags do not work by themselves - they require one
+of <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage={trace-pc,inline-8bit-counters,inline-bool}</span></code>
+flags to work.</p>
+<p>Unless <code class="docutils literal notranslate"><span class="pre">no-prune</span></code> option is provided, some of the comparison instructions
+will not be instrumented.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Called before a comparison instruction.</span>
+<span class="c1">// Arg1 and Arg2 are arguments of the comparison.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_cmp1</span><span class="p">(</span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_cmp2</span><span class="p">(</span><span class="kt">uint16_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint16_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_cmp4</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_cmp8</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+
+<span class="c1">// Called before a comparison instruction if exactly one of the arguments is constant.</span>
+<span class="c1">// Arg1 and Arg2 are arguments of the comparison, Arg1 is a compile-time constant.</span>
+<span class="c1">// These callbacks are emitted by -fsanitize-coverage=trace-cmp since 2017-08-11</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_const_cmp1</span><span class="p">(</span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint8_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_const_cmp2</span><span class="p">(</span><span class="kt">uint16_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint16_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_const_cmp4</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_const_cmp8</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">Arg1</span><span class="p">,</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">Arg2</span><span class="p">);</span>
+
+<span class="c1">// Called before a switch statement.</span>
+<span class="c1">// Val is the switch operand.</span>
+<span class="c1">// Cases[0] is the number of case constants.</span>
+<span class="c1">// Cases[1] is the size of Val in bits.</span>
+<span class="c1">// Cases[2:] are the case constants.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_switch</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">Val</span><span class="p">,</span><span class="w"> </span><span class="kt">uint64_t</span><span class="w"> </span><span class="o">*</span><span class="n">Cases</span><span class="p">);</span>
+
+<span class="c1">// Called before a division statement.</span>
+<span class="c1">// Val is the second argument of division.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_div4</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="n">Val</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_div8</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">Val</span><span class="p">);</span>
+
+<span class="c1">// Called before a GetElemementPtr (GEP) instruction</span>
+<span class="c1">// for every non-constant array index.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_trace_gep</span><span class="p">(</span><span class="kt">uintptr_t</span><span class="w"> </span><span class="n">Idx</span><span class="p">);</span>
+
+<span class="c1">// Called before a load of appropriate size. Addr is the address of the load.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_load1</span><span class="p">(</span><span class="kt">uint8_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_load2</span><span class="p">(</span><span class="kt">uint16_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_load4</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_load8</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_load16</span><span class="p">(</span><span class="kt">__int128</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="c1">// Called before a store of appropriate size. Addr is the address of the store.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_store1</span><span class="p">(</span><span class="kt">uint8_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_store2</span><span class="p">(</span><span class="kt">uint16_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_store4</span><span class="p">(</span><span class="kt">uint32_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_store8</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">__sanitizer_cov_store16</span><span class="p">(</span><span class="kt">__int128</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="tracing-control-flow">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Tracing control flow</a><a class="headerlink" href="#tracing-control-flow" title="Link to this heading">¶</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage=control-flow</span></code> the compiler will create a table to collect
+control flow for each function. More specifically, for each basic block in the function,
+two lists are populated. One list for successors of the basic block and another list for
+non-intrinsic called functions.</p>
+<p><strong>TODO:</strong> in the current implementation, indirect calls are not tracked
+and are only marked with special value (-1) in the list.</p>
+<p>Each table row consists of the basic block address
+followed by <code class="docutils literal notranslate"><span class="pre">null</span></code>-ended lists of successors and callees.
+The table is encoded in a special section named <code class="docutils literal notranslate"><span class="pre">sancov_cfs</span></code></p>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">x</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">    </span><span class="n">bar</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+<span class="w">  </span><span class="k">else</span>
+<span class="w">    </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The code above contains 4 basic blocks, let’s name them A, B, C, D:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>A
+|\
+| \
+B  C
+| /
+|/
+D
+</pre></div>
+</div>
+<p>The collected control flow table is as follows:
+<code class="docutils literal notranslate"><span class="pre">A,</span> <span class="pre">B,</span> <span class="pre">C,</span> <span class="pre">null,</span> <span class="pre">null,</span> <span class="pre">B,</span> <span class="pre">D,</span> <span class="pre">null,</span> <span class="pre">&#64;bar,</span> <span class="pre">null,</span> <span class="pre">C,</span> <span class="pre">D,</span> <span class="pre">null,</span> <span class="pre">null,</span> <span class="pre">D,</span> <span class="pre">null,</span> <span class="pre">null.</span></code></p>
+<p>Users need to implement a single function to capture the CF table at startup:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_cov_cfs_init</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">uintptr_t</span><span class="w"> </span><span class="o">*</span><span class="n">cfs_beg</span><span class="p">,</span>
+<span class="w">                              </span><span class="k">const</span><span class="w"> </span><span class="kt">uintptr_t</span><span class="w"> </span><span class="o">*</span><span class="n">cfs_end</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// [cfs_beg,cfs_end) is the array of ptr-sized integers representing</span>
+<span class="w">  </span><span class="c1">// the collected control flow.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="disabling-instrumentation-with-attribute-no-sanitize-coverage">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Disabling instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code></a><a class="headerlink" href="#disabling-instrumentation-with-attribute-no-sanitize-coverage" title="Link to this heading">¶</a></h2>
+<p>It is possible to disable coverage instrumentation for select functions via the
+function attribute <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;coverage&quot;)))</span></code>. Because this
+attribute may not be supported by other compilers, it is recommended to use it
+together with <code class="docutils literal notranslate"><span class="pre">__has_feature(coverage_sanitizer)</span></code>.</p>
+</section>
+<section id="disabling-instrumentation-without-source-modification">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Disabling instrumentation without source modification</a><a class="headerlink" href="#disabling-instrumentation-without-source-modification" title="Link to this heading">¶</a></h2>
+<p>It is sometimes useful to tell SanitizerCoverage to instrument only a subset of the
+functions in your target without modifying source files.
+With <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage-allowlist=allowlist.txt</span></code>
+and <code class="docutils literal notranslate"><span class="pre">-fsanitize-coverage-ignorelist=blocklist.txt</span></code>,
+you can specify such a subset through the combination of an allowlist and a blocklist.</p>
+<p>SanitizerCoverage will only instrument functions that satisfy two conditions.
+First, the function should belong to a source file with a path that is both allowlisted
+and not blocklisted.
+Second, the function should have a mangled name that is both allowlisted and not blocklisted.</p>
+<p>The allowlist and blocklist format is similar to that of the sanitizer blocklist format.
+The default allowlist will match every source file and every function.
+The default blocklist will match no source file and no function.</p>
+<p>A common use case is to have the allowlist list folders or source files for which you want
+instrumentation and allow all function names, while the blocklist will opt out some specific
+files or functions that the allowlist loosely allowed.</p>
+<p>Here is an example allowlist:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># Enable instrumentation for a whole folder
+src:bar/*
+# Enable instrumentation for a specific source file
+src:foo/a.cpp
+# Enable instrumentation for all functions in those files
+fun:*
+</pre></div>
+</div>
+<p>And an example blocklist:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># Disable instrumentation for a specific source file that the allowlist allowed
+src:bar/b.cpp
+# Disable instrumentation for a specific function that the allowlist allowed
+fun:*myFunc*
+</pre></div>
+</div>
+<p>The use of <code class="docutils literal notranslate"><span class="pre">*</span></code> wildcards above is required because function names are matched after mangling.
+Without the wildcards, one would have to write the whole mangled name.</p>
+<p>Be careful that the paths of source files are matched exactly as they are provided on the clang
+command line.
+For example, the allowlist above would include file <code class="docutils literal notranslate"><span class="pre">bar/b.cpp</span></code> if the path was provided
+exactly like this, but would it would fail to include it with other ways to refer to the same
+file such as <code class="docutils literal notranslate"><span class="pre">./bar/b.cpp</span></code>, or <code class="docutils literal notranslate"><span class="pre">bar\b.cpp</span></code> on Windows.
+So, please make sure to always double check that your lists are correctly applied.</p>
+</section>
+<section id="default-implementation">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Default implementation</a><a class="headerlink" href="#default-implementation" title="Link to this heading">¶</a></h2>
+<p>The sanitizer run-time (AddressSanitizer, MemorySanitizer, etc) provide a
+default implementations of some of the coverage callbacks.
+You may use this implementation to dump the coverage on disk at the process
+exit.</p>
+<p>Example:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>cat<span class="w"> </span>-n<span class="w"> </span>cov.cc
+<span class="go">     1  #include &lt;stdio.h&gt;</span>
+<span class="go">     2  __attribute__((noinline))</span>
+<span class="go">     3  void foo() { printf(&quot;foo\n&quot;); }</span>
+<span class="go">     4</span>
+<span class="go">     5  int main(int argc, char **argv) {</span>
+<span class="go">     6    if (argc == 2)</span>
+<span class="go">     7      foo();</span>
+<span class="go">     8    printf(&quot;main\n&quot;);</span>
+<span class="go">     9  }</span>
+<span class="gp">% </span>clang++<span class="w"> </span>-g<span class="w"> </span>cov.cc<span class="w"> </span>-fsanitize<span class="o">=</span>address<span class="w"> </span>-fsanitize-coverage<span class="o">=</span>trace-pc-guard
+<span class="gp">% </span><span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="nv">coverage</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./a.out<span class="p">;</span><span class="w"> </span>wc<span class="w"> </span>-c<span class="w"> </span>*.sancov
+<span class="go">main</span>
+<span class="go">SanitizerCoverage: ./a.out.7312.sancov 2 PCs written</span>
+<span class="go">24 a.out.7312.sancov</span>
+<span class="gp">% </span><span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="nv">coverage</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./a.out<span class="w"> </span>foo<span class="w"> </span><span class="p">;</span><span class="w"> </span>wc<span class="w"> </span>-c<span class="w"> </span>*.sancov
+<span class="go">foo</span>
+<span class="go">main</span>
+<span class="go">SanitizerCoverage: ./a.out.7316.sancov 3 PCs written</span>
+<span class="go">24 a.out.7312.sancov</span>
+<span class="go">32 a.out.7316.sancov</span>
+</pre></div>
+</div>
+<p>Every time you run an executable instrumented with SanitizerCoverage
+one <code class="docutils literal notranslate"><span class="pre">*.sancov</span></code> file is created during the process shutdown.
+If the executable is dynamically linked against instrumented DSOs,
+one <code class="docutils literal notranslate"><span class="pre">*.sancov</span></code> file will be also created for every DSO.</p>
+<section id="sancov-data-format">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Sancov data format</a><a class="headerlink" href="#sancov-data-format" title="Link to this heading">¶</a></h3>
+<p>The format of <code class="docutils literal notranslate"><span class="pre">*.sancov</span></code> files is very simple: the first 8 bytes is the magic,
+one of <code class="docutils literal notranslate"><span class="pre">0xC0BFFFFFFFFFFF64</span></code> and <code class="docutils literal notranslate"><span class="pre">0xC0BFFFFFFFFFFF32</span></code>. The last byte of the
+magic defines the size of the following offsets. The rest of the data is the
+offsets in the corresponding binary/DSO that were executed during the run.</p>
+</section>
+<section id="sancov-tool">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Sancov Tool</a><a class="headerlink" href="#sancov-tool" title="Link to this heading">¶</a></h3>
+<p>A simple <code class="docutils literal notranslate"><span class="pre">sancov</span></code> tool is provided to process coverage files.
+The tool is part of LLVM project and is currently supported only on Linux.
+It can handle symbolization tasks autonomously without any extra support
+from the environment. You need to pass .sancov files (named
+<code class="docutils literal notranslate"><span class="pre">&lt;module_name&gt;.&lt;pid&gt;.sancov</span></code> and paths to all corresponding binary elf files.
+Sancov matches these files using module names and binaries file names.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">USAGE: sancov [options] &lt;action&gt; (&lt;binary file&gt;|&lt;.sancov file&gt;)...</span>
+
+<span class="go">Action (required)</span>
+<span class="go">  -print                    - Print coverage addresses</span>
+<span class="go">  -covered-functions        - Print all covered functions.</span>
+<span class="go">  -not-covered-functions    - Print all not covered functions.</span>
+<span class="go">  -symbolize                - Symbolizes the report.</span>
+
+<span class="go">Options</span>
+<span class="go">  -blocklist=&lt;string&gt;         - Blocklist file (sanitizer blocklist format).</span>
+<span class="go">  -demangle                   - Print demangled function name.</span>
+<span class="go">  -strip_path_prefix=&lt;string&gt; - Strip this prefix from file paths in reports</span>
+</pre></div>
+</div>
+</section>
+<section id="coverage-reports">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Coverage Reports</a><a class="headerlink" href="#coverage-reports" title="Link to this heading">¶</a></h3>
+<p><strong>Experimental</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">.sancov</span></code> files do not contain enough information to generate a source-level
+coverage report. The missing information is contained
+in debug info of the binary. Thus the <code class="docutils literal notranslate"><span class="pre">.sancov</span></code> has to be symbolized
+to produce a <code class="docutils literal notranslate"><span class="pre">.symcov</span></code> file first:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">sancov -symbolize my_program.123.sancov my_program &gt; my_program.123.symcov</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">.symcov</span></code> file can be browsed overlaid over the source code by
+running <code class="docutils literal notranslate"><span class="pre">tools/sancov/coverage-report-server.py</span></code> script that will start
+an HTTP server.</p>
+</section>
+<section id="output-directory">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Output directory</a><a class="headerlink" href="#output-directory" title="Link to this heading">¶</a></h3>
+<p>By default, .sancov files are created in the current working directory.
+This can be changed with <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=coverage_dir=/path</span></code>:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span><span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="s2">&quot;coverage=1:coverage_dir=/tmp/cov&quot;</span><span class="w"> </span>./a.out<span class="w"> </span>foo
+<span class="gp">% </span>ls<span class="w"> </span>-l<span class="w"> </span>/tmp/cov/*sancov
+<span class="go">-rw-r----- 1 kcc eng 4 Nov 27 12:21 a.out.22673.sancov</span>
+<span class="go">-rw-r----- 1 kcc eng 8 Nov 27 12:21 a.out.22679.sancov</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LeakSanitizer.html">LeakSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SanitizerStats.html">SanitizerStats</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

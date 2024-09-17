@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - modernize-use-std-print &#8212; Extra Clang Tools 19.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=39b91ecf"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="modernize-use-trailing-return-type" href="use-trailing-return-type.html" />
+    <link rel="prev" title="modernize-use-std-numbers" href="use-std-numbers.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 19.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - modernize-use-std-print</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="use-std-numbers.html">modernize-use-std-numbers</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="use-trailing-return-type.html">modernize-use-trailing-return-type</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="modernize-use-std-print">
+<h1>modernize-use-std-print<a class="headerlink" href="#modernize-use-std-print" title="Link to this heading">¶</a></h1>
+<p>Converts calls to <code class="docutils literal notranslate"><span class="pre">printf</span></code>, <code class="docutils literal notranslate"><span class="pre">fprintf</span></code>, <code class="docutils literal notranslate"><span class="pre">absl::PrintF</span></code> and
+<code class="docutils literal notranslate"><span class="pre">absl::FPrintf</span></code> to equivalent calls to C++23’s <code class="docutils literal notranslate"><span class="pre">std::print</span></code> or
+<code class="docutils literal notranslate"><span class="pre">std::println</span></code> as appropriate, modifying the format string appropriately.
+The replaced and replacement functions can be customised by configuration
+options. Each argument that is the result of a call to <code class="docutils literal notranslate"><span class="pre">std::string::c_str()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">std::string::data()</span></code> will have that now-unnecessary call removed in a
+similar manner to the <cite>readability-redundant-string-cstr</cite> check.</p>
+<p>In other words, it turns lines like:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;The %s is %3d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">description</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span><span class="n">value</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>into:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">println</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;The {} is {:3}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">description</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>If the <cite>ReplacementPrintFunction</cite> or <cite>ReplacementPrintlnFunction</cite> options
+are left, or assigned to their default values then this check is only
+enabled with <cite>-std=c++23</cite> or later.</p>
+<p>The check doesn’t do a bad job, but it’s not perfect. In particular:</p>
+<ul class="simple">
+<li><p>It assumes that the format string is correct for the arguments. If you
+get any warnings when compiling with <cite>-Wformat</cite> then misbehaviour is
+possible.</p></li>
+<li><p>At the point that the check runs, the AST contains a single
+<code class="docutils literal notranslate"><span class="pre">StringLiteral</span></code> for the format string and any macro expansion, token
+pasting, adjacent string literal concatenation and escaping has been
+handled. Although it’s possible for the check to automatically put the
+escapes back, they may not be exactly as they were written (e.g.
+<code class="docutils literal notranslate"><span class="pre">&quot;\x0a&quot;</span></code> will become <code class="docutils literal notranslate"><span class="pre">&quot;\n&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;ab&quot;</span> <span class="pre">&quot;cd&quot;</span></code> will become
+<code class="docutils literal notranslate"><span class="pre">&quot;abcd&quot;</span></code>.) This is helpful since it means that the <code class="docutils literal notranslate"><span class="pre">PRIx</span></code> macros from
+<code class="docutils literal notranslate"><span class="pre">&lt;inttypes.h&gt;</span></code> are removed correctly.</p></li>
+<li><p>It supports field widths, precision, positional arguments, leading zeros,
+leading <code class="docutils literal notranslate"><span class="pre">+</span></code>, alignment and alternative forms.</p></li>
+<li><p>Use of any unsupported flags or specifiers will cause the entire
+statement to be left alone and a warning to be emitted. Particular
+unsupported features are:</p>
+<ul>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">%'</span></code> flag for thousands separators.</p></li>
+<li><p>The glibc extension <code class="docutils literal notranslate"><span class="pre">%m</span></code>.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">printf</span></code> and similar functions return the number of characters printed.
+<code class="docutils literal notranslate"><span class="pre">std::print</span></code> does not. This means that any invocations that use the
+return value will not be converted. Unfortunately this currently includes
+explicitly-casting to <code class="docutils literal notranslate"><span class="pre">void</span></code>. Deficiencies in this check mean that any
+invocations inside <code class="docutils literal notranslate"><span class="pre">GCC</span></code> compound statements cannot be converted even
+if the resulting value is not used.</p></li>
+</ul>
+<p>If conversion would be incomplete or unsafe then the entire invocation will
+be left unchanged.</p>
+<p>If the call is deemed suitable for conversion then:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">printf</span></code>, <code class="docutils literal notranslate"><span class="pre">fprintf</span></code>, <code class="docutils literal notranslate"><span class="pre">absl::PrintF</span></code>, <code class="docutils literal notranslate"><span class="pre">absl::FPrintF</span></code> and any
+functions specified by the <cite>PrintfLikeFunctions</cite> option or
+<cite>FprintfLikeFunctions</cite> are replaced with the function specified by the
+<cite>ReplacementPrintlnFunction</cite> option if the format string ends with <code class="docutils literal notranslate"><span class="pre">\n</span></code>
+or <cite>ReplacementPrintFunction</cite> otherwise.</p></li>
+<li><p>the format string is rewritten to use the <code class="docutils literal notranslate"><span class="pre">std::formatter</span></code> language. If
+a <code class="docutils literal notranslate"><span class="pre">\n</span></code> is found at the end of the format string not preceded by <code class="docutils literal notranslate"><span class="pre">r</span></code>
+then it is removed and <cite>ReplacementPrintlnFunction</cite> is used rather than
+<cite>ReplacementPrintFunction</cite>.</p></li>
+<li><p>any arguments that corresponded to <code class="docutils literal notranslate"><span class="pre">%p</span></code> specifiers that
+<code class="docutils literal notranslate"><span class="pre">std::formatter</span></code> wouldn’t accept are wrapped in a <code class="docutils literal notranslate"><span class="pre">static_cast</span></code>
+to <code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">void</span> <span class="pre">*</span></code>.</p></li>
+<li><p>any arguments that corresponded to <code class="docutils literal notranslate"><span class="pre">%s</span></code> specifiers where the argument
+is of <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code> or <code class="docutils literal notranslate"><span class="pre">unsigned</span> <span class="pre">char</span></code> type are wrapped in a
+<code class="docutils literal notranslate"><span class="pre">reinterpret_cast&lt;const</span> <span class="pre">char</span> <span class="pre">*&gt;</span></code>.</p></li>
+<li><p>any arguments where the format string and the parameter differ in
+signedness will be wrapped in an appropriate <code class="docutils literal notranslate"><span class="pre">static_cast</span></code> if <cite>StrictMode</cite>
+is enabled.</p></li>
+<li><p>any arguments that end in a call to <code class="docutils literal notranslate"><span class="pre">std::string::c_str()</span></code> or
+<code class="docutils literal notranslate"><span class="pre">std::string::data()</span></code> will have that call removed.</p></li>
+</ul>
+<section id="options">
+<h2>Options<a class="headerlink" href="#options" title="Link to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-StrictMode">
+<span class="sig-name descname"><span class="pre">StrictMode</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-StrictMode" title="Link to this definition">¶</a></dt>
+<dd><blockquote>
+<div><p>When <cite>true</cite>, the check will add casts when converting from variadic
+functions like <code class="docutils literal notranslate"><span class="pre">printf</span></code> and printing signed or unsigned integer types
+(including fixed-width integer types from <code class="docutils literal notranslate"><span class="pre">&lt;cstdint&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">ptrdiff_t</span></code>,
+<code class="docutils literal notranslate"><span class="pre">size_t</span></code> and <code class="docutils literal notranslate"><span class="pre">ssize_t</span></code>) as the opposite signedness to ensure that
+the output matches that of <code class="docutils literal notranslate"><span class="pre">printf</span></code>. This does not apply when
+converting from non-variadic functions such as <code class="docutils literal notranslate"><span class="pre">absl::PrintF</span></code> and
+<code class="docutils literal notranslate"><span class="pre">fmt::printf</span></code>. For example, with <cite>StrictMode</cite> enabled:</p>
+</div></blockquote>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">-42</span><span class="p">;</span>
+<span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">u</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0xffffffff</span><span class="p">;</span>
+<span class="n">printf</span><span class="p">(</span><span class="s">&quot;%d %u</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">u</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>would be converted to:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">print</span><span class="p">(</span><span class="s">&quot;{} {}</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">i</span><span class="p">),</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">u</span><span class="p">));</span>
+</pre></div>
+</div>
+<p>to ensure that the output will continue to be the unsigned representation
+of <cite>-42</cite> and the signed representation of <cite>0xffffffff</cite> (often
+<cite>4294967254</cite> and <cite>-1</cite> respectively.) When <cite>false</cite> (which is the default),
+these casts will not be added which may cause a change in the output.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-PrintfLikeFunctions">
+<span class="sig-name descname"><span class="pre">PrintfLikeFunctions</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-PrintfLikeFunctions" title="Link to this definition">¶</a></dt>
+<dd><p>A semicolon-separated list of (fully qualified) function names to
+replace, with the requirement that the first parameter contains the
+printf-style format string and the arguments to be formatted follow
+immediately afterwards. If neither this option nor
+<cite>FprintfLikeFunctions</cite> are set then the default value for this option
+is <cite>printf; absl::PrintF</cite>, otherwise it is empty.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-FprintfLikeFunctions">
+<span class="sig-name descname"><span class="pre">FprintfLikeFunctions</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-FprintfLikeFunctions" title="Link to this definition">¶</a></dt>
+<dd><p>A semicolon-separated list of (fully qualified) function names to
+replace, with the requirement that the first parameter is retained, the
+second parameter contains the printf-style format string and the
+arguments to be formatted follow immediately afterwards. If neither this
+option nor <cite>PrintfLikeFunctions</cite> are set then the default value for
+this option is <cite>fprintf; absl::FPrintF</cite>, otherwise it is empty.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ReplacementPrintFunction">
+<span class="sig-name descname"><span class="pre">ReplacementPrintFunction</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-ReplacementPrintFunction" title="Link to this definition">¶</a></dt>
+<dd><p>The function that will be used to replace <code class="docutils literal notranslate"><span class="pre">printf</span></code>, <code class="docutils literal notranslate"><span class="pre">fprintf</span></code> etc.
+during conversion rather than the default <code class="docutils literal notranslate"><span class="pre">std::print</span></code> when the
+originalformat string does not end with <code class="docutils literal notranslate"><span class="pre">\n</span></code>. It is expected that the
+function provides an interface that is compatible with <code class="docutils literal notranslate"><span class="pre">std::print</span></code>. A
+suitable candidate would be <code class="docutils literal notranslate"><span class="pre">fmt::print</span></code>.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ReplacementPrintlnFunction">
+<span class="sig-name descname"><span class="pre">ReplacementPrintlnFunction</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-ReplacementPrintlnFunction" title="Link to this definition">¶</a></dt>
+<dd><p>The function that will be used to replace <code class="docutils literal notranslate"><span class="pre">printf</span></code>, <code class="docutils literal notranslate"><span class="pre">fprintf</span></code> etc.
+during conversion rather than the default <code class="docutils literal notranslate"><span class="pre">std::println</span></code> when the
+original format string ends with <code class="docutils literal notranslate"><span class="pre">\n</span></code>. It is expected that the
+function provides an interface that is compatible with <code class="docutils literal notranslate"><span class="pre">std::println</span></code>.
+A suitable candidate would be <code class="docutils literal notranslate"><span class="pre">fmt::println</span></code>.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-PrintHeader">
+<span class="sig-name descname"><span class="pre">PrintHeader</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-PrintHeader" title="Link to this definition">¶</a></dt>
+<dd><p>The header that must be included for the declaration of
+<cite>ReplacementPrintFunction</cite> so that a <code class="docutils literal notranslate"><span class="pre">#include</span></code> directive can be
+added if required. If <cite>ReplacementPrintFunction</cite> is <code class="docutils literal notranslate"><span class="pre">std::print</span></code>
+then this option will default to <code class="docutils literal notranslate"><span class="pre">&lt;print&gt;</span></code>, otherwise this option will
+default to nothing and no <code class="docutils literal notranslate"><span class="pre">#include</span></code> directive will be added.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="use-std-numbers.html">modernize-use-std-numbers</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="use-trailing-return-type.html">modernize-use-trailing-return-type</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2024, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

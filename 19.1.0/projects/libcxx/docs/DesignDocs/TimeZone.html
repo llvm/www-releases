@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Time Zone Support &#8212; libc++  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css?v=e491ac2d" />
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="prev" title="Symbol Visibility Macros" href="VisibilityMacros.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../index.html">
+          <span>libc++  documentation</span></a></h1>
+        <h2 class="heading"><span>Time Zone Support</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="VisibilityMacros.html">Symbol Visibility Macros</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="time-zone-support">
+<h1>Time Zone Support<a class="headerlink" href="#time-zone-support" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Starting with C++20 the <code class="docutils literal notranslate"><span class="pre">&lt;chrono&gt;</span></code> library has support for time zones.
+These are available in the
+<a class="reference external" href="https://data.iana.org/time-zones/tz-link.html">IANA Time Zone Database</a>.
+This page describes the design decisions and trade-offs made to implement this
+feature. This page contains several links with more information regarding the
+contents of the IANA database, this page assumes the reader is familiar with
+this information.</p>
+</section>
+<section id="which-version-of-the-time-zone-database-to-use">
+<h2>Which version of the Time Zone Database to use<a class="headerlink" href="#which-version-of-the-time-zone-database-to-use" title="Link to this heading">¶</a></h2>
+<p>The data of the database is available on several platforms in different forms:</p>
+<ul class="simple">
+<li><p>Typically Unix systems ship the database as
+<a class="reference external" href="https://www.rfc-editor.org/rfc/rfc8536.html">TZif files</a>. This format has
+3 versions and the <code class="docutils literal notranslate"><span class="pre">time_zone_link</span></code> information is not always available.
+If available, they are symlinks in the file system.
+These files don’t provide the database version information. This information
+is needed for the functions <code class="docutils literal notranslate"><span class="pre">std::chrono::</span> <span class="pre">remote_version()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">std::chrono::reload_tzdb()</span></code>.</p></li>
+<li><p>On several Unix systems the time zone source files are available. These files
+are stored in several regions, mainly the continents. This file contains a
+large amount of comment with historical information regarding time zones.
+The format is documented in the
+<a class="reference external" href="https://data.iana.org/time-zones/tz-how-to.html">IANA documentation</a>
+and in the <a class="reference external" href="https://man7.org/linux/man-pages/man8/zic.8.html">man page</a> of zic.
+The disadvantage of this version is that at least Linux versions don’t have
+the database version information. This information is needed for the functions
+<code class="docutils literal notranslate"><span class="pre">std::chrono::</span> <span class="pre">remote_version()</span></code> and <code class="docutils literal notranslate"><span class="pre">std::chrono::reload_tzdb()</span></code>.</p></li>
+<li><p>On Linux systems <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code> is available. This contains the same
+information as the source files but in one file without the comments. This
+file uses the same format as the sources, but shortens the names. For example
+<code class="docutils literal notranslate"><span class="pre">Rule</span></code> is abbreviated to <code class="docutils literal notranslate"><span class="pre">R</span></code>. This file contains the database version
+information.</p></li>
+</ul>
+<p>The disadvantage of the <code class="docutils literal notranslate"><span class="pre">TZif</span></code> format (which is a binary format) is that it’s
+not possible to get the proper <code class="docutils literal notranslate"><span class="pre">time_zone_link</span></code> information on all platforms.
+The time zone database version number is also missing from <code class="docutils literal notranslate"><span class="pre">TZif</span></code> files.
+Since the time zone database is supposed to contain both these informations,
+<code class="docutils literal notranslate"><span class="pre">TZif</span></code> files can’t be used to create a conforming implementation.</p>
+<p>Since it’s easier to parse one file than a set of files we decided
+to use the <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code>. The other benefit is that the <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code> file
+contains the database version information needed for a conforming
+implementation.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code> file is not available on all platforms as of August 2023, so
+some vendors will need to make changes to their platform. Most vendors already
+ship the database, so they only need to adjust the packaging of their time zone
+package to include the files we require. One notable exception is Windows,
+where no IANA time zone database is provided at all. However it’s possible for
+Windows packagers to add these files to their libc++ packages. The IANA
+databases can be
+<a class="reference external" href="https://data.iana.org/time-zones/releases/">downloaded</a>.</p>
+<p>An alternative would be to ship the database with libc++, either as a file or
+compiled in the dylib. The text file is about 112 KB. For now libc++ will not
+ship this file. If it’s hard to get vendors to ship these files we can
+reconsider based on that information.</p>
+<section id="leap-seconds">
+<h3>Leap seconds<a class="headerlink" href="#leap-seconds" title="Link to this heading">¶</a></h3>
+<p>For the leap seconds libc++ will use the source file <code class="docutils literal notranslate"><span class="pre">leap-seconds.list</span></code>.
+This file is easier to parse than the <code class="docutils literal notranslate"><span class="pre">leapseconds</span></code> file. Both files are
+present on Linux, but not always on other platforms. Since these platforms need
+to change their packaging for <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code>, adding two instead of one files
+seems a small change.</p>
+</section>
+</section>
+<section id="updating-the-time-zone-database">
+<h2>Updating the Time Zone Database<a class="headerlink" href="#updating-the-time-zone-database" title="Link to this heading">¶</a></h2>
+<p>Per <a class="reference external" href="http://eel.is/c++draft/time.zone#db.remote-1">[time.zone.db.remote]/1</a></p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>The local time zone database is that supplied by the implementation when the
+program first accesses the database, for example via current_zone(). While the
+program is running, the implementation may choose to update the time zone
+database. This update shall not impact the program in any way unless the
+program calls the functions in this subclause. This potentially updated time
+zone database is referred to as the remote time zone database.
+</pre></div>
+</div>
+<p>There is an update mechanism in libc++, however this is not done automatically.
+Invoking the function <code class="docutils literal notranslate"><span class="pre">std::chrono::remote_version()</span></code> will parse the version
+information of the <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code> file and return that information. Similarly,
+<code class="docutils literal notranslate"><span class="pre">std::chrono::reload_tzdb()</span></code> will parse the <code class="docutils literal notranslate"><span class="pre">tzdata.zi</span></code> and
+<code class="docutils literal notranslate"><span class="pre">leap-seconds.list</span></code> again. This makes it possible to update the database if
+needed by the application and gives the user full power over the update policy.</p>
+<p>This approach has several advantages:</p>
+<ul class="simple">
+<li><p>It is simple to implement.</p></li>
+<li><p>The library does not need to start a periodic background process to poll
+changes to the filesystem. When using a background process, it may become
+active when the application is busy with its core task, taking away resources
+from that task.</p></li>
+<li><p>If there is no threading available this polling
+becomes more involved. For example, query the file every <em>x</em> calls to
+<code class="docutils literal notranslate"><span class="pre">std::chrono::get_tzdb()</span></code>. This mean calls to <code class="docutils literal notranslate"><span class="pre">std::chrono::get_tzdb()</span></code>
+would have different performance characteristics.</p></li>
+</ul>
+<p>The small drawback is:</p>
+<ul class="simple">
+<li><p>On platforms with threading enabled updating the database may take longer.
+On these platforms the remote database could have been loaded in a background
+process.</p></li>
+</ul>
+<p>Another issue with the automatic update is that it may not be considered
+Standard compliant, since the Standard uses the wording “This update shall not
+impact the program in any way”. Using resources could be considered as
+impacting the program.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="VisibilityMacros.html">Symbol Visibility Macros</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2024, LLVM Project.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

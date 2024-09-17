@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Trampolines for pointers to internal procedures. &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1f6d8cfa"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="A categorization of standard (2018) and extended Fortran intrinsic procedures" href="Intrinsics.html" />
+    <link rel="prev" title="Fortran I/O Runtime Library Internal Design" href="IORuntimeInternals.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Trampolines for pointers to internal procedures.</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="IORuntimeInternals.html">Fortran I/O Runtime Library Internal Design</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Intrinsics.html">A categorization of standard (2018) and extended Fortran intrinsic procedures</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/InternalProcedureTrampolines.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="trampolines-for-pointers-to-internal-procedures">
+<h1>Trampolines for pointers to internal procedures.<a class="headerlink" href="#trampolines-for-pointers-to-internal-procedures" title="Link to this heading">¶</a></h1>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">host</span><span class="p">()</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="n">local</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">  </span><span class="k">call </span><span class="n">internal</span><span class="p">()</span>
+<span class="w">  </span><span class="k">return</span>
+
+<span class="k">  contains</span>
+<span class="k">  subroutine </span><span class="n">internal</span><span class="p">()</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">internal</span>
+<span class="k">end subroutine </span><span class="n">host</span>
+</pre></div>
+</div>
+<p>Procedure code generated for subprogram <code class="docutils literal notranslate"><span class="pre">internal()</span></code> must have access to the scope of
+its host procedure, e.g. to access <code class="docutils literal notranslate"><span class="pre">local</span></code> variable. Flang achieves this by passing
+an extra argument to <code class="docutils literal notranslate"><span class="pre">internal()</span></code> that is a tuple of references to all variables
+used via host association inside <code class="docutils literal notranslate"><span class="pre">internal()</span></code>. We will call this extra argument
+a static chain link.</p>
+<p>Fortran standard 2008 allowed using internal procedures as actual arguments for
+procedure pointer targets:</p>
+<blockquote>
+<div><p>Fortran 2008 contains several extensions to Fortran 2003; some of these are listed below.</p>
+<ul class="simple">
+<li><p>An internal procedure can be used as an actual argument or procedure pointer target.</p></li>
+</ul>
+<p>NOTE 12.18</p>
+<p>An internal procedure cannot be invoked using a procedure pointer from either Fortran or C after the host instance completes execution, because the pointer is then undefined. While the host instance is active, however, the internal procedure may be invoked from outside of the host procedure scoping unit if that internal procedure was passed as an actual argument or is the target of a procedure pointer.</p>
+</div></blockquote>
+<p>Special handling is required for the internal procedures that might be invoked
+via an argument association or via pointer.
+This document describes Flang implementation to support it.</p>
+<blockquote>
+<div><p>NOTE: in some languages/extensions the static chain may contain links
+to more than one stack frame, while Fortra’s static chain only ever
+has a link to a single host procedure.</p>
+</div></blockquote>
+</section>
+<section id="flang-current-implementation">
+<h2>Flang current implementation<a class="headerlink" href="#flang-current-implementation" title="Link to this heading">¶</a></h2>
+<section id="examples">
+<h3>Examples<a class="headerlink" href="#examples" title="Link to this heading">¶</a></h3>
+<p>Internal procedure as procedure pointer target:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">other</span>
+<span class="w">  </span><span class="k">abstract interface</span>
+<span class="k">     function </span><span class="n">callback</span><span class="p">()</span>
+<span class="w">       </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">callback</span>
+<span class="w">     </span><span class="k">end function </span><span class="n">callback</span>
+<span class="w">  </span><span class="k">end interface</span>
+<span class="k">  contains</span>
+<span class="k">  subroutine </span><span class="n">foo</span><span class="p">(</span><span class="n">fptr</span><span class="p">)</span>
+<span class="w">    </span><span class="k">procedure</span><span class="p">(</span><span class="n">callback</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fptr</span>
+<span class="w">    </span><span class="c">! `fptr` is pointing to `callee`, which needs the static chain link.</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">fptr</span><span class="p">()</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">foo</span>
+<span class="k">end module </span><span class="n">other</span>
+
+<span class="k">subroutine </span><span class="n">host</span><span class="p">(</span><span class="n">local</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">other</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">procedure</span><span class="p">(</span><span class="n">callback</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fptr</span>
+<span class="w">  </span><span class="n">fptr</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">callee</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo</span><span class="p">(</span><span class="n">fptr</span><span class="p">)</span>
+<span class="w">  </span><span class="k">return</span>
+
+<span class="k">  contains</span>
+
+<span class="k">  function </span><span class="n">callee</span><span class="p">()</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">callee</span>
+<span class="w">    </span><span class="n">callee</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">end function </span><span class="n">callee</span>
+<span class="k">end subroutine </span><span class="n">host</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">call </span><span class="n">host</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+<p>Internal procedure as actual argument (F90 style):</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">other</span>
+<span class="w">  </span><span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">foo</span><span class="p">(</span><span class="n">fptr</span><span class="p">)</span>
+<span class="w">    </span><span class="k">interface</span>
+<span class="k">      </span><span class="kt">integer </span><span class="k">function </span><span class="n">fptr</span><span class="p">()</span>
+<span class="w">      </span><span class="k">end function</span>
+<span class="k">    end interface</span>
+<span class="w">    </span><span class="c">! `fptr` is pointing to `callee`, which needs the static chain link.</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">fptr</span><span class="p">()</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">foo</span>
+<span class="k">end module </span><span class="n">other</span>
+
+<span class="k">subroutine </span><span class="n">host</span><span class="p">(</span><span class="n">local</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">other</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo</span><span class="p">(</span><span class="n">callee</span><span class="p">)</span>
+<span class="w">  </span><span class="k">return</span>
+
+<span class="k">  contains</span>
+
+<span class="k">  function </span><span class="n">callee</span><span class="p">()</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">callee</span>
+<span class="w">    </span><span class="n">callee</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">end function </span><span class="n">callee</span>
+<span class="k">end subroutine </span><span class="n">host</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">call </span><span class="n">host</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+<p>Internal procedure as actual argument (F77 style):</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">other</span>
+<span class="w">  </span><span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">foo</span><span class="p">(</span><span class="n">fptr</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fptr</span>
+<span class="w">    </span><span class="c">! `fptr` is pointing to `callee`, which needs the static chain link.</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">fptr</span><span class="p">()</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">foo</span>
+<span class="k">end module </span><span class="n">other</span>
+
+<span class="k">subroutine </span><span class="n">host</span><span class="p">(</span><span class="n">local</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">other</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo</span><span class="p">(</span><span class="n">callee</span><span class="p">)</span>
+<span class="w">  </span><span class="k">return</span>
+
+<span class="k">  contains</span>
+
+<span class="k">  function </span><span class="n">callee</span><span class="p">()</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">callee</span>
+<span class="w">    </span><span class="n">callee</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">end function </span><span class="n">callee</span>
+<span class="k">end subroutine </span><span class="n">host</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">call </span><span class="n">host</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+<p>In all cases, the call sequence implementing <code class="docutils literal notranslate"><span class="pre">fptr()</span></code> call site inside <code class="docutils literal notranslate"><span class="pre">foo()</span></code>
+must pass the stack chain link to the actual function <code class="docutils literal notranslate"><span class="pre">callee()</span></code>.</p>
+</section>
+<section id="usage-of-trampolines-in-flang">
+<h3>Usage of trampolines in Flang<a class="headerlink" href="#usage-of-trampolines-in-flang" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">BoxedProcedure</span></code> pass recognizes <code class="docutils literal notranslate"><span class="pre">fir.emboxproc</span></code> operations that
+embox a subroutine address together with the static chain link,
+and transforms them into a sequence of operations that replace
+the result of <code class="docutils literal notranslate"><span class="pre">fir.emboxproc</span></code> with an address of a trampoline.
+Eventually, it is the address of the trampoline that is passed
+as an actual argument to <code class="docutils literal notranslate"><span class="pre">foo()</span></code>.</p>
+<p>The trampoline has the following structure:</p>
+<div class="highlight-asm notranslate"><div class="highlight"><pre><span></span><span class="nl">callee_trampoline:</span>
+<span class="w">  </span><span class="nf">MOV</span><span class="w"> </span><span class="no">static-chain-address</span><span class="p">,</span><span class="w"> </span><span class="no">R</span><span class="c1">#</span>
+<span class="w">  </span><span class="nf">JMP</span><span class="w"> </span><span class="no">callee-address</span>
+</pre></div>
+</div>
+<p>Where:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">callee-address</span></code> is the address of function <code class="docutils literal notranslate"><span class="pre">callee()</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">static-chain-address</span></code> - the address of the static chain
+object created inside <code class="docutils literal notranslate"><span class="pre">host()</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">R#</span></code> is a target specific register.</p></li>
+</ul>
+<p>In MLIR LLVM dialect the replacement looks like this:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    llvm.call @llvm.init.trampoline(%8, %9, %7) : (!llvm.ptr&lt;i8&gt;, !llvm.ptr&lt;i8&gt;, !llvm.ptr&lt;i8&gt;) -&gt; ()
+    %10 = llvm.call @llvm.adjust.trampoline(%8) : (!llvm.ptr&lt;i8&gt;) -&gt; !llvm.ptr&lt;i8&gt;
+    %11 = llvm.bitcast %10 : !llvm.ptr&lt;i8&gt; to !llvm.ptr&lt;func&lt;void ()&gt;&gt;
+    llvm.call @_QMotherPfoo(%11) {fastmathFlags = #llvm.fastmath&lt;fast&gt;} : (!llvm.ptr&lt;func&lt;void ()&gt;&gt;) -&gt; ()
+
+</pre></div>
+</div>
+<p>So any call of <code class="docutils literal notranslate"><span class="pre">fptr</span></code> inside <code class="docutils literal notranslate"><span class="pre">foo()</span></code> will result in invocation of the trampoline.
+The trampoline will setup <code class="docutils literal notranslate"><span class="pre">R#</span></code> register and jump to <code class="docutils literal notranslate"><span class="pre">callee()</span></code> directly.</p>
+<p>The ABI of <code class="docutils literal notranslate"><span class="pre">callee()</span></code> is adjusted using <code class="docutils literal notranslate"><span class="pre">llvm.nest</span></code> call argument attribute,
+so that the target code generator assumes the static chain argument is passed
+to <code class="docutils literal notranslate"><span class="pre">callee()</span></code> in <code class="docutils literal notranslate"><span class="pre">R#</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  llvm.func @_QFhostPcallee(%arg0: !llvm.ptr&lt;struct&lt;(ptr&lt;i32&gt;)&gt;&gt; {fir.host_assoc, llvm.nest}) -&gt; i32 attributes {fir.internal_proc} {
+</pre></div>
+</div>
+<section id="trampoline-handling">
+<h4>Trampoline handling<a class="headerlink" href="#trampoline-handling" title="Link to this heading">¶</a></h4>
+<p>Currently used <a class="reference external" href="https://llvm.org/docs/LangRef.html#trampoline-intrinsics">llvm.init.trampoline intrinsic</a>
+expects that the memory for the trampoline content is passed to it as the first argument.
+The memory has to be writeable at the point of the intrinsic call, and it has to be executable
+at any point where <code class="docutils literal notranslate"><span class="pre">callee()</span></code> might be ivoked via the trampoline.</p>
+<p><code class="docutils literal notranslate"><span class="pre">&#64;llvm.init.trampoline</span></code> intrinsic initializes the trampoline area in a target-specific manner
+so that being executed: the trampoline sets a target-specific register to be equal to the third argument
+(which is a static chain address), and then calls the function defined by the second argument.</p>
+<p>Some targets may perform additional actions to guarantee the readiness of the trampoline for execution,
+e.g. <a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/compiler-rt/lib/builtins/trampoline_setup.c">call</a>
+<code class="docutils literal notranslate"><span class="pre">__clear_cache</span></code> or do something else.</p>
+<p>For each internal procedure a trampoline may be initialized once per the host invocation.</p>
+<p>The target-specific address of the new trampoline function must be taken via another intrinsic call:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="n">p</span> <span class="o">=</span> <span class="n">call</span> <span class="n">i8</span><span class="o">*</span> <span class="nd">@llvm</span><span class="o">.</span><span class="n">adjust</span><span class="o">.</span><span class="n">trampoline</span><span class="p">(</span><span class="n">i8</span><span class="o">*</span> <span class="o">%</span><span class="n">trampoline_address</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Note that value of <code class="docutils literal notranslate"><span class="pre">%p</span></code> is equal to <code class="docutils literal notranslate"><span class="pre">%tramp1</span></code> in most cases, but this is not
+a requirement - this is partly <a class="reference external" href="https://lists.llvm.org/pipermail/llvm-dev/2011-August/042845.html">why</a>
+the second intrinsic was introduced:</p>
+<blockquote>
+<div><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">By</span> <span class="n">the</span> <span class="n">way</span> <span class="n">an</span> <span class="n">example</span> <span class="n">of</span> <span class="n">adjust_trampoline</span> <span class="ow">is</span> <span class="n">ARM</span><span class="p">,</span> <span class="n">which</span> <span class="ow">or</span><span class="s1">&#39;s a 1 into the address of the trampoline.  When the pointer is called the processor sees the 1 and puts itself into thumb mode.</span>
+</pre></div>
+</div>
+</div></blockquote>
+<p>Currently, the trampolines are allocated on the stack of <code class="docutils literal notranslate"><span class="pre">host()</span></code> subroutine,
+so that they are available throughout the life span of <code class="docutils literal notranslate"><span class="pre">host()</span></code> and are
+automatically deallocated at the end of <code class="docutils literal notranslate"><span class="pre">host()</span></code> invocation.
+Unfortunately, this requires the program stack to be writeable and executable
+at the same time, which might be a security concern.</p>
+<blockquote>
+<div><p>NOTE: LLVM’s AArch64 backend supports <code class="docutils literal notranslate"><span class="pre">nest</span></code> attribute, but it requires the compiler-rt runtime selected via the <code class="docutils literal notranslate"><span class="pre">-rtlib=compiler-rt</span></code> flag.</p>
+</div></blockquote>
+</section>
+</section>
+</section>
+<section id="alternative-implementation-s">
+<h2>Alternative implementation(s)<a class="headerlink" href="#alternative-implementation-s" title="Link to this heading">¶</a></h2>
+<p>To address the security risk we may consider managing the trampoline memory
+in a way that it is not writeable and executable at the same time.
+One of the options is to use separate allocations for the trampoline code
+and the trampoline “data”.</p>
+<p>The trampolines may be located in non-writeable executable memory:</p>
+<div class="highlight-asm notranslate"><div class="highlight"><pre><span></span><span class="nl">trampoline0:</span>
+<span class="w">  </span><span class="nf">MOV</span><span class="w"> </span><span class="p">(</span><span class="no">TDATA</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="no">static_chain_address</span><span class="p">),</span><span class="w"> </span><span class="no">R</span><span class="c1">#</span>
+<span class="w">  </span><span class="nf">JMP</span><span class="w"> </span><span class="p">(</span><span class="no">TDATA</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="no">callee_address</span><span class="p">)</span>
+<span class="nl">trampoline1:</span>
+<span class="w">  </span><span class="nf">MOV</span><span class="w"> </span><span class="p">(</span><span class="no">TDATA</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="no">static_chain_address</span><span class="p">),</span><span class="w"> </span><span class="no">R</span><span class="c1">#</span>
+<span class="w">  </span><span class="nf">JMP</span><span class="w"> </span><span class="p">(</span><span class="no">TDATA</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="no">callee_address</span><span class="p">)</span>
+<span class="na">...</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">TDATA</span></code> memory is writeable and contains <em>&lt;static chain address, function address&gt;</em>
+for each of the trampolines.</p>
+<p>A runtime support library may provide APIs for initializing/accessing/deallocating
+the trampolines that can be used by <code class="docutils literal notranslate"><span class="pre">BoxedProcedure</span></code> pass.</p>
+<section id="implementation-considerations">
+<h3>Implementation considerations<a class="headerlink" href="#implementation-considerations" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p>The static chain address still has to be passed in fixed target-specific register,
+and the implementations that rely on LLVM back-ends can use <code class="docutils literal notranslate"><span class="pre">nest</span></code> attribute for this.</p></li>
+<li><p>The trampoline area must be able to grow, because there can be a trampoline
+for each internal procedure per host invocation, and an internal procedure can call
+the host recursively. This means that the amount of trampolines in one thread
+may grow pretty quickly.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">recursive subroutine </span><span class="n">host</span><span class="p">(</span><span class="n">local</span><span class="p">)</span>
+<span class="w">  </span><span class="k">use </span><span class="n">other</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">local</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo</span><span class="p">(</span><span class="n">callee</span><span class="p">)</span>
+<span class="w">  </span><span class="k">return</span>
+
+<span class="k">  contains</span>
+
+<span class="k">  function </span><span class="n">callee</span><span class="p">()</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">callee</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">local</span><span class="w"> </span><span class="p">.</span><span class="n">le</span><span class="p">.</span><span class="w"> </span><span class="n">CONST_N</span><span class="p">)</span><span class="w"> </span><span class="k">then</span>
+<span class="k">       call </span><span class="n">host</span><span class="p">(</span><span class="n">local</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="k">endif</span>
+<span class="k">  end function </span><span class="n">callee</span>
+<span class="k">end subroutine </span><span class="n">host</span>
+</pre></div>
+</div>
+</li>
+<li><p>On the other hand, putting a hard limit on the number of trampolines live at the same time
+allows putting the trampolines into the static code segment.</p></li>
+<li><p>Each thread may have its own dynamic trampoline area to reduce the number
+of required locks.</p></li>
+<li><p>Some support is required for the offload devices.</p></li>
+<li><p>Each trampoline invocation implies two indirect accesses with this approach.</p></li>
+</ul>
+</section>
+<section id="fortran-runtime-support">
+<h3>Fortran runtime support<a class="headerlink" href="#fortran-runtime-support" title="Link to this heading">¶</a></h3>
+<p>The following APIs are suggested:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cm">/**</span>
+<span class="cm"> * \brief Initializes new trampoline and returns its internal handle.</span>
+<span class="cm"> *</span>
+<span class="cm"> * Initializes new trampoline with the given \p callee_address</span>
+<span class="cm"> * and \p static_chain_address, and returns the new trampoline&#39;s</span>
+<span class="cm"> * internal handle. The compiler calls this method once per host</span>
+<span class="cm"> * invocation for each internal procedure that will need its address</span>
+<span class="cm"> * passed around.</span>
+<span class="cm"> *</span>
+<span class="cm"> * The initialization is reserving a new entry in TDATA and</span>
+<span class="cm"> * initializes the entry with the given \p callee_address and</span>
+<span class="cm"> * \p static_chain_address; it is also reserving a new entry</span>
+<span class="cm"> * in the trampoline area that is using the corresponding TDATA entry.</span>
+<span class="cm"> *</span>
+<span class="cm"> * Optional:</span>
+<span class="cm"> *   \p scratch may be used to switch between the trampoline pool</span>
+<span class="cm"> *   and llvm.init.trampoline implementation, e.g. if compiler passes</span>
+<span class="cm"> *   non-null \p scratch it will be used as a writeable/executable</span>
+<span class="cm"> *   memory for the new trampoline.</span>
+<span class="cm"> */</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">InitTrampoline</span><span class="p">([[</span><span class="n">maybe_unused</span><span class="p">]]</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">scratch</span><span class="p">,</span>
+<span class="w">                           </span><span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">callee_address</span><span class="p">,</span>
+<span class="w">                           </span><span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">static_chain_address</span><span class="p">);</span>
+
+<span class="cm">/**</span>
+<span class="cm"> * \brief Returns the trampoline&#39;s address for the given handle.</span>
+<span class="cm"> *</span>
+<span class="cm"> * \p handle is a value returned by InitTrampoline().</span>
+<span class="cm"> * The result of AdjustTrampoline() is the actual callable</span>
+<span class="cm"> * trampoline&#39;s address.</span>
+<span class="cm"> *</span>
+<span class="cm"> * Optional: may be implemented via llvm.adjust.trampoline.</span>
+<span class="cm"> */</span>
+<span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">AdjustTrampoline</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">handle</span><span class="p">);</span>
+
+<span class="cm">/**</span>
+<span class="cm"> * \brief Frees internal resources occupied for the given trampoline.</span>
+<span class="cm"> *</span>
+<span class="cm"> * The compiler must call this API at every exit from the host function.</span>
+<span class="cm"> *</span>
+<span class="cm"> * Optional: may be no-op, if LLVM trampolines are used underneath.</span>
+<span class="cm"> */</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">FreeTrampoline</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">handle</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">InitTrampoline</span></code> will do the initial allocation of the TDATA memory
+and the trampoline area followed by the initialization of the trampoline
+area with the binary code to “link” the trampolines with the corresponding
+TDATA entries. After the initial allocation the trampoline area is made
+executable and not writeable.</p>
+<p>If there is an available entry in the TDATA/trampoline area, then the function
+will initialized the TDATA entry with the given arguments and return
+a handle to the trampoline entry.</p>
+<p><code class="docutils literal notranslate"><span class="pre">FreeTrampoline</span></code> will free the reserved entry.</p>
+<blockquote>
+<div><p>NOTE: <code class="docutils literal notranslate"><span class="pre">FreeTrampoline</span></code> may reset the <code class="docutils literal notranslate"><span class="pre">callee_address</span></code> in the trampoline
+being freed to a runtime library function that complains about a dead
+internal procedure being called. This provides some runtime diagnostics
+of dangling procedure pointer usage. Such freed trampolines may still
+have to be reclaimed, if new trampoline is requested and the trampoline
+area is all used.</p>
+</div></blockquote>
+<section id="sample-ir">
+<h4>Sample IR<a class="headerlink" href="#sample-ir" title="Link to this heading">¶</a></h4>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    // Init the trampoline once per host procedure invocation
+    // (i.e. when the procedure address is emboxed).
+    %handle = llvm.call @_FortranAInitTrampoline(%nullptr, %9, %7) : (!llvm.ptr&lt;i8&gt;, !llvm.ptr&lt;i8&gt;, !llvm.ptr&lt;i8&gt;) -&gt; !llvm.ptr&lt;i8&gt;
+    // Get the actual internal procedure address once per host procedure invocation.
+    %10 = llvm.call @_FortranAAdjustTrampoline(%handle) : (!llvm.ptr&lt;i8&gt;) -&gt; !llvm.ptr&lt;i8&gt;
+    %11 = llvm.bitcast %10 : !llvm.ptr&lt;i8&gt; to !llvm.ptr&lt;func&lt;void ()&gt;&gt;
+    llvm.call @_QMotherPfoo(%11) {fastmathFlags = #llvm.fastmath&lt;fast&gt;} : (!llvm.ptr&lt;func&lt;void ()&gt;&gt;) -&gt; ()
+    // The trampoline deallocation must be done only at the exits from the host procedure.
+    llvm.call @_FortranAFreeTrampoline(%handle) : (!llvm.ptr&lt;i8&gt;) -&gt; ()
+</pre></div>
+</div>
+</section>
+</section>
+<section id="implementation-options">
+<h3>Implementation options<a class="headerlink" href="#implementation-options" title="Link to this heading">¶</a></h3>
+<p>We may try to reuse <a class="reference external" href="https://github.com/libffi/libffi">libffi</a> implementation for <strong>static trampolines</strong>:</p>
+<ul class="simple">
+<li><p>Initial implementation added support for x64, i386, aarch64 and arm on Linux: https://github.com/libffi/libffi/pull/624</p></li>
+<li><p>Follow-up patches:</p>
+<ul>
+<li><p>Added support for Cygwin: https://github.com/libffi/libffi/commit/a1130f37712c03957c9b0adf316cd006fa92a60b</p></li>
+<li><p>Added support for LoongArch: https://github.com/libffi/libffi/pull/723</p></li>
+<li><p>Page protection for iOS devices: https://github.com/libffi/libffi/pull/718</p></li>
+<li><p>Fix for trampoline code for x32: https://github.com/libffi/libffi/pull/657</p></li>
+</ul>
+</li>
+<li><p>The author (&#64;madvenka786) initially <a class="reference external" href="https://sourceware.org/pipermail/libffi-discuss/2021/002587.html">proposed</a> to make the trampoline APIs public,
+but this was not a requirement at the time and the APIs were made private.
+If we want to rely on <code class="docutils literal notranslate"><span class="pre">libffi</span></code>, the APIs have to be made public.</p></li>
+<li><p>We may also try to extract the static trampolines implementation from <code class="docutils literal notranslate"><span class="pre">libffi</span></code>
+into separate library (e.g. <code class="docutils literal notranslate"><span class="pre">libstatictramp</span></code> as mentioned <a class="reference external" href="https://sourceware.org/pipermail/libffi-discuss/2021/002592.html">here</a>).</p></li>
+</ul>
+<p>Flang’s own implementation for trampolines have an advantage that,
+having to support the only Fortran/C interoperable calling convention,
+the implementation may reduce the trampoline overhead. For example,
+it may avoid saving/restoring the scratch registers used by the trampoline code,
+and just clobber some of them according to the particular ABI.</p>
+<p>At this point, the recommended approach is to implement the trampoline
+support in Flang runtime.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="IORuntimeInternals.html">Fortran I/O Runtime Library Internal Design</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Intrinsics.html">A categorization of standard (2018) and extended Fortran intrinsic procedures</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2024, The Flang Team.
+      Last updated on Sep 17, 2024.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

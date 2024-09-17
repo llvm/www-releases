@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Overview of Compiler Phases &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1f6d8cfa"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Parameterized Derived Types (PDTs)" href="ParameterizedDerivedTypes.html" />
+    <link rel="prev" title="Compiler options comparison" href="OptionComparison.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Overview of Compiler Phases</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OptionComparison.html">Compiler options comparison</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ParameterizedDerivedTypes.html">Parameterized Derived Types (PDTs)</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/Overview.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+-->
+<section id="overview-of-compiler-phases">
+<h1>Overview of Compiler Phases<a class="headerlink" href="#overview-of-compiler-phases" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#analysis" id="id1">Analysis</a></p>
+<ul>
+<li><p><a class="reference internal" href="#prescan-and-preprocess" id="id2">Prescan and Preprocess</a></p></li>
+<li><p><a class="reference internal" href="#parsing" id="id3">Parsing</a></p></li>
+<li><p><a class="reference internal" href="#semantic-processing" id="id4">Semantic processing</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#lowering" id="id5">Lowering</a></p>
+<ul>
+<li><p><a class="reference internal" href="#create-the-lowering-bridge" id="id6">Create the lowering bridge</a></p></li>
+<li><p><a class="reference internal" href="#initial-lowering" id="id7">Initial lowering</a></p></li>
+<li><p><a class="reference internal" href="#transformation-passes" id="id8">Transformation passes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#object-code-generation-and-linking" id="id9">Object code generation and linking</a></p></li>
+</ul>
+</nav>
+<p>The Flang compiler transforms Fortran source code into an executable file.
+This transformation proceeds in three high level phases – analysis, lowering,
+and code generation/linking.</p>
+<p>The first high level phase (analysis) transforms Fortran source code into a
+decorated parse tree and a symbol table.  During this phase, all user
+related errors are detected and reported.</p>
+<p>The second high level phase (lowering), changes the decorated parse tree and
+symbol table into the Fortran Intermediate Representation (FIR), which is a
+dialect of LLVM’s Multi-Level Intermediate Representation or MLIR.  It then
+runs a series of passes on the FIR code which verify its validity, perform a
+series of optimizations, and finally transform it into LLVM’s Intermediate
+Representation, or LLVM IR</p>
+<p>The third high level phase generates machine code and invokes a linker to
+produce an executable file.</p>
+<p>This document describes the first two high level phases.  Each of these is
+described in more detailed phases.</p>
+<p>Each detailed phase is described – its inputs and outputs along with how to
+produce a readable version of the outputs.</p>
+<p>Each detailed phase produces either correct output or fatal errors.</p>
+<section id="analysis">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Analysis</a><a class="headerlink" href="#analysis" title="Link to this heading">¶</a></h2>
+<p>This high level phase validates that the program is correct and creates all of
+the information needed for lowering.</p>
+<section id="prescan-and-preprocess">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink">Prescan and Preprocess</a><a class="headerlink" href="#prescan-and-preprocess" title="Link to this heading">¶</a></h3>
+<p>See <a class="reference internal" href="Preprocessing.html"><span class="std std-doc">Preprocessing.md</span></a>.</p>
+<p><strong>Input:</strong> Fortran source and header files, command line macro definitions,
+set of enabled compiler directives (to be treated as directives rather than
+comments).</p>
+<p><strong>Output:</strong></p>
+<ul class="simple">
+<li><p>A “cooked” character stream: the entire program as a contiguous stream of
+normalized Fortran source.
+Extraneous whitespace and comments are removed (except comments that are
+compiler directives that are not disabled) and case is normalized.  Also,
+directives are processed and macros expanded.</p></li>
+<li><p>Provenance information mapping each character back to the source it came from.
+This is used in subsequent phases that need source locations.  This includes
+error messages, optimization reports, and debugging information.</p></li>
+</ul>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">parser::Parsing::Prescan</span></code></p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-E</span> <span class="pre">src.f90</span></code> dumps the cooked character stream</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-provenance</span> <span class="pre">src.f90</span></code> dumps provenance
+information</p></li>
+</ul>
+</section>
+<section id="parsing">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Parsing</a><a class="headerlink" href="#parsing" title="Link to this heading">¶</a></h3>
+<p><strong>Input:</strong> Cooked character stream</p>
+<p><strong>Output:</strong> A parse tree for each Fortran program unit in the source code
+representing a syntactically correct program, rooted at the program unit.  See:
+<a class="reference internal" href="Parsing.html"><span class="std std-doc">Parsing.md</span></a> and <a class="reference internal" href="ParserCombinators.html"><span class="std std-doc">ParserCombinators.md</span></a>.</p>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">parser::Parsing::Parse</span></code></p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parse-tree-no-sema</span> <span class="pre">src.f90</span></code> dumps the parse tree</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-unparse</span> <span class="pre">src.f90</span></code> converts the parse tree to normalized Fortran</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parsing-log</span> <span class="pre">src.f90</span></code> runs an instrumented parse and dumps the log</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-measure-parse-tree</span> <span class="pre">src.f90</span></code> measures the parse tree</p></li>
+</ul>
+</section>
+<section id="semantic-processing">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Semantic processing</a><a class="headerlink" href="#semantic-processing" title="Link to this heading">¶</a></h3>
+<p><strong>Input:</strong> the parse tree, the cooked character stream, and provenance
+information</p>
+<p><strong>Output:</strong></p>
+<ul class="simple">
+<li><p>a symbol table</p></li>
+<li><p>modified parse tree</p></li>
+<li><p>module files, (see: <a class="reference internal" href="ModFiles.html"><span class="std std-doc">ModFiles.md</span></a>)</p></li>
+<li><p>the intrinsic procedure table</p></li>
+<li><p>the target characteristics</p></li>
+<li><p>the runtime derived type derived type tables (see: <a class="reference internal" href="RuntimeTypeInfo.html"><span class="std std-doc">RuntimeTypeInfo.md</span></a>)</p></li>
+</ul>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">semantics::Semantics::Perform</span></code></p>
+<p>For more detail on semantic analysis, see: <a class="reference internal" href="Semantics.html"><span class="std std-doc">Semantics.md</span></a>.
+Semantic processing performs several tasks:</p>
+<ul class="simple">
+<li><p>validates labels, see: <a class="reference internal" href="LabelResolution.html"><span class="std std-doc">LabelResolution.md</span></a>.</p></li>
+<li><p>canonicalizes DO statements,</p></li>
+<li><p>canonicalizes OpenACC and OpenMP code</p></li>
+<li><p>resolves names, building a tree of scopes and symbols</p></li>
+<li><p>rewrites the parse tree to correct parsing mistakes (when needed) once semantic information is available to clarify the program’s meaning</p></li>
+<li><p>checks the validity of declarations</p></li>
+<li><p>analyzes expressions and statements, emitting error messages where appropriate</p></li>
+<li><p>creates module files if the source code contains modules,
+see <a class="reference internal" href="ModFiles.html"><span class="std std-doc">ModFiles.md</span></a>.</p></li>
+</ul>
+<p>In the course of semantic analysis, the compiler:</p>
+<ul class="simple">
+<li><p>creates the symbol table</p></li>
+<li><p>decorates the parse tree with semantic information (such as pointers into the symbol table)</p></li>
+<li><p>creates the intrinsic procedure table</p></li>
+<li><p>folds constant expressions</p></li>
+</ul>
+<p>At the end of semantic processing, all validation of the user’s program is complete.  This is the last detailed phase of analysis processing.</p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-parse-tree</span> <span class="pre">src.f90</span></code> dumps the parse tree after semantic analysis</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-symbols</span> <span class="pre">src.f90</span></code> dumps the symbol table</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-all</span> <span class="pre">src.f90</span></code> dumps both the parse tree and the symbol table</p></li>
+</ul>
+</section>
+</section>
+<section id="lowering">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Lowering</a><a class="headerlink" href="#lowering" title="Link to this heading">¶</a></h2>
+<p>Lowering takes the parse tree and symbol table produced by analysis and
+produces LLVM IR.</p>
+<section id="create-the-lowering-bridge">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Create the lowering bridge</a><a class="headerlink" href="#create-the-lowering-bridge" title="Link to this heading">¶</a></h3>
+<p><strong>Inputs:</strong></p>
+<ul class="simple">
+<li><p>the parse tree</p></li>
+<li><p>the symbol table</p></li>
+<li><p>The default KINDs for intrinsic types (specified by default or command line option)</p></li>
+<li><p>The intrinsic procedure table (created in semantics processing)</p></li>
+<li><p>The target characteristics (created during semantics processing)</p></li>
+<li><p>The cooked character stream</p></li>
+<li><p>The target triple – CPU type, vendor, operating system</p></li>
+<li><p>The mapping between Fortran KIND values to FIR KIND values</p></li>
+</ul>
+<p>The lowering bridge is a container that holds all of the information needed for lowering.</p>
+<p><strong>Output:</strong> A container with all of the information needed for lowering</p>
+<p><strong>Entry point:</strong> lower::LoweringBridge::create</p>
+</section>
+<section id="initial-lowering">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Initial lowering</a><a class="headerlink" href="#initial-lowering" title="Link to this heading">¶</a></h3>
+<p><strong>Input:</strong> the lowering bridge</p>
+<p><strong>Output:</strong> A Fortran IR (FIR) representation of the program.</p>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">lower::LoweringBridge::lower</span></code></p>
+<p>The compiler then takes the information in the lowering bridge and creates a
+pre-FIR tree or PFT.  The PFT is a list of programs and modules.  The programs
+and modules contain lists of function-like units.  The function-like units
+contain a list of evaluations.  All of these contain pointers back into the
+parse tree.  The compiler walks the PFT generating FIR.</p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-fdebug-dump-pft</span> <span class="pre">src.f90</span></code> dumps the pre-FIR tree</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-emit-mlir</span> <span class="pre">src.f90</span></code> dumps the FIR to the files src.mlir</p></li>
+</ul>
+</section>
+<section id="transformation-passes">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Transformation passes</a><a class="headerlink" href="#transformation-passes" title="Link to this heading">¶</a></h3>
+<p><strong>Input:</strong> initial version of the FIR code</p>
+<p><strong>Output:</strong> An LLVM IR representation of the program</p>
+<p><strong>Entry point:</strong> <code class="docutils literal notranslate"><span class="pre">mlir::PassManager::run</span></code></p>
+<p>The compiler then runs a series of passes over the FIR code.  The first is a
+verification pass.  It’s followed by a series of transformation passes that
+perform various optimizations and transformations.  The final pass creates an
+LLVM IR representation of the program.</p>
+<p><strong>Commands:</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-mmlir</span> <span class="pre">--mlir-print-ir-after-all</span> <span class="pre">-S</span> <span class="pre">src.f90</span></code> dumps the FIR code after each pass to standard error</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang-new</span> <span class="pre">-fc1</span> <span class="pre">-emit-llvm</span> <span class="pre">src.f90</span></code> dumps the LLVM IR to src.ll</p></li>
+</ul>
+</section>
+</section>
+<section id="object-code-generation-and-linking">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Object code generation and linking</a><a class="headerlink" href="#object-code-generation-and-linking" title="Link to this heading">¶</a></h2>
+<p>After the LLVM IR is created, the flang driver invokes LLVM’s existing
+infrastructure to generate object code and invoke a linker to create the
+executable file.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OptionComparison.html">Compiler options comparison</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ParameterizedDerivedTypes.html">Parameterized Derived Types (PDTs)</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2024, The Flang Team.
+      Last updated on Sep 17, 2024.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

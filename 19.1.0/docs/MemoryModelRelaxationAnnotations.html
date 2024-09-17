@@ -1,0 +1,598 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Memory Model Relaxation Annotations &#8212; LLVM 19.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=39b91ecf"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="MemTagSanitizer" href="MemTagSanitizer.html" />
+    <link rel="prev" title="Scudo Hardened Allocator" href="ScudoHardenedAllocator.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="MemTagSanitizer.html" title="MemTagSanitizer"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="ScudoHardenedAllocator.html" title="Scudo Hardened Allocator"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" accesskey="U">Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Memory Model Relaxation Annotations</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#irc">IRC</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/MemoryModelRelaxationAnnotations.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="memory-model-relaxation-annotations">
+<h1>Memory Model Relaxation Annotations<a class="headerlink" href="#memory-model-relaxation-annotations" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id4">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#definitions" id="id5">Definitions</a></p></li>
+<li><p><a class="reference internal" href="#the-happens-before-relation" id="id6">The <em>happens-before</em> Relation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#examples" id="id7">Examples</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#use-cases" id="id8">Use-cases</a></p>
+<ul>
+<li><p><a class="reference internal" href="#spirv-nonprivatepointer" id="id9">SPIRV <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code></a></p>
+<ul>
+<li><p><a class="reference internal" href="#implementation-example" id="id10">Implementation Example</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#memory-types" id="id11">Memory Types</a></p>
+<ul>
+<li><p><a class="reference internal" href="#implementation-example-adding-address-space-information-to-fences" id="id12">Implementation Example: Adding Address Space Information to Fences</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#additional-topics" id="id13">Additional Topics</a></p>
+<ul>
+<li><p><a class="reference internal" href="#performance-impact" id="id14">Performance Impact</a></p></li>
+<li><p><a class="reference internal" href="#consequences-of-the-absence-of-happens-before" id="id15">Consequences of the Absence of <em>happens-before</em></a></p></li>
+<li><p><a class="reference internal" href="#combining-operations" id="id16">Combining Operations</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Memory Model Relaxation Annotations (MMRAs) are target-defined properties
+on instructions that can be used to selectively relax constraints placed
+by the memory model. For example:</p>
+<ul class="simple">
+<li><p>The use of <code class="docutils literal notranslate"><span class="pre">VulkanMemoryModel</span></code> in a SPIRV program allows certain
+memory operations to be reordered across <code class="docutils literal notranslate"><span class="pre">acquire</span></code> or <code class="docutils literal notranslate"><span class="pre">release</span></code>
+operations.</p></li>
+<li><p>OpenCL APIs expose primitives to only fence a specific set of address
+spaces. Carrying that information to the backend can enable the
+use of faster synchronization instructions, rather than fencing all
+address spaces everytime.</p></li>
+</ul>
+<p>MMRAs offer an opt-in system for targets to relax the default LLVM
+memory model.
+As such, they are attached to an operation using LLVM metadata which
+can always be dropped without affecting correctness.</p>
+</section>
+<section id="definitions">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Definitions</a><a class="headerlink" href="#definitions" title="Link to this heading">¶</a></h2>
+<dl>
+<dt>memory operation</dt><dd><p>A load, a store, an atomic, or a function call that is marked as
+accessing memory.</p>
+</dd>
+<dt>synchronizing operation</dt><dd><p>An instruction that synchronizes memory with other threads (e.g.
+an atomic or a fence).</p>
+</dd>
+<dt>tag</dt><dd><p>Metadata attached to a memory or synchronizing operation
+that represents some target-defined property regarding memory
+synchronization.</p>
+<p>An operation may have multiple tags that each represent a different
+property.</p>
+<p>A tag is composed of a pair of metadata string: a <em>prefix</em> and a <em>suffix</em>.</p>
+<p>In LLVM IR, the pair is represented using a metadata tuple.
+In other cases (comments, documentation, etc.), we may use the
+<code class="docutils literal notranslate"><span class="pre">prefix:suffix</span></code> notation.
+For example:</p>
+<div class="literal-block-wrapper docutils container" id="id1">
+<div class="code-block-caption"><span class="caption-number">Listing 20 </span><span class="caption-text">Example: Tags in Metadata</span><a class="headerlink" href="#id1" title="Link to this code">¶</a></div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>!0 = !{!&quot;scope&quot;, !&quot;workgroup&quot;}  # scope:workgroup
+!1 = !{!&quot;scope&quot;, !&quot;device&quot;}     # scope:device
+!2 = !{!&quot;scope&quot;, !&quot;system&quot;}     # scope:system
+</pre></div>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The only semantics relevant to the optimizer is the
+“compatibility” relation defined below. All other
+semantics are target defined.</p>
+</div>
+<p>Tags can also be organised in lists to allow operations
+to specify all of the tags they belong to. Such a list
+is referred to as a “set of tags”.</p>
+<div class="literal-block-wrapper docutils container" id="id2">
+<div class="code-block-caption"><span class="caption-number">Listing 21 </span><span class="caption-text">Example: Set of Tags in Metadata</span><a class="headerlink" href="#id2" title="Link to this code">¶</a></div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>!0 = !{!&quot;scope&quot;, !&quot;workgroup&quot;}
+!1 = !{!&quot;sync-as&quot;, !&quot;private&quot;}
+!2 = !{!0, !2}
+</pre></div>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>If an operation does not have MMRA metadata, it’s treated as if
+it has an empty list (<code class="docutils literal notranslate"><span class="pre">!{}</span></code>) of tags.</p>
+</div>
+<p>Note that it is not an error if a tag is not recognized by the
+instruction it is applied to, or by the current target.
+Such tags are simply ignored.</p>
+<p>Both synchronizing operations and memory operations can have
+zero or more tags attached to them using the <code class="docutils literal notranslate"><span class="pre">!mmra</span></code> syntax.</p>
+<p>For the sake of readability in examples below,
+we use a (non-functional) short syntax to represent MMMRA metadata:</p>
+<div class="literal-block-wrapper docutils container" id="id3">
+<div class="code-block-caption"><span class="caption-number">Listing 22 </span><span class="caption-text">Short Syntax Example</span><a class="headerlink" href="#id3" title="Link to this code">¶</a></div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>store %ptr1 # foo:bar
+store %ptr1 !mmra !{!&quot;foo&quot;, !&quot;bar&quot;}
+</pre></div>
+</div>
+</div>
+<p>These two notations can be used in this document and are strictly
+equivalent. However, only the second version is functional.</p>
+</dd>
+<dt>compatibility</dt><dd><p>Two sets of tags are said to be <em>compatible</em> iff, for every unique
+tag prefix P present in at least one set:</p>
+<ul class="simple">
+<li><p>the other set contains no tag with prefix P, or</p></li>
+<li><p>at least one tag with prefix P is common to both sets.</p></li>
+</ul>
+<p>The above definition implies that an empty set is always compatible
+with any other set. This is an important property as it ensures that
+if a transform drops the metadata on an operation, it can never affect
+correctness. In other words, the memory model cannot be relaxed further
+by deleting metadata from instructions.</p>
+</dd>
+</dl>
+</section>
+<section id="the-happens-before-relation">
+<span id="happensbefore"></span><h2><a class="toc-backref" href="#id6" role="doc-backlink">The <em>happens-before</em> Relation</a><a class="headerlink" href="#the-happens-before-relation" title="Link to this heading">¶</a></h2>
+<p>Compatibility checks can be used to opt out of the <em>happens-before</em> relation
+established between two instructions.</p>
+<dl>
+<dt>Ordering</dt><dd><p>When two instructions’ metadata are not compatible, any program order
+between them are not in <em>happens-before</em>.</p>
+<p>For example, consider two tags <code class="docutils literal notranslate"><span class="pre">foo:bar</span></code> and
+<code class="docutils literal notranslate"><span class="pre">foo:baz</span></code> exposed by a target:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr1</span>                 <span class="c1"># foo:bar</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr2</span>                 <span class="c1"># foo:baz</span>
+<span class="n">X</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># foo:bar</span>
+</pre></div>
+</div>
+<p>In the above figure, <code class="docutils literal notranslate"><span class="pre">A</span></code> is compatible with <code class="docutils literal notranslate"><span class="pre">X</span></code>, and hence <code class="docutils literal notranslate"><span class="pre">A</span></code>
+happens-before <code class="docutils literal notranslate"><span class="pre">X</span></code>. But <code class="docutils literal notranslate"><span class="pre">B</span></code> is not compatible with
+<code class="docutils literal notranslate"><span class="pre">X</span></code>, and hence it is not happens-before <code class="docutils literal notranslate"><span class="pre">X</span></code>.</p>
+</dd>
+<dt>Synchronization</dt><dd><p>If an synchronizing operation has one or more tags, then whether it
+synchronizes-with and participates in the  <code class="docutils literal notranslate"><span class="pre">seq_cst</span></code> order with
+other operations is target dependent.</p>
+<p>Whether the following example synchronizes with another sequence depends
+on the target-defined semantics of <code class="docutils literal notranslate"><span class="pre">foo:bar</span></code> and <code class="docutils literal notranslate"><span class="pre">foo:bux</span></code>.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">fence</span> <span class="n">release</span>               <span class="c1"># foo:bar</span>
+<span class="n">store</span> <span class="n">atomic</span> <span class="o">%</span><span class="n">ptr1</span>          <span class="c1"># foo:bux</span>
+</pre></div>
+</div>
+</dd>
+</dl>
+<section id="examples">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Examples</a><a class="headerlink" href="#examples" title="Link to this heading">¶</a></h3>
+<dl>
+<dt>Example 1:</dt><dd><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr2</span>                  <span class="c1"># sync-as:1 vulkan:nonprivate</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr3</span>   <span class="c1"># sync-as:0 vulkan:nonprivate</span>
+</pre></div>
+</div>
+<p>A and B are not ordered relative to each other
+(no <em>happens-before</em>) because their sets of tags are not compatible.</p>
+<p>Note that the <code class="docutils literal notranslate"><span class="pre">sync-as</span></code> value does not have to match the <code class="docutils literal notranslate"><span class="pre">addrspace</span></code> value.
+e.g. In Example 1, a store-release to a location in <code class="docutils literal notranslate"><span class="pre">addrspace(1)</span></code> wants to
+only synchronize with operations happening in <code class="docutils literal notranslate"><span class="pre">addrspace(0)</span></code>.</p>
+</dd>
+<dt>Example 2:</dt><dd><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr2</span>                 <span class="c1"># sync-as:1 vulkan:nonprivate</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># sync-as:1 vulkan:nonprivate</span>
+</pre></div>
+</div>
+<p>The ordering of A and B is unaffected because their set of tags are
+compatible.</p>
+<p>Note that A and B may or may not be in <em>happens-before</em> due to other reasons.</p>
+</dd>
+<dt>Example 3:</dt><dd><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr2</span>                 <span class="c1"># sync-as:1 vulkan:nonprivate</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># vulkan:nonprivate</span>
+</pre></div>
+</div>
+<p>The ordering of A and B is unaffected because their set of tags are
+compatible.</p>
+</dd>
+<dt>Example 4:</dt><dd><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr2</span>                 <span class="c1"># sync-as:1</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># sync-as:2</span>
+</pre></div>
+</div>
+<p>A and B do not have to be ordered relative to each other
+(no <em>happens-before</em>) because their sets of tags are not compatible.</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="use-cases">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Use-cases</a><a class="headerlink" href="#use-cases" title="Link to this heading">¶</a></h2>
+<section id="spirv-nonprivatepointer">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">SPIRV <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code></a><a class="headerlink" href="#spirv-nonprivatepointer" title="Link to this heading">¶</a></h3>
+<p>MMRAs can support the SPIRV capability
+<code class="docutils literal notranslate"><span class="pre">VulkanMemoryModel</span></code>, where synchronizing operations only affect
+memory operations that specify <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code> semantics.</p>
+<p>The example below is generated from a SPIRV program using the
+following recipe:</p>
+<ul class="simple">
+<li><p>Add <code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code> to every synchronizing operation.</p></li>
+<li><p>Add <code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code> to every non-atomic memory operation
+that is marked <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code>.</p></li>
+<li><p>Add <code class="docutils literal notranslate"><span class="pre">vulkan:private</span></code> to tags of every non-atomic memory operation
+that is not marked <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code>.</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Thread</span> <span class="n">T1</span><span class="p">:</span>
+ <span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr1</span>                 <span class="c1"># vulkan:nonprivate</span>
+ <span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr2</span>                 <span class="c1"># vulkan:private</span>
+ <span class="n">X</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># vulkan:nonprivate</span>
+
+<span class="n">Thread</span> <span class="n">T2</span><span class="p">:</span>
+ <span class="n">Y</span><span class="p">:</span> <span class="n">load</span> <span class="n">atomic</span> <span class="n">acquire</span> <span class="o">%</span><span class="n">ptr3</span>   <span class="c1"># vulkan:nonprivate</span>
+ <span class="n">C</span><span class="p">:</span> <span class="n">load</span> <span class="o">%</span><span class="n">ptr2</span>                  <span class="c1"># vulkan:private</span>
+ <span class="n">D</span><span class="p">:</span> <span class="n">load</span> <span class="o">%</span><span class="n">ptr1</span>                  <span class="c1"># vulkan:nonprivate</span>
+</pre></div>
+</div>
+<p>Compatibility ensures that operation <code class="docutils literal notranslate"><span class="pre">A</span></code> is ordered
+relative to <code class="docutils literal notranslate"><span class="pre">X</span></code> while operation <code class="docutils literal notranslate"><span class="pre">D</span></code> is ordered relative to <code class="docutils literal notranslate"><span class="pre">Y</span></code>.
+If <code class="docutils literal notranslate"><span class="pre">X</span></code> synchronizes with <code class="docutils literal notranslate"><span class="pre">Y</span></code>, then <code class="docutils literal notranslate"><span class="pre">A</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">D</span></code>.
+No such relation can be inferred about operations <code class="docutils literal notranslate"><span class="pre">B</span></code> and <code class="docutils literal notranslate"><span class="pre">C</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The <a class="reference external" href="https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#memory-model-non-private">Vulkan Memory Model</a>
+considers all atomic operation non-private.</p>
+<p>Whether <code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code> would be specified on atomic operations is
+an implementation detail, as an atomic operation is always <code class="docutils literal notranslate"><span class="pre">nonprivate</span></code>.
+The implementation may choose to be explicit and emit IR with
+<code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code> on every atomic operation, or it could choose to
+only emit <code class="docutils literal notranslate"><span class="pre">vulkan::private</span></code> and assume <code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code>
+by default.</p>
+</div>
+<p>Operations marked with <code class="docutils literal notranslate"><span class="pre">vulkan:private</span></code> effectively opt out of the
+happens-before order in a SPIRV program since they are incompatible
+with every synchronizing operation. Note that SPIRV operations that
+are not marked <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code> are not entirely private to the
+thread — they are implicitly synchronized at the start or end of a
+thread by the Vulkan <em>system-synchronizes-with</em> relationship. This
+example assumes that the target-defined semantics of
+<code class="docutils literal notranslate"><span class="pre">vulkan:private</span></code> correctly implements this property.</p>
+<p>This scheme is general enough to express the interoperability of SPIRV
+programs with other environments.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Thread</span> <span class="n">T1</span><span class="p">:</span>
+<span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr1</span>                 <span class="c1"># vulkan:nonprivate</span>
+<span class="n">X</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr2</span>  <span class="c1"># vulkan:nonprivate</span>
+
+<span class="n">Thread</span> <span class="n">T2</span><span class="p">:</span>
+<span class="n">Y</span><span class="p">:</span> <span class="n">load</span> <span class="n">atomic</span> <span class="n">acquire</span> <span class="o">%</span><span class="n">ptr2</span>   <span class="c1"># foo:bar</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">load</span> <span class="o">%</span><span class="n">ptr1</span>
+</pre></div>
+</div>
+<p>In the above example, thread <code class="docutils literal notranslate"><span class="pre">T1</span></code> originates from a SPIRV program
+while thread <code class="docutils literal notranslate"><span class="pre">T2</span></code> originates from a non-SPIRV program. Whether <code class="docutils literal notranslate"><span class="pre">X</span></code>
+can synchronize with <code class="docutils literal notranslate"><span class="pre">Y</span></code> is target defined.  If <code class="docutils literal notranslate"><span class="pre">X</span></code> synchronizes
+with <code class="docutils literal notranslate"><span class="pre">Y</span></code>, then <code class="docutils literal notranslate"><span class="pre">A</span></code> happens before <code class="docutils literal notranslate"><span class="pre">B</span></code> (because A/X and
+Y/B are compatible).</p>
+<section id="implementation-example">
+<h4><a class="toc-backref" href="#id10" role="doc-backlink">Implementation Example</a><a class="headerlink" href="#implementation-example" title="Link to this heading">¶</a></h4>
+<p>Consider the implementation of SPIRV <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code> on a target
+where all memory operations are cached, and the entire cache is
+flushed or invalidated at a <code class="docutils literal notranslate"><span class="pre">release</span></code> or <code class="docutils literal notranslate"><span class="pre">acquire</span></code> respectively. A
+possible scheme is that when translating a SPIRV program, memory
+operations marked <code class="docutils literal notranslate"><span class="pre">NonPrivatePointer</span></code> should not be cached, and the
+cache contents should not be touched during an <code class="docutils literal notranslate"><span class="pre">acquire</span></code> and
+<code class="docutils literal notranslate"><span class="pre">release</span></code> operation.</p>
+<p>This could be implemented using the tags that share the <code class="docutils literal notranslate"><span class="pre">vulkan:</span></code> prefix,
+as follows:</p>
+<ul class="simple">
+<li><p>For memory operations:</p>
+<ul>
+<li><p>Operations with <code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code> should bypass the cache.</p></li>
+<li><p>Operations with <code class="docutils literal notranslate"><span class="pre">vulkan:private</span></code> should be cached.</p></li>
+<li><p>Operations that specify neither or both should conservatively
+bypass the cache to ensure correctness.</p></li>
+</ul>
+</li>
+<li><p>For synchronizing operations:</p>
+<ul>
+<li><p>Operations with <code class="docutils literal notranslate"><span class="pre">vulkan:nonprivate</span></code> should not flush or
+invalidate the cache.</p></li>
+<li><p>Operations with <code class="docutils literal notranslate"><span class="pre">vulkan:private</span></code> should flush or invalidate the cache.</p></li>
+<li><p>Operations that specify neither or both should conservatively
+flush or invalidate the cache to ensure correctness.</p></li>
+</ul>
+</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>In such an implementation, dropping the metadata on an operation, while
+not affecting correctness, may have big performance implications.
+e.g. an operation bypasses the cache when it shouldn’t.</p>
+</div>
+</section>
+</section>
+<section id="memory-types">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Memory Types</a><a class="headerlink" href="#memory-types" title="Link to this heading">¶</a></h3>
+<p>MMRAs may express the selective synchronization of
+different memory types.</p>
+<p>As an example, a target may expose an <code class="docutils literal notranslate"><span class="pre">sync-as:&lt;N&gt;</span></code> tag to
+pass information about which address spaces are synchronized by the
+execution of a synchronizing operation.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Address spaces are used here as a common example, but this concept
+can apply for other “memory types”. What “memory types” means here is
+up to the target.</p>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># let 1 = global address space</span>
+<span class="c1"># let 3 = local address space</span>
+
+<span class="n">Thread</span> <span class="n">T1</span><span class="p">:</span>
+<span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr1</span>                                  <span class="c1"># sync-as:1</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="o">%</span><span class="n">ptr2</span>                                  <span class="c1"># sync-as:3</span>
+<span class="n">X</span><span class="p">:</span> <span class="n">store</span> <span class="n">atomic</span> <span class="n">release</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># sync-as:3</span>
+
+<span class="n">Thread</span> <span class="n">T2</span><span class="p">:</span>
+<span class="n">Y</span><span class="p">:</span> <span class="n">load</span> <span class="n">atomic</span> <span class="n">acquire</span> <span class="n">ptr</span> <span class="n">addrspace</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">%</span><span class="n">ptr3</span>   <span class="c1"># sync-as:3</span>
+<span class="n">C</span><span class="p">:</span> <span class="n">load</span> <span class="o">%</span><span class="n">ptr2</span>                                   <span class="c1"># sync-as:3</span>
+<span class="n">D</span><span class="p">:</span> <span class="n">load</span> <span class="o">%</span><span class="n">ptr1</span>                                   <span class="c1"># sync-as:1</span>
+</pre></div>
+</div>
+<p>In the above figure, <code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code> are atomic operations on a
+location in the <code class="docutils literal notranslate"><span class="pre">global</span></code>  address space. If <code class="docutils literal notranslate"><span class="pre">X</span></code> synchronizes with
+<code class="docutils literal notranslate"><span class="pre">Y</span></code>, then <code class="docutils literal notranslate"><span class="pre">B</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">C</span></code> in the <code class="docutils literal notranslate"><span class="pre">local</span></code> address
+space. But no such statement can be made about operations <code class="docutils literal notranslate"><span class="pre">A</span></code> and
+<code class="docutils literal notranslate"><span class="pre">D</span></code>, although they are peformed on a location in the <code class="docutils literal notranslate"><span class="pre">global</span></code>
+address space.</p>
+<section id="implementation-example-adding-address-space-information-to-fences">
+<h4><a class="toc-backref" href="#id12" role="doc-backlink">Implementation Example: Adding Address Space Information to Fences</a><a class="headerlink" href="#implementation-example-adding-address-space-information-to-fences" title="Link to this heading">¶</a></h4>
+<p>Languages such as OpenCL C provide fence operations such as
+<code class="docutils literal notranslate"><span class="pre">atomic_work_item_fence</span></code> that can take an explicit address
+space to fence.</p>
+<p>By default, LLVM has no means to carry that information in the IR, so
+the information is lost during lowering to LLVM IR. This means that
+targets such as AMDGPU have to conservatively emit instructions to
+fence all address spaces in all cases, which can have a noticeable
+performance impact in high-performance applications.</p>
+<p>MMRAs may be used to preserve that information at the IR level, all the
+way through code generation. For example, a fence that only affects the
+global address space <code class="docutils literal notranslate"><span class="pre">addrspace(1)</span></code> may be lowered as</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">fence</span> <span class="n">release</span> <span class="c1"># sync-as:1</span>
+</pre></div>
+</div>
+<p>and the target may use the presence of <code class="docutils literal notranslate"><span class="pre">sync-as:1</span></code> to infer that it
+must only emit instruction to fence the global address space.</p>
+<p>Note that as MMRAs are opt in, a fence that does not have MMRA metadata
+could still be lowered conservatively, so this optimization would only
+apply if the front-end emits the MMRA metadata on the fence instructions.</p>
+</section>
+</section>
+</section>
+<section id="additional-topics">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Additional Topics</a><a class="headerlink" href="#additional-topics" title="Link to this heading">¶</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The following sections are informational.</p>
+</div>
+<section id="performance-impact">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Performance Impact</a><a class="headerlink" href="#performance-impact" title="Link to this heading">¶</a></h3>
+<p>MMRAs are a way to capture optimization opportunities in the program.
+But when an operation mentions no tags or conflicting tags,
+the target may need to produce conservative code to ensure correctness
+at the cost of performance. This can happen in the following situations:</p>
+<ol class="arabic simple">
+<li><p>When a target first introduces MMRAs, the
+frontend might not have been updated to emit them.</p></li>
+<li><p>An optimization may drop MMRA metadata.</p></li>
+<li><p>An optimization may add arbitrary tags to an operation.</p></li>
+</ol>
+<p>Note that targets can always choose to ignore (or even drop) MMRAs
+and revert to the default behavior/codegen heuristics without
+affecting correctness.</p>
+</section>
+<section id="consequences-of-the-absence-of-happens-before">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Consequences of the Absence of <em>happens-before</em></a><a class="headerlink" href="#consequences-of-the-absence-of-happens-before" title="Link to this heading">¶</a></h3>
+<p>In the <a class="reference internal" href="#happensbefore"><span class="std std-ref">happens-before</span></a> section, we defined how an
+<em>happens-before</em> relation between two instruction can be broken
+by leveraging compatibility between MMRAs. When the instructions
+are incompatible and there is no <em>happens-before</em> relation, we say
+that the instructions “do not have to be ordered relative to each
+other”.</p>
+<p>“Ordering” in this context is a very broad term which covers both
+static and runtime aspects.</p>
+<p>When there is no ordering constraint, we <em>could</em> statically reorder
+the instructions in an optimizer transform if the reordering does
+not break other constraints as single location coherence.
+Static reordering is one consequence of breaking <em>happens-before</em>,
+but is not the most interesting one.</p>
+<p>Run-time consequences are more interesting. When there is an
+<em>happens-before</em> relation between instructions, the target has to emit
+synchronization code to ensure other threads will observe the effects of
+the instructions in the right order.</p>
+<p>For instance, the target may have to wait for previous loads &amp; stores to
+finish before starting a fence-release, or there may be a need to flush a
+memory cache before executing the next instruction.
+In the absence of <em>happens-before</em>, there is no such requirement and
+no waiting or flushing is required. This may noticeably speed up
+execution in some cases.</p>
+</section>
+<section id="combining-operations">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Combining Operations</a><a class="headerlink" href="#combining-operations" title="Link to this heading">¶</a></h3>
+<p>If a pass can combine multiple memory or synchronizing operations
+into one, it needs to be able to combine MMRAs. One possible way to
+achieve this is by doing a prefix-wise union of the tag sets.</p>
+<p>Let A and B be two tags set, and U be the prefix-wise union of A and B.
+For every unique tag prefix P present in A or B:</p>
+<ul class="simple">
+<li><p>If either A or B has no tags with prefix P, no tags with prefix
+P are added to U.</p></li>
+<li><p>If both A and B have at least one tag with prefix P, all tags with prefix
+P from both sets are added to U.</p></li>
+</ul>
+<p>Passes should avoid aggressively combining MMRAs, as this can result
+in significant losses of information. While this cannot affect
+correctness, it may affect performance.</p>
+<p>As a general rule of thumb, common passes such as SimplifyCFG that
+aggressively combine/reorder operations should only combine
+instructions that have identical sets of tags.
+Passes that combine less frequently, or that are well aware of the cost
+of combining the MMRAs can use the prefix-wise union described above.</p>
+<p>Examples:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr1</span>  <span class="c1"># foo:x, foo:y, bar:x</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr2</span>  <span class="c1"># foo:x, bar:y</span>
+
+<span class="c1"># Unique prefixes P = [foo, bar]</span>
+<span class="c1"># &quot;foo:x&quot; is common to A and B so it&#39;s added to U.</span>
+<span class="c1"># &quot;bar:x&quot; != &quot;bar:y&quot; so it&#39;s not added to U.</span>
+<span class="n">U</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># foo:x</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr1</span>  <span class="c1"># foo:x, foo:y</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr2</span>  <span class="c1"># foo:x, bux:y</span>
+
+<span class="c1"># Unique prefixes P = [foo, bux]</span>
+<span class="c1"># &quot;foo:x&quot; is common to A and B so it&#39;s added to U.</span>
+<span class="c1"># No tags have the prefix &quot;bux&quot; in A.</span>
+<span class="n">U</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr3</span>  <span class="c1"># foo:x</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">A</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr1</span>
+<span class="n">B</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr2</span>  <span class="c1"># foo:x, bar:y</span>
+
+<span class="c1"># Unique prefixes P = [foo, bar]</span>
+<span class="c1"># No tags with &quot;foo&quot; or &quot;bar&quot; in A, so no tags added.</span>
+<span class="n">U</span><span class="p">:</span> <span class="n">store</span> <span class="n">release</span> <span class="o">%</span><span class="n">ptr3</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="MemTagSanitizer.html" title="MemTagSanitizer"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="ScudoHardenedAllocator.html" title="Scudo Hardened Allocator"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" >Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Memory Model Relaxation Annotations</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2024, LLVM Project.
+      Last updated on 2024-09-17.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

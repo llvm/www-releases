@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>How to implement a Sematic Check in Flang &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1f6d8cfa"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Pull request checklist" href="PullRequestChecklist.html" />
+    <link rel="prev" title="Getting Started" href="GettingStarted.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>How to implement a Sematic Check in Flang</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="GettingStarted.html">Getting Started</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="PullRequestChecklist.html">Pull request checklist</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/ImplementingASemanticCheck.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+-->
+<section id="how-to-implement-a-sematic-check-in-flang">
+<h1>How to implement a Sematic Check in Flang<a class="headerlink" href="#how-to-implement-a-sematic-check-in-flang" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#problem-definition" id="id1">Problem definition</a></p></li>
+<li><p><a class="reference internal" href="#creating-a-test" id="id2">Creating a test</a></p></li>
+<li><p><a class="reference internal" href="#analysis-and-implementation-planning" id="id3">Analysis and implementation planning</a></p>
+<ul>
+<li><p><a class="reference internal" href="#deciding-where-to-add-the-code-to-the-compiler" id="id4">Deciding where to add the code to the compiler</a></p></li>
+<li><p><a class="reference internal" href="#taking-advantage-of-prior-work" id="id5">Taking advantage of prior work</a></p></li>
+<li><p><a class="reference internal" href="#finding-the-source-location" id="id6">Finding the source location</a></p></li>
+<li><p><a class="reference internal" href="#determining-the-intent" id="id7">Determining the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code></a></p></li>
+<li><p><a class="reference internal" href="#determining-if-the-actual-argument-is-a-variable" id="id8">Determining if the actual argument is a variable</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#implementation" id="id9">Implementation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#adding-a-parse-tree-visitor" id="id10">Adding a parse tree visitor</a></p></li>
+<li><p><a class="reference internal" href="#collecting-the-actual-arguments" id="id11">Collecting the actual arguments</a></p></li>
+<li><p><a class="reference internal" href="#finding-the-intent-of-the-dummy-argument" id="id12">Finding the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the dummy argument</a></p></li>
+<li><p><a class="reference internal" href="#finding-the-symbols-for-arguments-that-are-variables" id="id13">Finding the symbols for arguments that are variables</a></p></li>
+<li><p><a class="reference internal" href="#emitting-the-messages" id="id14">Emitting the messages</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#improving-the-test-case" id="id15">Improving the test case</a></p></li>
+<li><p><a class="reference internal" href="#submitting-the-pull-request" id="id16">Submitting the pull request</a></p></li>
+<li><p><a class="reference internal" href="#responding-to-pull-request-comments" id="id17">Responding to pull request comments</a></p></li>
+</ul>
+</nav>
+<p>I recently added a semantic check to the Flang compiler front end.  This document
+describes my thought process and the resulting implementation.</p>
+<p>For more information about the compiler, start with the
+<a class="reference internal" href="Overview.html"><span class="std std-doc">compiler overview</span></a>.</p>
+<section id="problem-definition">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Problem definition</a><a class="headerlink" href="#problem-definition" title="Link to this heading">¶</a></h2>
+<p>In the 2018 Fortran standard, section 11.1.7.4.3, paragraph 2, states that:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Except</span> <span class="k">for</span> <span class="n">the</span> <span class="n">incrementation</span> <span class="n">of</span> <span class="n">the</span> <span class="n">DO</span> <span class="n">variable</span> <span class="n">that</span> <span class="n">occurs</span> <span class="ow">in</span> <span class="n">step</span> <span class="p">(</span><span class="mi">3</span><span class="p">),</span> <span class="n">the</span> <span class="n">DO</span> <span class="n">variable</span> 
+<span class="n">shall</span> <span class="n">neither</span> <span class="n">be</span> <span class="n">redefined</span> <span class="n">nor</span> <span class="n">become</span> <span class="n">undefined</span> <span class="k">while</span> <span class="n">the</span> <span class="n">DO</span> <span class="n">construct</span> <span class="ow">is</span> <span class="n">active</span><span class="o">.</span>
+</pre></div>
+</div>
+<p>One of the ways that DO variables might be redefined is if they are passed to
+functions with dummy arguments whose <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> is <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">INTENT(INOUT)</span></code>.  I implemented this semantic check.  Specifically, I changed
+the compiler to emit an error message if an active DO variable was passed to a
+dummy argument of a FUNCTION with INTENT(OUT).  Similarly, I had the compiler
+emit a warning if an active DO variable was passed to a dummy argument with
+INTENT(INOUT).  Previously, I had implemented similar checks for SUBROUTINE
+calls.</p>
+</section>
+<section id="creating-a-test">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Creating a test</a><a class="headerlink" href="#creating-a-test" title="Link to this heading">¶</a></h2>
+<p>My first step was to create a test case to cause the problem.  I called it testfun.f90 and used it to check the behavior of other Fortran compilers.  Here’s the initial version:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">subroutine </span><span class="n">s</span><span class="p">()</span>
+<span class="w">    </span><span class="kt">Integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">ivar</span><span class="p">,</span><span class="w"> </span><span class="n">jvar</span>
+
+<span class="w">    </span><span class="k">do </span><span class="n">ivar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">      </span><span class="n">jvar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">intentOutFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">)</span><span class="w"> </span><span class="c">! Error since ivar is a DO variable</span>
+<span class="w">    </span><span class="k">end do</span>
+
+<span class="k">  contains</span>
+<span class="k">    function </span><span class="n">intentOutFunc</span><span class="p">(</span><span class="n">dummyArg</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dummyArg</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">intentOutFunc</span>
+
+<span class="w">      </span><span class="n">dummyArg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">216</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">intentOutFunc</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">s</span>
+</pre></div>
+</div>
+<p>I verified that other Fortran compilers produced an error message at the point
+of the call to <code class="docutils literal notranslate"><span class="pre">intentOutFunc()</span></code>:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">      </span><span class="n">jvar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">intentOutFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">)</span><span class="w"> </span><span class="c">! Error since ivar is a DO variable</span>
+</pre></div>
+</div>
+<p>I also used this program to produce a parse tree for the program using the command:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w">  </span>flang-new<span class="w"> </span>-fc1<span class="w"> </span>-fdebug-dump-parse-tree<span class="w"> </span>testfun.f90
+</pre></div>
+</div>
+<p>Here’s the relevant fragment of the parse tree produced by the compiler:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">|</span> <span class="o">|</span> <span class="n">ExecutionPartConstruct</span> <span class="o">-&gt;</span> <span class="n">ExecutableConstruct</span> <span class="o">-&gt;</span> <span class="n">DoConstruct</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">NonLabelDoStmt</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">LoopControl</span> <span class="o">-&gt;</span> <span class="n">LoopBounds</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Scalar</span> <span class="o">-&gt;</span> <span class="n">Name</span> <span class="o">=</span> <span class="s1">&#39;ivar&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Scalar</span> <span class="o">-&gt;</span> <span class="n">Expr</span> <span class="o">=</span> <span class="s1">&#39;1_4&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">LiteralConstant</span> <span class="o">-&gt;</span> <span class="n">IntLiteralConstant</span> <span class="o">=</span> <span class="s1">&#39;1&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Scalar</span> <span class="o">-&gt;</span> <span class="n">Expr</span> <span class="o">=</span> <span class="s1">&#39;10_4&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">LiteralConstant</span> <span class="o">-&gt;</span> <span class="n">IntLiteralConstant</span> <span class="o">=</span> <span class="s1">&#39;10&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Block</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">ExecutionPartConstruct</span> <span class="o">-&gt;</span> <span class="n">ExecutableConstruct</span> <span class="o">-&gt;</span> <span class="n">ActionStmt</span> <span class="o">-&gt;</span> <span class="n">AssignmentStmt</span> <span class="o">=</span> <span class="s1">&#39;jvar=intentoutfunc(ivar)&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Variable</span> <span class="o">-&gt;</span> <span class="n">Designator</span> <span class="o">-&gt;</span> <span class="n">DataRef</span> <span class="o">-&gt;</span> <span class="n">Name</span> <span class="o">=</span> <span class="s1">&#39;jvar&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Expr</span> <span class="o">=</span> <span class="s1">&#39;intentoutfunc(ivar)&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">FunctionReference</span> <span class="o">-&gt;</span> <span class="n">Call</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">ProcedureDesignator</span> <span class="o">-&gt;</span> <span class="n">Name</span> <span class="o">=</span> <span class="s1">&#39;intentoutfunc&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">ActualArgSpec</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">ActualArg</span> <span class="o">-&gt;</span> <span class="n">Expr</span> <span class="o">=</span> <span class="s1">&#39;ivar&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">Designator</span> <span class="o">-&gt;</span> <span class="n">DataRef</span> <span class="o">-&gt;</span> <span class="n">Name</span> <span class="o">=</span> <span class="s1">&#39;ivar&#39;</span>
+<span class="o">|</span> <span class="o">|</span> <span class="o">|</span> <span class="n">EndDoStmt</span> <span class="o">-&gt;</span> 
+</pre></div>
+</div>
+<p>Note that this fragment of the tree only shows four <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> nodes,
+but the full parse tree also contained a fifth <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node for the
+constant 216 in the statement:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">      </span><span class="n">dummyArg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">216</span>
+</pre></div>
+</div>
+</section>
+<section id="analysis-and-implementation-planning">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Analysis and implementation planning</a><a class="headerlink" href="#analysis-and-implementation-planning" title="Link to this heading">¶</a></h2>
+<p>I then considered what I needed to do.  I needed to detect situations where an
+active DO variable was passed to a dummy argument with <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">INTENT(INOUT)</span></code>.  Once I detected such a situation, I needed to produce a
+message that highlighted the erroneous source code.</p>
+<section id="deciding-where-to-add-the-code-to-the-compiler">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Deciding where to add the code to the compiler</a><a class="headerlink" href="#deciding-where-to-add-the-code-to-the-compiler" title="Link to this heading">¶</a></h3>
+<p>This new semantic check would depend on several types of information – the
+parse tree, source code location information, symbols, and expressions.  Thus I
+needed to put my new code in a place in the compiler after the parse tree had
+been created, name resolution had already happened, and expression semantic
+checking had already taken place.</p>
+<p>Most semantic checks for statements are implemented by walking the parse tree
+and performing analysis on the nodes they visit.  My plan was to use this
+method.  The infrastructure for walking the parse tree for statement semantic
+checking is implemented in the files <code class="docutils literal notranslate"><span class="pre">lib/Semantics/semantics.cpp</span></code>.
+Here’s a fragment of the declaration of the framework’s parse tree visitor from
+<code class="docutils literal notranslate"><span class="pre">lib/Semantics/semantics.cpp</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="c1">// A parse tree visitor that calls Enter/Leave functions from each checker</span>
+<span class="w">  </span><span class="c1">// class C supplied as template parameters. Enter is called before the node&#39;s</span>
+<span class="w">  </span><span class="c1">// children are visited, Leave is called after. No two checkers may have the</span>
+<span class="w">  </span><span class="c1">// same Enter or Leave function. Each checker must be constructible from</span>
+<span class="w">  </span><span class="c1">// SemanticsContext and have BaseChecker as a virtual base class.</span>
+<span class="w">  </span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="p">...</span><span class="w"> </span><span class="n">C</span><span class="o">&gt;</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">SemanticsVisitor</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="k">virtual</span><span class="w"> </span><span class="n">C</span><span class="p">...</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">C</span><span class="o">::</span><span class="n">Enter</span><span class="p">...;</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">C</span><span class="o">::</span><span class="n">Leave</span><span class="p">...;</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">BaseChecker</span><span class="o">::</span><span class="n">Enter</span><span class="p">;</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">BaseChecker</span><span class="o">::</span><span class="n">Leave</span><span class="p">;</span>
+<span class="w">    </span><span class="n">SemanticsVisitor</span><span class="p">(</span><span class="n">SemanticsContext</span><span class="w"> </span><span class="o">&amp;</span><span class="n">context</span><span class="p">)</span>
+<span class="w">      </span><span class="o">:</span><span class="w"> </span><span class="n">C</span><span class="p">{</span><span class="n">context</span><span class="p">}...,</span><span class="w"> </span><span class="n">context_</span><span class="p">{</span><span class="n">context</span><span class="p">}</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">      </span><span class="p">...</span>
+</pre></div>
+</div>
+<p>Since FUNCTION calls are a kind of expression, I was planning to base my
+implementation on the contents of <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> nodes.  I would need to define
+either an <code class="docutils literal notranslate"><span class="pre">Enter()</span></code> or <code class="docutils literal notranslate"><span class="pre">Leave()</span></code> function whose parameter was a <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code>
+node.  Here’s the declaration I put into <code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.h</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">Enter()</span></code> functions get called at the time the node is first visited –
+that is, before its children.  The <code class="docutils literal notranslate"><span class="pre">Leave()</span></code> function gets called after the
+children are visited.  For my check the visitation order didn’t matter, so I
+arbitrarily chose to implement the <code class="docutils literal notranslate"><span class="pre">Leave()</span></code> function to visit the parse tree
+node.</p>
+<p>Since my semantic check was focused on DO CONCURRENT statements, I added it to
+the file <code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.cpp</span></code> where most of the semantic checking for
+DO statements already lived.</p>
+</section>
+<section id="taking-advantage-of-prior-work">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Taking advantage of prior work</a><a class="headerlink" href="#taking-advantage-of-prior-work" title="Link to this heading">¶</a></h3>
+<p>When implementing a similar check for SUBROUTINE calls, I created a utility
+functions in <code class="docutils literal notranslate"><span class="pre">lib/Semantics/semantics.cpp</span></code> to emit messages if
+a symbol corresponding to an active DO variable was being potentially modified:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">WarnDoVarRedefine</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">CharBlock</span><span class="w"> </span><span class="o">&amp;</span><span class="n">location</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">&amp;</span><span class="n">var</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">CheckDoVarRedefine</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">CharBlock</span><span class="w"> </span><span class="o">&amp;</span><span class="n">location</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">&amp;</span><span class="n">var</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The first function is intended for dummy arguments of <code class="docutils literal notranslate"><span class="pre">INTENT(INOUT)</span></code> and
+the second for <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>.</p>
+<p>Thus I needed three pieces of
+information –</p>
+<ol class="arabic simple">
+<li><p>the source location of the erroneous text,</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the associated dummy argument, and</p></li>
+<li><p>the relevant symbol passed as the actual argument.</p></li>
+</ol>
+<p>The first and third are needed since they’re required to call the utility
+functions.  The second is needed to determine whether to call them.</p>
+</section>
+<section id="finding-the-source-location">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Finding the source location</a><a class="headerlink" href="#finding-the-source-location" title="Link to this heading">¶</a></h3>
+<p>The source code location information that I’d need for the error message must
+come from the parse tree.  I looked in the file
+<code class="docutils literal notranslate"><span class="pre">include/flang/Parser/parse-tree.h</span></code> and determined that a <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">Expr</span></code>
+contained source location information since it had the field <code class="docutils literal notranslate"><span class="pre">CharBlock</span> <span class="pre">source</span></code>.  Thus, if I visited a <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node, I could get the source
+location information for the associated expression.</p>
+</section>
+<section id="determining-the-intent">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Determining the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code></a><a class="headerlink" href="#determining-the-intent" title="Link to this heading">¶</a></h3>
+<p>I knew that I could find the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the dummy argument associated with the
+actual argument from the function called <code class="docutils literal notranslate"><span class="pre">dummyIntent()</span></code> in the class
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> in the file <code class="docutils literal notranslate"><span class="pre">include/flang/Evaluate/call.h</span></code>.  So
+if I could find an <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> in an expression, I could
+determine the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the associated dummy argument.  I knew that it was
+valid to call <code class="docutils literal notranslate"><span class="pre">dummyIntent()</span></code> because the data on which <code class="docutils literal notranslate"><span class="pre">dummyIntent()</span></code>
+depends is established during semantic processing for expressions, and the
+semantic processing for expressions happens before semantic checking for DO
+constructs.</p>
+<p>In my prior work on checking the INTENT of arguments for SUBROUTINE calls,
+the parse tree held a node for the call (a <code class="docutils literal notranslate"><span class="pre">parser::CallStmt</span></code>) that contained
+an <code class="docutils literal notranslate"><span class="pre">evaluate::ProcedureRef</span></code> node.</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">CallStmt</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">WRAPPER_CLASS_BOILERPLATE</span><span class="p">(</span><span class="n">CallStmt</span><span class="p">,</span><span class="w"> </span><span class="n">Call</span><span class="p">);</span>
+<span class="w">    </span><span class="k">mutable</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">evaluate</span><span class="o">::</span><span class="n">ProcedureRef</span><span class="p">,</span>
+<span class="w">        </span><span class="n">common</span><span class="o">::</span><span class="n">Deleter</span><span class="o">&lt;</span><span class="n">evaluate</span><span class="o">::</span><span class="n">ProcedureRef</span><span class="o">&gt;&gt;</span>
+<span class="w">        </span><span class="n">typedCall</span><span class="p">;</span><span class="w">  </span><span class="c1">// filled by semantics</span>
+<span class="w">  </span><span class="p">};</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">evaluate::ProcedureRef</span></code> contains a list of <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code>
+nodes.  I could then find the INTENT of a dummy argument from the
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> node.</p>
+<p>For a FUNCTION call, though, there is no similar way to get from a parse tree
+node to an <code class="docutils literal notranslate"><span class="pre">evaluate::ProcedureRef</span></code> node.  But I knew that there was an
+existing framework used in DO construct semantic checking that traversed an
+<code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> node collecting <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code> nodes.  I guessed that I’d
+be able to use a similar framework to traverse an <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code>  node to
+find all of the <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> nodes.</p>
+<p>Note that the compiler has multiple types called <code class="docutils literal notranslate"><span class="pre">Expr</span></code>.  One is in the
+<code class="docutils literal notranslate"><span class="pre">parser</span></code> namespace.  <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> is defined in the file
+<code class="docutils literal notranslate"><span class="pre">include/flang/Parser/parse-tree.h</span></code>.  It represents a parsed expression that
+maps directly to the source code and has fields that specify any operators in
+the expression, the operands, and the source position of the expression.</p>
+<p>Additionally, in the namespace <code class="docutils literal notranslate"><span class="pre">evaluate</span></code>, there are <code class="docutils literal notranslate"><span class="pre">evaluate::Expr&lt;T&gt;</span></code>
+template classes defined in the file <code class="docutils literal notranslate"><span class="pre">include/flang/Evaluate/expression.h</span></code>.
+These are parameterized over the various types of Fortran and constitute a
+suite of strongly-typed representations of valid Fortran expressions of type
+<code class="docutils literal notranslate"><span class="pre">T</span></code> that have been fully elaborated with conversion operations and subjected to
+constant folding.  After an expression has undergone semantic analysis, the
+field <code class="docutils literal notranslate"><span class="pre">typedExpr</span></code> in the <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node is filled in with a pointer that
+owns an instance of <code class="docutils literal notranslate"><span class="pre">evaluate::Expr&lt;SomeType&gt;</span></code>, the most general representation
+of an analyzed expression.</p>
+<p>All of the declarations associated with both FUNCTION and SUBROUTINE calls are
+in <code class="docutils literal notranslate"><span class="pre">include/flang/Evaluate/call.h</span></code>.  An <code class="docutils literal notranslate"><span class="pre">evaluate::FunctionRef</span></code> inherits from
+an <code class="docutils literal notranslate"><span class="pre">evaluate::ProcedureRef</span></code> which contains the list of
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> nodes.  But the relationship between an
+<code class="docutils literal notranslate"><span class="pre">evaluate::FunctionRef</span></code> node and its associated arguments is not relevant.  I
+only needed to find the <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> nodes in an expression.
+They hold all of the information I needed.</p>
+<p>So my plan was to start with the <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node and extract its
+associated <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> field.  I would then traverse the
+<code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> tree collecting all of the <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code>
+nodes.  I would look at each of these nodes to determine the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of
+the associated dummy argument.</p>
+<p>This combination of the traversal framework and <code class="docutils literal notranslate"><span class="pre">dummyIntent()</span></code> would give
+me the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of all of the dummy arguments in a FUNCTION call.  Thus, I
+would have the second piece of information I needed.</p>
+</section>
+<section id="determining-if-the-actual-argument-is-a-variable">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Determining if the actual argument is a variable</a><a class="headerlink" href="#determining-if-the-actual-argument-is-a-variable" title="Link to this heading">¶</a></h3>
+<p>I also guessed that I could determine if the <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code>
+consisted of a variable.</p>
+<p>Once I had a symbol for the variable, I could call one of the functions:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">WarnDoVarRedefine</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">CharBlock</span><span class="w"> </span><span class="o">&amp;</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">CheckDoVarRedefine</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">CharBlock</span><span class="w"> </span><span class="o">&amp;</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>to emit the messages.</p>
+<p>If my plans worked out, this would give me the three pieces of information I
+needed – the source location of the erroneous text, the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the dummy
+argument, and a symbol that I could use to determine whether the actual
+argument was an active DO variable.</p>
+</section>
+</section>
+<section id="implementation">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Implementation</a><a class="headerlink" href="#implementation" title="Link to this heading">¶</a></h2>
+<section id="adding-a-parse-tree-visitor">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Adding a parse tree visitor</a><a class="headerlink" href="#adding-a-parse-tree-visitor" title="Link to this heading">¶</a></h3>
+<p>I started my implementation by adding a visitor for <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> nodes.
+Since this analysis is part of DO construct checking, I did this in
+<code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.cpp</span></code>.  I added a print statement to the visitor to
+verify that my new code was actually getting executed.</p>
+<p>In <code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.h</span></code>, I added the declaration for the visitor:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>In <code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.cpp</span></code>, I added an (almost empty) implementation:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;In Leave for parser::Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I then built the compiler with these changes and ran it on my test program.
+This time, I made sure to invoke semantic checking.  Here’s the command I used:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="w">  </span>flang-new<span class="w"> </span>-fc1<span class="w"> </span>-fdebug-unparse-with-symbols<span class="w"> </span>testfun.f90
+</pre></div>
+</div>
+<p>This produced the output:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+</pre></div>
+</div>
+<p>This made sense since the parse tree contained five <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> nodes.
+So far, so good.  Note that a <code class="docutils literal notranslate"><span class="pre">parse::Expr</span></code> node has a field with the
+source position of the associated expression (<code class="docutils literal notranslate"><span class="pre">CharBlock</span> <span class="pre">source</span></code>).  So I
+now had one of the three pieces of information needed to detect and report
+errors.</p>
+</section>
+<section id="collecting-the-actual-arguments">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Collecting the actual arguments</a><a class="headerlink" href="#collecting-the-actual-arguments" title="Link to this heading">¶</a></h3>
+<p>To get the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the dummy arguments and the <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code> associated with the
+actual argument, I needed to find all of the actual arguments embedded in an
+expression that contained a FUNCTION call.  So my next step was to write the
+framework to walk the <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> to gather all of the
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> nodes.  The code that I planned to model it on
+was the existing infrastructure that collected all of the <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code> nodes from an
+<code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code>.  I found this implementation in
+<code class="docutils literal notranslate"><span class="pre">lib/Evaluate/tools.cpp</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">CollectSymbolsHelper</span>
+<span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">SetTraverse</span><span class="o">&lt;</span><span class="n">CollectSymbolsHelper</span><span class="p">,</span><span class="w"> </span><span class="n">semantics</span><span class="o">::</span><span class="n">SymbolSet</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">Base</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SetTraverse</span><span class="o">&lt;</span><span class="n">CollectSymbolsHelper</span><span class="p">,</span><span class="w"> </span><span class="n">semantics</span><span class="o">::</span><span class="n">SymbolSet</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">CollectSymbolsHelper</span><span class="p">()</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">Base</span><span class="p">{</span><span class="o">*</span><span class="k">this</span><span class="p">}</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">Base</span><span class="o">::</span><span class="k">operator</span><span class="p">();</span>
+<span class="w">    </span><span class="n">semantics</span><span class="o">::</span><span class="n">SymbolSet</span><span class="w"> </span><span class="nf">operator</span><span class="p">()(</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">&amp;</span><span class="n">symbol</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">symbol</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">};</span>
+<span class="w">  </span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">A</span><span class="o">&gt;</span><span class="w"> </span><span class="n">semantics</span><span class="o">::</span><span class="n">SymbolSet</span><span class="w"> </span><span class="n">CollectSymbols</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="o">&amp;</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">CollectSymbolsHelper</span><span class="p">{}(</span><span class="n">x</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>Note that the <code class="docutils literal notranslate"><span class="pre">CollectSymbols()</span></code> function returns a <code class="docutils literal notranslate"><span class="pre">semantics::Symbolset</span></code>,
+which is declared in <code class="docutils literal notranslate"><span class="pre">include/flang/Semantics/symbol.h</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">SymbolSet</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">set</span><span class="o">&lt;</span><span class="n">SymbolRef</span><span class="o">&gt;</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>This infrastructure yields a collection based on <code class="docutils literal notranslate"><span class="pre">std::set&lt;&gt;</span></code>.  Using an
+<code class="docutils literal notranslate"><span class="pre">std::set&lt;&gt;</span></code> means that if the same object is inserted twice, the
+collection only gets one copy.  This was the behavior that I wanted.</p>
+<p>Here’s a sample invocation of <code class="docutils literal notranslate"><span class="pre">CollectSymbols()</span></code> that I found:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="o">*</span><span class="n">expr</span><span class="p">{</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">&amp;</span><span class="n">symbol</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">CollectSymbols</span><span class="p">(</span><span class="o">*</span><span class="n">expr</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+</pre></div>
+</div>
+<p>I noted that a <code class="docutils literal notranslate"><span class="pre">SymbolSet</span></code> did not actually contain an
+<code class="docutils literal notranslate"><span class="pre">std::set&lt;Symbol&gt;</span></code>.  This wasn’t surprising since we don’t want to put the
+full <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code> objects into the set.  Ideally, we would be able to create an
+<code class="docutils literal notranslate"><span class="pre">std::set&lt;Symbol</span> <span class="pre">&amp;&gt;</span></code> (a set of C++ references to symbols).  But C++ doesn’t
+support sets that contain references.  This limitation is part of the rationale
+for the Flang implementation of type <code class="docutils literal notranslate"><span class="pre">common::Reference</span></code>, which is defined in
+<code class="docutils literal notranslate"><span class="pre">include/flang/Common/reference.h</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">SymbolRef</span></code>, the specialization of the template <code class="docutils literal notranslate"><span class="pre">common::Reference</span></code> for
+<code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code>, is declared in the file
+<code class="docutils literal notranslate"><span class="pre">include/flang/Semantics/symbol.h</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">SymbolRef</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">common</span><span class="o">::</span><span class="n">Reference</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="o">&gt;</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>So to implement something that would collect <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code>
+nodes from an <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code>, I first defined the required types
+<code class="docutils literal notranslate"><span class="pre">ActualArgumentRef</span></code> and <code class="docutils literal notranslate"><span class="pre">ActualArgumentSet</span></code>.  Since these are being
+used exclusively for DO construct semantic checking (currently), I put their
+definitions into <code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.cpp</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">namespace</span><span class="w"> </span><span class="nn">Fortran</span><span class="o">::</span><span class="nn">evaluate</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">common</span><span class="o">::</span><span class="n">Reference</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="n">ActualArgument</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">set</span><span class="o">&lt;</span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgumentRef</span><span class="o">&gt;</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>Since <code class="docutils literal notranslate"><span class="pre">ActualArgument</span></code> is in the namespace <code class="docutils literal notranslate"><span class="pre">evaluate</span></code>, I put the
+definition for <code class="docutils literal notranslate"><span class="pre">ActualArgumentRef</span></code> in that namespace, too.</p>
+<p>I then modeled the code to create an <code class="docutils literal notranslate"><span class="pre">ActualArgumentSet</span></code> after the code to
+collect a <code class="docutils literal notranslate"><span class="pre">SymbolSet</span></code> and put it into <code class="docutils literal notranslate"><span class="pre">lib/Semantics/check-do.cpp</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">CollectActualArgumentsHelper</span>
+<span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">SetTraverse</span><span class="o">&lt;</span><span class="n">CollectActualArgumentsHelper</span><span class="p">,</span>
+<span class="w">          </span><span class="n">ActualArgumentSet</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">Base</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SetTraverse</span><span class="o">&lt;</span><span class="n">CollectActualArgumentsHelper</span><span class="p">,</span><span class="w"> </span><span class="n">ActualArgumentSet</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">CollectActualArgumentsHelper</span><span class="p">()</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">Base</span><span class="p">{</span><span class="o">*</span><span class="k">this</span><span class="p">}</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="k">using</span><span class="w"> </span><span class="n">Base</span><span class="o">::</span><span class="k">operator</span><span class="p">();</span>
+<span class="w">    </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="nf">operator</span><span class="p">()(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgument</span><span class="w"> </span><span class="o">&amp;</span><span class="n">arg</span><span class="p">)</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">ActualArgumentSet</span><span class="p">{</span><span class="n">arg</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">};</span>
+
+<span class="w">  </span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">A</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="o">&amp;</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">CollectActualArgumentsHelper</span><span class="p">{}(</span><span class="n">x</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">template</span><span class="w"> </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SomeExpr</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Unfortunately, when I tried to build this code, I got an error message saying
+<code class="docutils literal notranslate"><span class="pre">std::set</span></code> requires the <code class="docutils literal notranslate"><span class="pre">&lt;</span></code> operator to be defined for its contents.
+To fix this, I added a definition for <code class="docutils literal notranslate"><span class="pre">&lt;</span></code>.  I didn’t care how <code class="docutils literal notranslate"><span class="pre">&lt;</span></code> was
+defined, so I just used the address of the object:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kr">inline</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="k">operator</span><span class="o">&lt;</span><span class="p">(</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="n">y</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;*</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="o">&amp;*</span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I was surprised when this did not make the error message saying that I needed
+the <code class="docutils literal notranslate"><span class="pre">&lt;</span></code> operator go away.  Eventually, I figured out that the definition of
+the <code class="docutils literal notranslate"><span class="pre">&lt;</span></code> operator needed to be in the <code class="docutils literal notranslate"><span class="pre">evaluate</span></code> namespace.  Once I put
+it there, everything compiled successfully.  Here’s the code that worked:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">namespace</span><span class="w"> </span><span class="nn">Fortran</span><span class="o">::</span><span class="nn">evaluate</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">common</span><span class="o">::</span><span class="n">Reference</span><span class="o">&lt;</span><span class="k">const</span><span class="w"> </span><span class="n">ActualArgument</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="w">  </span><span class="kr">inline</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="k">operator</span><span class="o">&lt;</span><span class="p">(</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="n">y</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;*</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="o">&amp;*</span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I then modified my visitor for the parser::Expr to invoke my new collection
+framework.  To verify that it was actually doing something, I printed out the
+number of <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> nodes that it collected.  Note the
+call to <code class="docutils literal notranslate"><span class="pre">GetExpr()</span></code> in the invocation of <code class="docutils literal notranslate"><span class="pre">CollectActualArguments()</span></code>.  I
+modeled this on similar code that collected a <code class="docutils literal notranslate"><span class="pre">SymbolSet</span></code> described above:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">parsedExpr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;In Leave for parser::Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">argSet</span><span class="p">{</span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">))};</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Number of arguments: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">argSet</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I compiled and tested this code on my little test program.  Here’s the output that I got:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">1</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+</pre></div>
+</div>
+<p>So most of the <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code>nodes contained no actual arguments, but the
+fourth expression in the parse tree walk contained a single argument.  This may
+seem wrong since the third <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node in the file contains the
+<code class="docutils literal notranslate"><span class="pre">FunctionReference</span></code> node along with the arguments that we’re gathering.
+But since the tree walk function is being called upon leaving a
+<code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node, the function visits the <code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node
+associated with the <code class="docutils literal notranslate"><span class="pre">parser::ActualArg</span></code> node before it visits the
+<code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code> node associated with the <code class="docutils literal notranslate"><span class="pre">parser::FunctionReference</span></code>
+node.</p>
+<p>So far, so good.</p>
+</section>
+<section id="finding-the-intent-of-the-dummy-argument">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Finding the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the dummy argument</a><a class="headerlink" href="#finding-the-intent-of-the-dummy-argument" title="Link to this heading">¶</a></h3>
+<p>I now wanted to find the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> of the dummy argument associated with the
+arguments in the set.  As mentioned earlier, the type
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> has a member function called <code class="docutils literal notranslate"><span class="pre">dummyIntent()</span></code>
+that gives this value.  So I augmented my code to print out the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">parsedExpr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;In Leave for parser::Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">argSet</span><span class="p">{</span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">))};</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Number of arguments: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">argSet</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">&amp;</span><span class="n">argRef</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">argSet</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="w"> </span><span class="n">intent</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">dummyIntent</span><span class="p">()};</span>
+<span class="w">      </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="n">intent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">In</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(IN)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">Out</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(OUT)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">InOut</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(INOUT)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="k">default</span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;default INTENT</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I then rebuilt my compiler and ran it on my test case.  This produced the following output:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">1</span>
+  <span class="n">INTENT</span><span class="p">(</span><span class="n">OUT</span><span class="p">)</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+</pre></div>
+</div>
+<p>I then modified my test case to convince myself that I was getting the correct
+<code class="docutils literal notranslate"><span class="pre">INTENT</span></code> for <code class="docutils literal notranslate"><span class="pre">IN</span></code>, <code class="docutils literal notranslate"><span class="pre">INOUT</span></code>, and default cases.</p>
+<p>So far, so good.</p>
+</section>
+<section id="finding-the-symbols-for-arguments-that-are-variables">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Finding the symbols for arguments that are variables</a><a class="headerlink" href="#finding-the-symbols-for-arguments-that-are-variables" title="Link to this heading">¶</a></h3>
+<p>The third and last piece of information I needed was to determine if a variable
+was being passed as an actual argument.  In such cases, I wanted to get the
+symbol table node (<code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code>) for the variable.  My starting point was the
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> node.</p>
+<p>I was unsure of how to do this, so I browsed through existing code to look for
+how it treated <code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code> objects.  Since most of the code that deals with the <code class="docutils literal notranslate"><span class="pre">evaluate</span></code> namespace is in the lib/Evaluate directory, I looked there.  I ran <code class="docutils literal notranslate"><span class="pre">grep</span></code> on all of the <code class="docutils literal notranslate"><span class="pre">.cpp</span></code> files looking for
+uses of <code class="docutils literal notranslate"><span class="pre">ActualArgument</span></code>.  One of the first hits I got was in <code class="docutils literal notranslate"><span class="pre">lib/Evaluate/call.cpp</span></code> in the definition of <code class="docutils literal notranslate"><span class="pre">ActualArgument::GetType()</span></code>:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">DynamicType</span><span class="o">&gt;</span><span class="w"> </span><span class="n">ActualArgument</span><span class="o">::</span><span class="n">GetType</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Expr</span><span class="o">&lt;</span><span class="n">SomeType</span><span class="o">&gt;</span><span class="w"> </span><span class="o">*</span><span class="n">expr</span><span class="p">{</span><span class="n">UnwrapExpr</span><span class="p">()})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">expr</span><span class="o">-&gt;</span><span class="n">GetType</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">holds_alternative</span><span class="o">&lt;</span><span class="n">AssumedType</span><span class="o">&gt;</span><span class="p">(</span><span class="n">u_</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">DynamicType</span><span class="o">::</span><span class="n">AssumedType</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">nullopt</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>I noted the call to <code class="docutils literal notranslate"><span class="pre">UnwrapExpr()</span></code> that yielded a value of
+<code class="docutils literal notranslate"><span class="pre">Expr&lt;SomeType&gt;</span></code>.  So I guessed that I could use this member function to
+get an <code class="docutils literal notranslate"><span class="pre">evaluate::Expr&lt;SomeType&gt;</span></code> on which I could perform further analysis.</p>
+<p>I also knew that the header file <code class="docutils literal notranslate"><span class="pre">include/flang/Evaluate/tools.h</span></code> held many
+utility functions for dealing with <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> objects.  I was hoping to
+find something that would determine if an <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> was a variable.  So
+I searched for <code class="docutils literal notranslate"><span class="pre">IsVariable</span></code> and got a hit immediately.</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">A</span><span class="o">&gt;</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="n">IsVariable</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="o">&amp;</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="n">known</span><span class="p">{</span><span class="n">IsVariableHelper</span><span class="p">{}(</span><span class="n">x</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">known</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>But I actually needed more than just the knowledge that an <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> was
+a variable.  I needed the <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code> associated with the variable.  So
+I searched in <code class="docutils literal notranslate"><span class="pre">include/flang/Evaluate/tools.h</span></code> for functions that returned a
+<code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code>.  I found the following:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// If an expression is simply a whole symbol data designator,</span>
+<span class="c1">// extract and return that symbol, else null.</span>
+<span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">A</span><span class="o">&gt;</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">*</span><span class="n">UnwrapWholeSymbolDataRef</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">A</span><span class="w"> </span><span class="o">&amp;</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">auto</span><span class="w"> </span><span class="n">dataRef</span><span class="p">{</span><span class="n">ExtractDataRef</span><span class="p">(</span><span class="n">x</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SymbolRef</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">p</span><span class="p">{</span><span class="n">std</span><span class="o">::</span><span class="n">get_if</span><span class="o">&lt;</span><span class="n">SymbolRef</span><span class="o">&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">dataRef</span><span class="o">-&gt;</span><span class="n">u</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">get</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="k">nullptr</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This was exactly what I wanted.  DO variables must be whole symbols.  So I
+could try to extract a whole <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code> from the <code class="docutils literal notranslate"><span class="pre">evaluate::Expr</span></code> in my
+<code class="docutils literal notranslate"><span class="pre">evaluate::ActualArgument</span></code>.  If this extraction resulted in a <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code>
+that wasn’t a <code class="docutils literal notranslate"><span class="pre">nullptr</span></code>, I could then conclude if it was a variable that I
+could pass to existing functions that would determine if it was an active DO
+variable.</p>
+<p>I then modified the compiler to perform the analysis that I’d guessed would
+work:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">parsedExpr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;In Leave for parser::Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">argSet</span><span class="p">{</span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">))};</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Number of arguments: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">argSet</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">&amp;</span><span class="n">argRef</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">argSet</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SomeExpr</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">argExpr</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">UnwrapExpr</span><span class="p">()})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Got an unwrapped Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">var</span><span class="p">{</span><span class="n">evaluate</span><span class="o">::</span><span class="n">UnwrapWholeSymbolDataRef</span><span class="p">(</span><span class="o">*</span><span class="n">argExpr</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Found a whole variable: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">      </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="w"> </span><span class="n">intent</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">dummyIntent</span><span class="p">()};</span>
+<span class="w">      </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="n">intent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">In</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(IN)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">Out</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(OUT)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">InOut</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(INOUT)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">        </span><span class="k">default</span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;default INTENT</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>Note the line that prints out the symbol table entry for the variable:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">          </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Found a whole variable: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The compiler defines the “&lt;&lt;” operator for <code class="docutils literal notranslate"><span class="pre">semantics::Symbol</span></code>, which is handy
+for analyzing the compiler’s behavior.</p>
+<p>Here’s the result of running the modified compiler on my Fortran test case:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">1</span>
+  <span class="n">Got</span> <span class="n">an</span> <span class="n">unwrapped</span> <span class="n">Expr</span>
+  <span class="n">Found</span> <span class="n">a</span> <span class="n">whole</span> <span class="n">variable</span><span class="p">:</span> <span class="n">ivar</span><span class="p">:</span> <span class="n">ObjectEntity</span> <span class="nb">type</span><span class="p">:</span> <span class="n">INTEGER</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+  <span class="n">INTENT</span><span class="p">(</span><span class="n">OUT</span><span class="p">)</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+</pre></div>
+</div>
+<p>Sweet.</p>
+</section>
+<section id="emitting-the-messages">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Emitting the messages</a><a class="headerlink" href="#emitting-the-messages" title="Link to this heading">¶</a></h3>
+<p>At this point, using the source location information from the original
+<code class="docutils literal notranslate"><span class="pre">parser::Expr</span></code>, I had enough information to plug into the exiting
+interfaces for emitting messages for active DO variables.  I modified the
+compiler code accordingly:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">parsedExpr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;In Leave for parser::Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">argSet</span><span class="p">{</span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">))};</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Number of arguments: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">argSet</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">&amp;</span><span class="n">argRef</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">argSet</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SomeExpr</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">argExpr</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">UnwrapExpr</span><span class="p">()})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Got an unwrapped Expr</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">var</span><span class="p">{</span><span class="n">evaluate</span><span class="o">::</span><span class="n">UnwrapWholeSymbolDataRef</span><span class="p">(</span><span class="o">*</span><span class="n">argExpr</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Found a whole variable: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">          </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="w"> </span><span class="n">intent</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">dummyIntent</span><span class="p">()};</span>
+<span class="w">          </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="n">intent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">In</span><span class="p">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(IN)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">Out</span><span class="p">:</span><span class="w"> </span>
+<span class="w">              </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(OUT)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span>
+<span class="w">              </span><span class="n">context_</span><span class="p">.</span><span class="n">CheckDoVarRedefine</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">.</span><span class="n">source</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="p">);</span>
+<span class="w">              </span><span class="k">break</span><span class="p">;</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">InOut</span><span class="p">:</span><span class="w"> </span>
+<span class="w">              </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;INTENT(INOUT)</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span><span class="w"> </span>
+<span class="w">              </span><span class="n">context_</span><span class="p">.</span><span class="n">WarnDoVarRedefine</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">.</span><span class="n">source</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="p">);</span>
+<span class="w">              </span><span class="k">break</span><span class="p">;</span>
+<span class="w">            </span><span class="k">default</span><span class="o">:</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;default INTENT</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I then ran this code on my test case, and miraculously, got the following
+output:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">1</span>
+  <span class="n">Got</span> <span class="n">an</span> <span class="n">unwrapped</span> <span class="n">Expr</span>
+  <span class="n">Found</span> <span class="n">a</span> <span class="n">whole</span> <span class="n">variable</span><span class="p">:</span> <span class="n">ivar</span><span class="p">:</span> <span class="n">ObjectEntity</span> <span class="nb">type</span><span class="p">:</span> <span class="n">INTEGER</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+  <span class="n">INTENT</span><span class="p">(</span><span class="n">OUT</span><span class="p">)</span>
+  <span class="n">In</span> <span class="n">Leave</span> <span class="k">for</span> <span class="n">parser</span><span class="p">::</span><span class="n">Expr</span>
+  <span class="n">Number</span> <span class="n">of</span> <span class="n">arguments</span><span class="p">:</span> <span class="mi">0</span>
+  <span class="n">testfun</span><span class="o">.</span><span class="n">f90</span><span class="p">:</span><span class="mi">6</span><span class="p">:</span><span class="mi">12</span><span class="p">:</span> <span class="n">error</span><span class="p">:</span> <span class="n">Cannot</span> <span class="n">redefine</span> <span class="n">DO</span> <span class="n">variable</span> <span class="s1">&#39;ivar&#39;</span>
+        <span class="n">jvar</span> <span class="o">=</span> <span class="n">intentOutFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">)</span>
+               <span class="o">^^^^^^^^^^^^^^^^^^^</span>
+  <span class="n">testfun</span><span class="o">.</span><span class="n">f90</span><span class="p">:</span><span class="mi">5</span><span class="p">:</span><span class="mi">6</span><span class="p">:</span> <span class="n">Enclosing</span> <span class="n">DO</span> <span class="n">construct</span>
+      <span class="n">do</span> <span class="n">ivar</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10</span>
+         <span class="o">^^^^</span>
+</pre></div>
+</div>
+<p>Even sweeter.</p>
+</section>
+</section>
+<section id="improving-the-test-case">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">Improving the test case</a><a class="headerlink" href="#improving-the-test-case" title="Link to this heading">¶</a></h2>
+<p>At this point, my implementation seemed to be working.  But I was concerned
+about the limitations of my test case.  So I augmented it to include arguments
+other than <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> and more complex expressions.  Luckily, my
+augmented test did not reveal any new problems.</p>
+<p>Here’s the test I ended up with:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">subroutine </span><span class="n">s</span><span class="p">()</span>
+
+<span class="w">    </span><span class="kt">Integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">ivar</span><span class="p">,</span><span class="w"> </span><span class="n">jvar</span>
+
+<span class="w">    </span><span class="c">! This one is OK</span>
+<span class="w">    </span><span class="k">do </span><span class="n">ivar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">      </span><span class="n">jvar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">intentInFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">)</span>
+<span class="w">    </span><span class="k">end do</span>
+
+<span class="w">    </span><span class="c">! Error for passing a DO variable to an INTENT(OUT) dummy</span>
+<span class="w">    </span><span class="k">do </span><span class="n">ivar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">      </span><span class="n">jvar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">intentOutFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">)</span>
+<span class="w">    </span><span class="k">end do</span>
+
+<span class="w">    </span><span class="c">! Error for passing a DO variable to an INTENT(OUT) dummy, more complex </span>
+<span class="w">    </span><span class="c">! expression</span>
+<span class="w">    </span><span class="k">do </span><span class="n">ivar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">      </span><span class="n">jvar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">83</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">intentInFunc</span><span class="p">(</span><span class="n">intentOutFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">))</span>
+<span class="w">    </span><span class="k">end do</span>
+
+<span class="w">    </span><span class="c">! Warning for passing a DO variable to an INTENT(INOUT) dummy</span>
+<span class="w">    </span><span class="k">do </span><span class="n">ivar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">      </span><span class="n">jvar</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">intentInOutFunc</span><span class="p">(</span><span class="n">ivar</span><span class="p">)</span>
+<span class="w">    </span><span class="k">end do</span>
+
+<span class="k">  contains</span>
+<span class="k">    function </span><span class="n">intentInFunc</span><span class="p">(</span><span class="n">dummyArg</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dummyArg</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">intentInFunc</span>
+
+<span class="w">      </span><span class="n">intentInFunc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">343</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">intentInFunc</span>
+
+<span class="w">    </span><span class="k">function </span><span class="n">intentOutFunc</span><span class="p">(</span><span class="n">dummyArg</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">out</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dummyArg</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">intentOutFunc</span>
+
+<span class="w">      </span><span class="n">dummyArg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">216</span>
+<span class="w">      </span><span class="n">intentOutFunc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">343</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">intentOutFunc</span>
+
+<span class="w">    </span><span class="k">function </span><span class="n">intentInOutFunc</span><span class="p">(</span><span class="n">dummyArg</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">inout</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">dummyArg</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w">  </span><span class="kd">::</span><span class="w"> </span><span class="n">intentInOutFunc</span>
+
+<span class="w">      </span><span class="n">dummyArg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">216</span>
+<span class="w">      </span><span class="n">intentInOutFunc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">343</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">intentInOutFunc</span>
+
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">s</span>
+</pre></div>
+</div>
+</section>
+<section id="submitting-the-pull-request">
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Submitting the pull request</a><a class="headerlink" href="#submitting-the-pull-request" title="Link to this heading">¶</a></h2>
+<p>At this point, my implementation seemed functionally complete, so I stripped out all of the debug statements, ran <code class="docutils literal notranslate"><span class="pre">clang-format</span></code> on it and reviewed it
+to make sure that the names were clear.  Here’s what I ended up with:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">parsedExpr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">argSet</span><span class="p">{</span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">))};</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">&amp;</span><span class="n">argRef</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">argSet</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SomeExpr</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">argExpr</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">UnwrapExpr</span><span class="p">()})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">var</span><span class="p">{</span><span class="n">evaluate</span><span class="o">::</span><span class="n">UnwrapWholeSymbolDataRef</span><span class="p">(</span><span class="o">*</span><span class="n">argExpr</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="w"> </span><span class="n">intent</span><span class="p">{</span><span class="n">argRef</span><span class="o">-&gt;</span><span class="n">dummyIntent</span><span class="p">()};</span>
+<span class="w">          </span><span class="k">switch</span><span class="w"> </span><span class="p">(</span><span class="n">intent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">Out</span><span class="p">:</span><span class="w"> </span>
+<span class="w">              </span><span class="n">context_</span><span class="p">.</span><span class="n">CheckDoVarRedefine</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">.</span><span class="n">source</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="p">);</span>
+<span class="w">              </span><span class="k">break</span><span class="p">;</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="no">common</span><span class="o">::</span><span class="no">Intent</span><span class="o">::</span><span class="no">InOut</span><span class="p">:</span><span class="w"> </span>
+<span class="w">              </span><span class="n">context_</span><span class="p">.</span><span class="n">WarnDoVarRedefine</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">.</span><span class="n">source</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="p">);</span>
+<span class="w">              </span><span class="k">break</span><span class="p">;</span>
+<span class="w">            </span><span class="k">default</span><span class="o">:</span><span class="p">;</span><span class="w"> </span><span class="c1">// INTENT(IN) or default intent</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>I then created a pull request to get review comments.</p>
+</section>
+<section id="responding-to-pull-request-comments">
+<h2><a class="toc-backref" href="#id17" role="doc-backlink">Responding to pull request comments</a><a class="headerlink" href="#responding-to-pull-request-comments" title="Link to this heading">¶</a></h2>
+<p>I got feedback suggesting that I use an <code class="docutils literal notranslate"><span class="pre">if</span></code> statement rather than a
+<code class="docutils literal notranslate"><span class="pre">case</span></code> statement.  Another comment reminded me that I should look at the
+code I’d previously writted to do a similar check for SUBROUTINE calls to see
+if there was an opportunity to share code.  This examination resulted in
+converting my existing code to the following pair of functions:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">CheckIfArgIsDoVar</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgument</span><span class="w"> </span><span class="o">&amp;</span><span class="n">arg</span><span class="p">,</span>
+<span class="w">      </span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">CharBlock</span><span class="w"> </span><span class="n">location</span><span class="p">,</span><span class="w"> </span><span class="n">SemanticsContext</span><span class="w"> </span><span class="o">&amp;</span><span class="n">context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="w"> </span><span class="n">intent</span><span class="p">{</span><span class="n">arg</span><span class="p">.</span><span class="n">dummyIntent</span><span class="p">()};</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">intent</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="o">::</span><span class="n">Out</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">intent</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="o">::</span><span class="n">InOut</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SomeExpr</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">argExpr</span><span class="p">{</span><span class="n">arg</span><span class="p">.</span><span class="n">UnwrapExpr</span><span class="p">()})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">Symbol</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">var</span><span class="p">{</span><span class="n">evaluate</span><span class="o">::</span><span class="n">UnwrapWholeSymbolDataRef</span><span class="p">(</span><span class="o">*</span><span class="n">argExpr</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">intent</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">common</span><span class="o">::</span><span class="n">Intent</span><span class="o">::</span><span class="n">Out</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">context</span><span class="p">.</span><span class="n">CheckDoVarRedefine</span><span class="p">(</span><span class="n">location</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="p">);</span>
+<span class="w">          </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">context</span><span class="p">.</span><span class="n">WarnDoVarRedefine</span><span class="p">(</span><span class="n">location</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">var</span><span class="p">);</span><span class="w">  </span><span class="c1">// INTENT(INOUT)</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">DoChecker::Leave</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">parser</span><span class="o">::</span><span class="n">Expr</span><span class="w"> </span><span class="o">&amp;</span><span class="n">parsedExpr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">SomeExpr</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">expr</span><span class="p">{</span><span class="n">GetExpr</span><span class="p">(</span><span class="n">parsedExpr</span><span class="p">)})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">ActualArgumentSet</span><span class="w"> </span><span class="n">argSet</span><span class="p">{</span><span class="n">CollectActualArguments</span><span class="p">(</span><span class="o">*</span><span class="n">expr</span><span class="p">)};</span>
+<span class="w">      </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">evaluate</span><span class="o">::</span><span class="n">ActualArgumentRef</span><span class="w"> </span><span class="o">&amp;</span><span class="n">argRef</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">argSet</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">CheckIfArgIsDoVar</span><span class="p">(</span><span class="o">*</span><span class="n">argRef</span><span class="p">,</span><span class="w"> </span><span class="n">parsedExpr</span><span class="p">.</span><span class="n">source</span><span class="p">,</span><span class="w"> </span><span class="n">context_</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>The function <code class="docutils literal notranslate"><span class="pre">CheckIfArgIsDoVar()</span></code> was shared with the checks for DO
+variables being passed to SUBROUTINE calls.</p>
+<p>At this point, my pull request was approved, and I merged it and deleted the
+associated branch.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="GettingStarted.html">Getting Started</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="PullRequestChecklist.html">Pull request checklist</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2024, The Flang Team.
+      Last updated on Sep 17, 2024.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
