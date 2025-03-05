@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>A first take on Fortran 202X features for LLVM Flang &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=79410cf7"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Design: FIR Array operations" href="FIRArrayOperations.html" />
+    <link rel="prev" title="Fortran Extensions supported by Flang" href="Extensions.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>A first take on Fortran 202X features for LLVM Flang</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Extensions.html">Fortran Extensions supported by Flang</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="FIRArrayOperations.html">Design: FIR Array operations</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/F202X.md 
+  
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+  
+-->
+<section id="a-first-take-on-fortran-202x-features-for-llvm-flang">
+<h1>A first take on Fortran 202X features for LLVM Flang<a class="headerlink" href="#a-first-take-on-fortran-202x-features-for-llvm-flang" title="Link to this heading">¶</a></h1>
+<p>I (Peter Klausler) have been studying the draft PDF of the
+<a class="reference external" href="https://j3-fortran.org/doc/year/23/23-007r1.pdf">Fortran 202X standard</a>,
+which will soon be published as ISO Fortran 2023.
+I have compiled this summary of its changes relative to
+the current Fortran 2018 standard from the perspective
+of a <a class="reference external" href="https://github.com/llvm/llvm-project/tree/main/flang">Fortran compiler</a>
+implementor.</p>
+<section id="tl-dr">
+<h2>TL;DR<a class="headerlink" href="#tl-dr" title="Link to this heading">¶</a></h2>
+<p>Fortran 202X doesn’t make very many changes to the language
+relative to Fortran 2018, which was itself a small increment
+over Fortran 2008.
+Apart from <code class="docutils literal notranslate"><span class="pre">REDUCE</span></code> clauses that were added to the
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/flang/docs/DoConcurrent.md">still broken</a>
+<code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> construct, there’s little here for Fortran users
+to get excited about.</p>
+</section>
+<section id="priority-of-implementation-in-llvm-flang">
+<h2>Priority of implementation in LLVM Flang<a class="headerlink" href="#priority-of-implementation-in-llvm-flang" title="Link to this heading">¶</a></h2>
+<p>We are working hard to ensure that existing working applications will
+port successfully to LLVM Flang with minimal effort.
+I am not particularly concerned with conforming to a new
+standard as an end in itself.</p>
+<p>The only features below that appear to have already been implemented
+in other compilers are the <code class="docutils literal notranslate"><span class="pre">REDUCE</span></code> clauses and the degree trigonometric
+intrinsic functions, so those should have priority as an aid to
+portability.
+We would want to support them earlier even if they were not in a standard.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">REDUCE</span></code> clause also merits early implementation due to
+its potential for performance improvements in real codes.
+I don’t see any other feature here that would be relevant to
+performance (maybe a weak argument could be made for <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code>).
+The bulk of this revision unfortunately comprises changes to Fortran that
+are neither performance-related, already available in
+some compilers, nor (obviously) in use in existing codes.
+I will not prioritize implementing them myself over
+other work until they become portability concerns or are
+requested by actual users.</p>
+<p>Given Fortran’s history of the latency between new
+standards and the support for their features in real compilers,
+and then the extra lag before the features are then actually used
+in codes meant to be portable, I doubt that many of the items
+below will have to be worked on any time soon due to user demand.</p>
+<p>If J3 had chosen to add more features that were material improvements
+to Fortran – and there’s quite a long list of worthy candidates that
+were passed over, like read-only pointers – it would have made sense
+for me to prioritize their implementation in LLVM Flang more
+urgently.</p>
+</section>
+<section id="specific-change-descriptions">
+<h2>Specific change descriptions<a class="headerlink" href="#specific-change-descriptions" title="Link to this heading">¶</a></h2>
+<p>The individual features added to the language are summarized
+in what I see as their order of significance to Fortran users.</p>
+<section id="alert-there-s-a-breaking-change">
+<h3>Alert: There’s a breaking change!<a class="headerlink" href="#alert-there-s-a-breaking-change" title="Link to this heading">¶</a></h3>
+<p>The Fortran committee used to abhor making breaking changes,
+apart from fixes, so that conforming codes could be portable across
+time as well as across compilers.
+Fortran 202X, however, uncharacteristically perpetrates one such
+change to existing semantics that will silently cause existing
+codes to work differently, if that change were to be implemented
+and enabled by default.</p>
+<p>Specifically, automatic reallocation of whole deferred-length character
+allocatable scalars is now mandated when they appear for internal output
+(e.g., <code class="docutils literal notranslate"><span class="pre">WRITE(A,*)</span> <span class="pre">...</span></code>)
+or as output arguments for some statements and intrinsic procedures
+(e.g., <code class="docutils literal notranslate"><span class="pre">IOMSG=</span></code>, <code class="docutils literal notranslate"><span class="pre">ERRMSG=</span></code>).
+So existing codes that allocate output buffers
+for such things will, or would, now observe that their buffers are
+silently changing their lengths during execution, rather than being
+padded with blanks or being truncated.  For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">character</span><span class="p">(:),</span> <span class="n">allocatable</span> <span class="p">::</span> <span class="n">buffer</span>
+  <span class="n">allocate</span><span class="p">(</span><span class="n">character</span><span class="p">(</span><span class="mi">20</span><span class="p">)::</span><span class="n">buffer</span><span class="p">)</span>
+  <span class="n">write</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="s1">&#39;F5.3&#39;</span><span class="p">)</span> <span class="mf">3.14159</span>
+  <span class="nb">print</span> <span class="o">*</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">buffer</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>prints 20 with Fortran 2018 but would print 5 with Fortran 202X.</p>
+<p>There would have no problem with the new standard changing the
+behavior in the current error case of an unallocated variable;
+defining new semantics for old errors is a generally safe means
+for extending a programming language.
+However, in this case, we’ll need to protect existing conforming
+codes from the surprising new reallocation semantics, which
+affect cases that are not errors.</p>
+<p>When/if there are requests from real users to implement this breaking
+change, and if it is implemented, I’ll have to ensure that users
+have the ability to control this change in behavior via an option &amp;/or the
+runtime environment, and when it’s enabled, emit a warning at code
+sites that are at risk.
+This warning should mention a source change they can make to protect
+themselves from this change by passing the complete substring (<code class="docutils literal notranslate"><span class="pre">A(:)</span></code>)
+instead of a whole character allocatable.</p>
+<p>This feature reminds me of Fortran 2003’s change to whole
+allocatable array assignment, although in that case users were
+put at risk only of extra runtime overhead that was needless in
+existing codes, not a change in behavior, and users learned to
+assign to whole array sections (<code class="docutils literal notranslate"><span class="pre">A(:)=...</span></code>) rather than to whole
+allocatable arrays where the performance hit mattered.</p>
+</section>
+<section id="major-items">
+<h3>Major Items<a class="headerlink" href="#major-items" title="Link to this heading">¶</a></h3>
+<p>The features in this section are expensive to implement in
+terms of engineering time to design, code, refactor, and test
+(i.e., weeks or months, not days).</p>
+<section id="do-concurrent-reduce">
+<h4><code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span> <span class="pre">REDUCE</span></code><a class="headerlink" href="#do-concurrent-reduce" title="Link to this heading">¶</a></h4>
+<p>J3 continues to ignore the
+<a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/flang/docs/DoConcurrent.md">serious semantic problems</a>
+with <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>, despite the simplicity of the necessary fix and their
+admirable willingness to repair the standard to fix problems with
+other features (e.g., plugging holes in <code class="docutils literal notranslate"><span class="pre">PURE</span></code> procedure requirements)
+and their less admirable willingness to make breaking changes (see above).
+They did add <code class="docutils literal notranslate"><span class="pre">REDUCE</span></code> clauses to <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>, and those seem to be
+immediately useful to HPC codes and worth implementing soon.</p>
+</section>
+<section id="simple-procedures">
+<h4><code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> procedures<a class="headerlink" href="#simple-procedures" title="Link to this heading">¶</a></h4>
+<p>The new <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> procedures constitute a subset of F’95/HPF’s <code class="docutils literal notranslate"><span class="pre">PURE</span></code>
+procedures.
+There are things that one can do in a <code class="docutils literal notranslate"><span class="pre">PURE</span></code> procedure
+but cannot in a <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> one.  But the virtue of being <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> seems
+to be its own reward, not a requirement to access any other
+feature.</p>
+<p><code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> procedures might have been more useful had <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> been
+changed to require callees to be <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code>, not just <code class="docutils literal notranslate"><span class="pre">PURE</span></code>.</p>
+<p>The implementation of <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> will be nontrivial: it involves
+some parsing and symbol table work, and some generalization of the
+predicate function <code class="docutils literal notranslate"><span class="pre">IsPureProcedure()</span></code>, extending the semantic checking on
+calls in <code class="docutils literal notranslate"><span class="pre">PURE</span></code> procedures to ensure that <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> procedures
+only call other <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> procedures, and modifying the intrinsic
+procedure table to note that most intrinsics are now <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code>
+rather than just <code class="docutils literal notranslate"><span class="pre">PURE</span></code>.</p>
+<p>I don’t expect any codes to rush to change their <code class="docutils literal notranslate"><span class="pre">PURE</span></code> procedures
+to be <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code>, since it buys little and reduces portability.
+This makes <code class="docutils literal notranslate"><span class="pre">SIMPLE</span></code> a lower-priority feature.</p>
+</section>
+<section id="conditional-expressions-and-actual-arguments">
+<h4>Conditional expressions and actual arguments<a class="headerlink" href="#conditional-expressions-and-actual-arguments" title="Link to this heading">¶</a></h4>
+<p>Next on the list of “big ticket” items are C-style conditional
+expressions.  These come in two forms, each of which is a distinct
+feature that would be nontrivial to implement, and I would not be
+surprised to see some compilers implement one before the other.</p>
+<p>The first form is a new parenthesized expression primary that any C programmer
+would recognize.  It has straightforward parsing and semantics,
+but will require support in folding and all other code that
+processes expressions.  Lowering will be nontrivial due to
+control flow.</p>
+<p>The second form is a conditional actual argument syntax
+that allows runtime selection of argument associations, as well
+as a <code class="docutils literal notranslate"><span class="pre">.NIL.</span></code> syntax for optional arguments to signify an absent actual
+argument.  This would have been more useful if it had also been
+allowed as a pointer assignment statement right-hand side, and
+that might be a worthwhile extension.  As this form is essentially
+a conditional variable reference it may be cleaner to have a
+distinct representation from the conditional expression primary
+in the parse tree and strongly-typed <code class="docutils literal notranslate"><span class="pre">Expr&lt;T&gt;</span></code> representations.</p>
+</section>
+<section id="enumeration-type">
+<h4><code class="docutils literal notranslate"><span class="pre">ENUMERATION</span> <span class="pre">TYPE</span></code><a class="headerlink" href="#enumeration-type" title="Link to this heading">¶</a></h4>
+<p>Fortran 202X has a new category of type.  The new non-interoperable
+<code class="docutils literal notranslate"><span class="pre">ENUMERATION</span> <span class="pre">TYPE</span></code> feature is like C++’s <code class="docutils literal notranslate"><span class="pre">enum</span> <span class="pre">class</span></code> – not, unfortunately,
+a powerful sum data type as in Haskell or Rust.  Unlike the
+current <code class="docutils literal notranslate"><span class="pre">ENUM,</span> <span class="pre">BIND(C)</span></code> feature, <code class="docutils literal notranslate"><span class="pre">ENUMERATION</span> <span class="pre">TYPE</span></code> defines a new
+type name and its distinct values.</p>
+<p>This feature may well be the item requiring the largest patch to
+the compiler for its implementation, as it affects parsing,
+type checking on assignment and argument association, generic
+resolution, formatted I/O, NAMELIST, debugging symbols, &amp;c.
+It will indirectly affect every switch statement in the compiler
+that switches over the six (now seven) type categories.
+This will be a big project for little useful return to users.</p>
+</section>
+<section id="typeof-and-classof">
+<h4><code class="docutils literal notranslate"><span class="pre">TYPEOF</span></code> and <code class="docutils literal notranslate"><span class="pre">CLASSOF</span></code><a class="headerlink" href="#typeof-and-classof" title="Link to this heading">¶</a></h4>
+<p>Last on the list of “big ticket” items are the new TYPEOF and CLASSOF
+type specifiers, which allow declarations to indirectly use the
+types of previously-defined entities.  These would have obvious utility
+in a language with type polymorphism but aren’t going to be very
+useful yet in Fortran 202X (esp. <code class="docutils literal notranslate"><span class="pre">TYPEOF</span></code>), although they would be worth
+supporting as a utility feature for a parametric module extension.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CLASSOF</span></code> has implications for semantics and lowering that need to
+be thought through as it seems to provide a means of
+declaring polymorphic local variables and function results that are
+neither allocatables nor pointers.</p>
+</section>
+<section id="coarray-extensions">
+<h4>Coarray extensions:<a class="headerlink" href="#coarray-extensions" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">NOTIFY_TYPE</span></code>, <code class="docutils literal notranslate"><span class="pre">NOTIFY</span> <span class="pre">WAIT</span></code> statement, <code class="docutils literal notranslate"><span class="pre">NOTIFY=</span></code> specifier on image selector</p></li>
+<li><p>Arrays with coarray components</p></li>
+</ul>
+</section>
+<section id="rank-independent-features">
+<h4>“Rank Independent” Features<a class="headerlink" href="#rank-independent-features" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">RANK(n)</span></code> attribute declaration syntax is equivalent to
+<code class="docutils literal notranslate"><span class="pre">DIMENSION(:,:,...,:)</span></code> or an equivalent entity-decl containing <code class="docutils literal notranslate"><span class="pre">n</span></code> colons.
+As <code class="docutils literal notranslate"><span class="pre">n</span></code> must be a constant expression, that’s straightforward to implement,
+though not terribly useful until the language acquires additional features.
+(I can see some utility in being able to declare PDT components with a
+<code class="docutils literal notranslate"><span class="pre">RANK</span></code> that depends on a <code class="docutils literal notranslate"><span class="pre">KIND</span></code> type parameter.)</p>
+<p>It is now possible to declare the lower and upper bounds of an explicit
+shape entity using a constant-length vector specification expression
+in a declaration, <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code> statement, or pointer assignment with
+bounds remapping.
+For example, <code class="docutils literal notranslate"><span class="pre">real</span> <span class="pre">A([2,3])</span></code> is equivalent to <code class="docutils literal notranslate"><span class="pre">real</span> <span class="pre">A(2,3)</span></code>.</p>
+<p>The new <code class="docutils literal notranslate"><span class="pre">A(&#64;V)</span></code> “multiple subscript” indexing syntax uses an integer
+vector to supply a list of subscripts or of triplet bounds/strides.  This one
+has tough edge cases for lowering that need to be thought through;
+for example, when the lengths of two or more of the vectors in
+<code class="docutils literal notranslate"><span class="pre">A(&#64;U,&#64;V,&#64;W)</span></code> are not known at compilation time, implementing the indexing
+would be tricky in generated code and might just end up filling a
+temporary with <code class="docutils literal notranslate"><span class="pre">[U,V,W]</span></code> first.</p>
+<p>The obvious use case for “multiple subscripts” would be as a means to
+index into an assumed-rank dummy argument without the bother of a <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">RANK</span></code>
+construct, but that usage is not supported in Fortran 202X.</p>
+<p>This feature may well turn out to be Fortran 202X’s analog to Fortran 2003’s
+<code class="docutils literal notranslate"><span class="pre">LEN</span></code> derived type parameters.</p>
+</section>
+</section>
+<section id="minor-items">
+<h3>Minor Items<a class="headerlink" href="#minor-items" title="Link to this heading">¶</a></h3>
+<p>So much for the major features of Fortran 202X.  The longer list
+of minor features can be more briefly summarized.</p>
+<section id="new-edit-descriptors">
+<h4>New Edit Descriptors<a class="headerlink" href="#new-edit-descriptors" title="Link to this heading">¶</a></h4>
+<p>Fortran 202X has some noncontroversial small tweaks to formatted output.
+The <code class="docutils literal notranslate"><span class="pre">AT</span></code> edit descriptor automatically trims character output.  The <code class="docutils literal notranslate"><span class="pre">LZP</span></code>,
+<code class="docutils literal notranslate"><span class="pre">LZS</span></code>, and <code class="docutils literal notranslate"><span class="pre">LZ</span></code> control edit descriptors and <code class="docutils literal notranslate"><span class="pre">LEADING_ZERO=</span></code> specifier provide a
+means for controlling the output of leading zero digits.</p>
+</section>
+<section id="intrinsic-module-extensions">
+<h4>Intrinsic Module Extensions<a class="headerlink" href="#intrinsic-module-extensions" title="Link to this heading">¶</a></h4>
+<p>Addressing some issues and omissions in intrinsic modules:</p>
+<ul class="simple">
+<li><p>LOGICAL8/16/32/64 and REAL16</p></li>
+<li><p>IEEE module facilities upgraded to match latest IEEE FP standard</p></li>
+<li><p>C_F_STRPOINTER, F_C_STRING for NUL-terminated strings</p></li>
+<li><p>C_F_POINTER(LOWER=)</p></li>
+</ul>
+</section>
+<section id="intrinsic-procedure-extensions">
+<h4>Intrinsic Procedure Extensions<a class="headerlink" href="#intrinsic-procedure-extensions" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">SYSTEM_CLOCK</span></code> intrinsic function got some semantic tweaks.</p>
+<p>There are new intrinsic functions for trigonometric functions in
+units of degrees and half-circles.
+GNU Fortran already supports the forms that use degree units.
+These should call into math library implementations that are
+specialized for those units rather than simply multiplying
+arguments or results with conversion factors.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ACOSD</span></code>, <code class="docutils literal notranslate"><span class="pre">ASIND</span></code>, <code class="docutils literal notranslate"><span class="pre">ATAND</span></code>, <code class="docutils literal notranslate"><span class="pre">ATAN2D</span></code>, <code class="docutils literal notranslate"><span class="pre">COSD</span></code>, <code class="docutils literal notranslate"><span class="pre">SIND</span></code>, <code class="docutils literal notranslate"><span class="pre">TAND</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ACOSPI</span></code>, <code class="docutils literal notranslate"><span class="pre">ASINPI</span></code>, <code class="docutils literal notranslate"><span class="pre">ATANPI</span></code>, <code class="docutils literal notranslate"><span class="pre">ATAN2PI</span></code>, <code class="docutils literal notranslate"><span class="pre">COSPI</span></code>, <code class="docutils literal notranslate"><span class="pre">SINPI</span></code>, <code class="docutils literal notranslate"><span class="pre">TANPI</span></code></p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">SELECTED_LOGICAL_KIND</span></code> maps a bit size to a kind of <code class="docutils literal notranslate"><span class="pre">LOGICAL</span></code></p>
+<p>There are two new character utility intrinsic
+functions whose implementations have very low priority: <code class="docutils literal notranslate"><span class="pre">SPLIT</span></code> and <code class="docutils literal notranslate"><span class="pre">TOKENIZE</span></code>.
+<code class="docutils literal notranslate"><span class="pre">TOKENIZE</span></code> requires memory allocation to return its results,
+and could and should have been implemented once in some Fortran utility
+library for those who need a slow tokenization facility rather than
+requiring implementations in each vendor’s runtime support library with
+all the extra cost and compatibilty risk that entails.</p>
+<p><code class="docutils literal notranslate"><span class="pre">SPLIT</span></code> is worse – not only could it, like <code class="docutils literal notranslate"><span class="pre">TOKENIZE</span></code>,
+have been supplied by a Fortran utility library rather than being
+added to the standard, it’s redundant;
+it provides nothing that cannot be already accomplished by
+composing today’s <code class="docutils literal notranslate"><span class="pre">SCAN</span></code> intrinsic function with substring indexing:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>module m
+  interface split
+    module procedure :: split
+  end interface
+  !instantiate for all possible ck/ik/lk combinations
+  integer, parameter :: ck = kind(&#39;&#39;), ik = kind(0), lk = kind(.true.)
+ contains
+  simple elemental subroutine split(string, set, pos, back)
+    character(*, kind=ck), intent(in) :: string, set
+    integer(kind=ik), intent(in out) :: pos
+    logical(kind=lk), intent(in), optional :: back
+    if (present(back)) then
+      if (back) then
+        pos = scan(string(:pos-1), set, .true.)
+        return
+      end if
+    end if
+    npos = scan(string(pos+1:), set)
+    pos = merge(pos + npos, len(string) + 1, npos /= 0)
+  end
+end
+</pre></div>
+</div>
+<p>(The code above isn’t a proposed implementation for <code class="docutils literal notranslate"><span class="pre">SPLIT</span></code>, just a
+demonstration of how programs could use <code class="docutils literal notranslate"><span class="pre">SCAN</span></code> to accomplish the same
+results today.)</p>
+</section>
+</section>
+</section>
+<section id="source-limitations">
+<h2>Source limitations<a class="headerlink" href="#source-limitations" title="Link to this heading">¶</a></h2>
+<p>Fortran 202X raises the maximum number of characters per free form
+source line and the maximum total number of characters per statement.
+Both of these have always been unlimited in this compiler (or
+limited only by available memory, to be more accurate.)</p>
+</section>
+<section id="more-boz-usage-opportunities">
+<h2>More BOZ usage opportunities<a class="headerlink" href="#more-boz-usage-opportunities" title="Link to this heading">¶</a></h2>
+<p>BOZ literal constants (binary, octal, and hexadecimal constants,
+also known as “typeless” values) have more conforming usage in the
+new standard in contexts where the type is unambiguously known.
+They may now appear as initializers, as right-hand sides of intrinsic
+assignments to integer and real variables, in explicitly typed
+array constructors, and in the definitions of enumerations.</p>
+</section>
+<section id="citation-updates">
+<h2>Citation updates<a class="headerlink" href="#citation-updates" title="Link to this heading">¶</a></h2>
+<p>The source base contains hundreds of references to the subclauses,
+requirements, and constraints of the Fortran 2018 standard, mostly in code comments.
+These will need to be mapped to their Fortran 202X counterparts once the
+new standard is published, as the Fortran committee does not provide a
+means for citing these items by names that are fixed over time like the
+C++ committee does.
+If we had access to the LaTeX sources of the standard, we could generate
+a mapping table and automate this update.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Extensions.html">Fortran Extensions supported by Flang</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="FIRArrayOperations.html">Design: FIR Array operations</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Mar 04, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

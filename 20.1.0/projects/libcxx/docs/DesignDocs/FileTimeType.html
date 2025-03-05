@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>File Time Type &#8212; libc++  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css?v=e491ac2d" />
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Header Removal Policy" href="HeaderRemovalPolicy.html" />
+    <link rel="prev" title="Feature Test Macros" href="FeatureTestMacros.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../index.html">
+          <span>libc++  documentation</span></a></h1>
+        <h2 class="heading"><span>File Time Type</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="FeatureTestMacros.html">Feature Test Macros</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="HeaderRemovalPolicy.html">Header Removal Policy</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="file-time-type">
+<h1>File Time Type<a class="headerlink" href="#file-time-type" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#motivation" id="id1">Motivation</a></p></li>
+<li><p><a class="reference internal" href="#problems-to-consider" id="id2">Problems To Consider</a></p>
+<ul>
+<li><p><a class="reference internal" href="#having-a-smaller-range-than-timespec" id="id3">Having a Smaller Range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code></a></p></li>
+<li><p><a class="reference internal" href="#having-a-smaller-resolution-than-timespec" id="id4">Having a Smaller Resolution than <code class="docutils literal notranslate"><span class="pre">timespec</span></code></a></p></li>
+<li><p><a class="reference internal" href="#having-a-larger-range-than-timespec" id="id5">Having a Larger Range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#potential-solutions-and-their-complications" id="id6">Potential Solutions And Their Complications</a></p>
+<ul>
+<li><p><a class="reference internal" href="#source-code-portability-across-implementations" id="id7">Source Code Portability Across Implementations</a></p></li>
+<li><p><a class="reference internal" href="#chrono-and-timespec-emulation" id="id8">Chrono and <code class="docutils literal notranslate"><span class="pre">timespec</span></code> Emulation.</a></p></li>
+<li><p><a class="reference internal" href="#interactions-with-32-bit-time-t" id="id9">Interactions with 32 bit <code class="docutils literal notranslate"><span class="pre">time_t</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#summary" id="id10">Summary</a></p>
+<ul>
+<li><p><a class="reference internal" href="#the-potential-solutions" id="id11">The Potential Solutions</a></p>
+<ul>
+<li><p><a class="reference internal" href="#long-long-the-status-quo" id="id12"><code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code> - The Status Quo</a></p></li>
+<li><p><a class="reference internal" href="#int128-t" id="id13">__int128_t</a></p></li>
+<li><p><a class="reference internal" href="#arithmetic-timespec-emulation" id="id14">Arithmetic <code class="docutils literal notranslate"><span class="pre">timespec</span></code> Emulation</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#selected-solution-using-int128-t" id="id15">Selected Solution - Using <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code></a></p></li>
+</ul>
+</nav>
+<section id="motivation">
+<span id="file-time-type-motivation"></span><h2><a class="toc-backref" href="#id1" role="doc-backlink">Motivation</a><a class="headerlink" href="#motivation" title="Link to this heading">¶</a></h2>
+<p>The filesystem library provides interfaces for getting and setting the last
+write time of a file or directory. The interfaces use the <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code>
+type, which is a specialization of <code class="docutils literal notranslate"><span class="pre">chrono::time_point</span></code> for the
+“filesystem clock”. According to [fs.filesystem.syn]</p>
+<blockquote>
+<div><p>trivial-clock is an implementation-defined type that satisfies the
+Cpp17TrivialClock requirements ([time.clock.req]) and that is capable of
+representing and measuring file time values. Implementations should ensure
+that the resolution and range of file_time_type reflect the operating
+system dependent resolution and range of file time values.</p>
+</div></blockquote>
+<p>On POSIX systems, file times are represented using the <code class="docutils literal notranslate"><span class="pre">timespec</span></code> struct,
+which is defined as follows:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">timespec</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">time_t</span><span class="w"> </span><span class="n">tv_sec</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">long</span><span class="w">   </span><span class="n">tv_nsec</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>To represent the range and resolution of <code class="docutils literal notranslate"><span class="pre">timespec</span></code>, we need to (A) have
+nanosecond resolution, and (B) use more than 64 bits (assuming a 64 bit <code class="docutils literal notranslate"><span class="pre">time_t</span></code>).</p>
+<p>As the standard requires us to use the <code class="docutils literal notranslate"><span class="pre">chrono</span></code> interface, we have to define
+our own filesystem clock which specifies the period and representation of
+the time points and duration it provides. It will look like this:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">_FilesystemClock</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">period</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nano</span><span class="p">;</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">rep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">TBD</span><span class="p">;</span><span class="w"> </span><span class="c1">// What is this?</span>
+
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">duration</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chrono</span><span class="o">::</span><span class="n">duration</span><span class="o">&lt;</span><span class="n">rep</span><span class="p">,</span><span class="w"> </span><span class="n">period</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">time_point</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chrono</span><span class="o">::</span><span class="n">time_point</span><span class="o">&lt;</span><span class="n">_FilesystemClock</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="w">  </span><span class="c1">// ... //</span>
+<span class="p">};</span>
+
+<span class="k">using</span><span class="w"> </span><span class="n">file_time_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">_FilesystemClock</span><span class="o">::</span><span class="n">time_point</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>To get nanosecond resolution, we simply define <code class="docutils literal notranslate"><span class="pre">period</span></code> to be <code class="docutils literal notranslate"><span class="pre">std::nano</span></code>.
+But what type can we use as the arithmetic representation that is capable
+of representing the range of the <code class="docutils literal notranslate"><span class="pre">timespec</span></code> struct?</p>
+</section>
+<section id="problems-to-consider">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Problems To Consider</a><a class="headerlink" href="#problems-to-consider" title="Link to this heading">¶</a></h2>
+<p>Before considering solutions, let’s consider the problems they should solve,
+and how important solving those problems are:</p>
+<section id="having-a-smaller-range-than-timespec">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Having a Smaller Range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code></a><a class="headerlink" href="#having-a-smaller-range-than-timespec" title="Link to this heading">¶</a></h3>
+<p>One solution to the range problem is to simply reduce the resolution of
+<code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> to be less than that of nanoseconds. This is what libc++’s
+initial implementation of <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> did; it’s also what
+<code class="docutils literal notranslate"><span class="pre">std::system_clock</span></code> does. As a result, it can represent time points about
+292 thousand years on either side of the epoch, as opposed to only 292 years
+at nanosecond resolution.</p>
+<p><code class="docutils literal notranslate"><span class="pre">timespec</span></code> can represent time points +/- 292 billion years from the epoch
+(just in case you needed a time point 200 billion years before the big bang,
+and with nanosecond resolution).</p>
+<p>To get the same range, we would need to drop our resolution to that of seconds
+to come close to having the same range.</p>
+<p>This begs the question, is the range problem “really a problem”? Sane usages
+of file time stamps shouldn’t exceed +/- 300 years, so should we care to support it?</p>
+<p>I believe the answer is yes. We’re not designing the filesystem time API, we’re
+providing glorified C++ wrappers for it. If the underlying API supports
+a value, then we should too. Our wrappers should not place artificial restrictions
+on users that are not present in the underlying filesystem.</p>
+<p>Having a smaller range that the underlying filesystem forces the
+implementation to report <code class="docutils literal notranslate"><span class="pre">value_too_large</span></code> errors when it encounters a time
+point that it can’t represent. This can cause the call to <code class="docutils literal notranslate"><span class="pre">last_write_time</span></code>
+to throw in cases where the user was confident the call should succeed. (See below)</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;filesystem&gt;</span>
+<span class="k">using</span><span class="w"> </span><span class="k">namespace</span><span class="w"> </span><span class="nn">std</span><span class="o">::</span><span class="nn">filesystem</span><span class="p">;</span>
+
+<span class="c1">// Set the times using the system interface.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">set_file_times</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">timespec</span><span class="w"> </span><span class="n">ts</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">timespec</span><span class="w"> </span><span class="n">both_times</span><span class="p">[</span><span class="mi">2</span><span class="p">];</span>
+<span class="w">  </span><span class="n">both_times</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ts</span><span class="p">;</span>
+<span class="w">  </span><span class="n">both_times</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ts</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">::</span><span class="n">utimensat</span><span class="p">(</span><span class="n">AT_FDCWD</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="n">both_times</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">result</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="mi">-1</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// Called elsewhere to set the file time to something insane, and way</span>
+<span class="c1">// out of the 300 year range we might expect.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">some_bad_persons_code</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">timespec</span><span class="w"> </span><span class="n">new_times</span><span class="p">;</span>
+<span class="w">  </span><span class="n">new_times</span><span class="p">.</span><span class="n">tv_sec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">numeric_limits</span><span class="o">&lt;</span><span class="kt">time_t</span><span class="o">&gt;::</span><span class="n">max</span><span class="p">();</span>
+<span class="w">  </span><span class="n">new_times</span><span class="p">.</span><span class="n">tv_nsec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">set_file_times</span><span class="p">(</span><span class="s">&quot;/tmp/foo&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">new_times</span><span class="p">);</span><span class="w"> </span><span class="c1">// OK, supported by most FSes</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="o">**</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">path</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;/tmp/foo&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">file_status</span><span class="w"> </span><span class="n">st</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">status</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">exists</span><span class="p">(</span><span class="n">st</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="o">!</span><span class="n">is_regular_file</span><span class="p">(</span><span class="n">st</span><span class="p">))</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">((</span><span class="n">st</span><span class="p">.</span><span class="n">permissions</span><span class="p">()</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">perms</span><span class="o">::</span><span class="n">others_read</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">perms</span><span class="o">::</span><span class="n">none</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="c1">// It seems reasonable to assume this call should succeed.</span>
+<span class="w">  </span><span class="n">file_time_type</span><span class="w"> </span><span class="n">tp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">last_write_time</span><span class="p">(</span><span class="n">p</span><span class="p">);</span><span class="w"> </span><span class="c1">// BAD! Throws value_too_large.</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="having-a-smaller-resolution-than-timespec">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Having a Smaller Resolution than <code class="docutils literal notranslate"><span class="pre">timespec</span></code></a><a class="headerlink" href="#having-a-smaller-resolution-than-timespec" title="Link to this heading">¶</a></h3>
+<p>As mentioned in the previous section, one way to solve the range problem
+is by reducing the resolution. But matching the range of <code class="docutils literal notranslate"><span class="pre">timespec</span></code> using a
+64 bit representation requires limiting the resolution to seconds.</p>
+<p>So we might ask: Do users “need” nanosecond precision? Is seconds not good enough?
+I limit my consideration of the point to this: Why was it not good enough for
+the underlying system interfaces? If it wasn’t good enough for them, then it
+isn’t good enough for us. Our job is to match the filesystems range and
+representation, not design it.</p>
+</section>
+<section id="having-a-larger-range-than-timespec">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Having a Larger Range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code></a><a class="headerlink" href="#having-a-larger-range-than-timespec" title="Link to this heading">¶</a></h3>
+<p>We should also consider the opposite problem of having a <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code>
+that is able to represent a larger range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code>. At least in
+this case <code class="docutils literal notranslate"><span class="pre">last_write_time</span></code> can be used to get and set all possible values
+supported by the underlying filesystem; meaning <code class="docutils literal notranslate"><span class="pre">last_write_time(p)</span></code> will
+never throw an overflow error when retrieving a value.</p>
+<p>However, this introduces a new problem, where users are allowed to attempt to
+create a time point beyond what the filesystem can represent. Two particular
+values which cause this are <code class="docutils literal notranslate"><span class="pre">file_time_type::min()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">file_time_type::max()</span></code>. As a result, the following code would throw:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">test</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">last_write_time</span><span class="p">(</span><span class="s">&quot;/tmp/foo&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">file_time_type</span><span class="o">::</span><span class="n">max</span><span class="p">());</span><span class="w"> </span><span class="c1">// Throws</span>
+<span class="w">  </span><span class="n">last_write_time</span><span class="p">(</span><span class="s">&quot;/tmp/foo&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">file_time_type</span><span class="o">::</span><span class="n">min</span><span class="p">());</span><span class="w"> </span><span class="c1">// Throws.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Apart from cases explicitly using <code class="docutils literal notranslate"><span class="pre">min</span></code> and <code class="docutils literal notranslate"><span class="pre">max</span></code>, I don’t see users taking
+a valid time point, adding a couple hundred billions of years in error,
+and then trying to update a file’s write time to that value very often.</p>
+<p>Compared to having a smaller range, this problem seems preferable. At least
+now we can represent any time point the filesystem can, so users won’t be forced
+to revert back to system interfaces to avoid limitations in the C++ STL.</p>
+<p>I posit that we should only consider this concern <em>after</em> we have something
+with at least the same range and resolution of the underlying filesystem. The
+latter two problems are much more important to solve.</p>
+</section>
+</section>
+<section id="potential-solutions-and-their-complications">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Potential Solutions And Their Complications</a><a class="headerlink" href="#potential-solutions-and-their-complications" title="Link to this heading">¶</a></h2>
+<section id="source-code-portability-across-implementations">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Source Code Portability Across Implementations</a><a class="headerlink" href="#source-code-portability-across-implementations" title="Link to this heading">¶</a></h3>
+<p>As we’ve discussed, <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> needs a representation that uses more
+than 64 bits. The possible solutions include using <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code>, emulating a
+128 bit integer using a class, or potentially defining a <code class="docutils literal notranslate"><span class="pre">timespec</span></code> like
+arithmetic type. All three will allow us to, at minimum, match the range
+and resolution, and the last one might even allow us to match them exactly.</p>
+<p>But when considering these potential solutions we need to consider more than
+just the values they can represent. We need to consider the effects they will
+have on users and their code. For example, each of them breaks the following
+code in some way:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Bug caused by an unexpected &#39;rep&#39; type returned by count.</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">print_time</span><span class="p">(</span><span class="n">path</span><span class="w"> </span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// __int128_t doesn&#39;t have streaming operators, and neither would our</span>
+<span class="w">  </span><span class="c1">// custom arithmetic types.</span>
+<span class="w">  </span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">last_write_time</span><span class="p">(</span><span class="n">p</span><span class="p">).</span><span class="n">time_since_epoch</span><span class="p">().</span><span class="n">count</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">endl</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// Overflow during creation bug.</span>
+<span class="n">file_time_type</span><span class="w"> </span><span class="nf">timespec_to_file_time_type</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">timespec</span><span class="w"> </span><span class="n">ts</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// woops! chrono::seconds and chrono::nanoseconds use a 64 bit representation</span>
+<span class="w">  </span><span class="c1">// this may overflow before it&#39;s converted to a file_time_type.</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">dur</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">seconds</span><span class="p">(</span><span class="n">ts</span><span class="p">.</span><span class="n">tv_sec</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">nanoseconds</span><span class="p">(</span><span class="n">ts</span><span class="p">.</span><span class="n">tv_nsec</span><span class="p">);</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">file_time_type</span><span class="p">(</span><span class="n">dur</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="n">file_time_type</span><span class="w"> </span><span class="nf">correct_timespec_to_file_time_type</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">timespec</span><span class="w"> </span><span class="n">ts</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// This is the correct version of the above example, where we</span>
+<span class="w">  </span><span class="c1">// avoid using the chrono typedefs as they&#39;re not sufficient.</span>
+<span class="w">  </span><span class="c1">// Can we expect users to avoid this bug?</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">fs_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chrono</span><span class="o">::</span><span class="n">duration</span><span class="o">&lt;</span><span class="n">file_time_type</span><span class="o">::</span><span class="n">rep</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">fs_nanoseconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chrono</span><span class="o">::</span><span class="n">duration</span><span class="o">&lt;</span><span class="n">file_time_type</span><span class="o">::</span><span class="n">rep</span><span class="p">,</span><span class="w"> </span><span class="n">nano</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">dur</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs_seconds</span><span class="p">(</span><span class="n">ts</span><span class="p">.</span><span class="n">tv_sec</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">fs_nanoseconds</span><span class="p">(</span><span class="n">tv</span><span class="p">.</span><span class="n">tv_nsec</span><span class="p">);</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">file_time_type</span><span class="p">(</span><span class="n">dur</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">// Implicit truncation during conversion bug.</span>
+<span class="kt">intmax_t</span><span class="w"> </span><span class="nf">get_time_in_seconds</span><span class="p">(</span><span class="n">path</span><span class="w"> </span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">fs_seconds</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">duration</span><span class="o">&lt;</span><span class="n">file_time_type</span><span class="o">::</span><span class="n">rep</span><span class="p">,</span><span class="w"> </span><span class="n">ratio</span><span class="o">&lt;</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&gt;</span><span class="w"> </span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">tp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">last_write_time</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">// This works with truncation for __int128_t, but what does it do for</span>
+<span class="w">  </span><span class="c1">// our custom arithmetic types.</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">duration_cast</span><span class="o">&lt;</span><span class="n">fs_seconds</span><span class="o">&gt;</span><span class="p">().</span><span class="n">count</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Each of the above examples would require a user to adjust their filesystem code
+to the particular eccentricities of the representation, hopefully only in such
+a way that the code is still portable across implementations.</p>
+<p>At least some of the above issues are unavoidable, no matter what
+representation we choose. But some representations may be quirkier than others,
+and, as I’ll argue later, using an actual arithmetic type (<code class="docutils literal notranslate"><span class="pre">__int128_t</span></code>)
+provides the least aberrant behavior.</p>
+</section>
+<section id="chrono-and-timespec-emulation">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Chrono and <code class="docutils literal notranslate"><span class="pre">timespec</span></code> Emulation.</a><a class="headerlink" href="#chrono-and-timespec-emulation" title="Link to this heading">¶</a></h3>
+<p>One of the options we’ve considered is using something akin to <code class="docutils literal notranslate"><span class="pre">timespec</span></code>
+to represent the <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code>. It only seems natural seeing as that’s
+what the underlying system uses, and because it might allow us to match
+the range and resolution exactly. But would it work with chrono? And could
+it still act at all like a <code class="docutils literal notranslate"><span class="pre">timespec</span></code> struct?</p>
+<p>For ease of consideration, let’s consider what the implementation might
+look like.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">fs_timespec_rep</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fs_timespec_rep</span><span class="p">(</span><span class="kt">long</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="n">v</span><span class="p">)</span>
+<span class="w">    </span><span class="o">:</span><span class="w"> </span><span class="n">tv_sec</span><span class="p">(</span><span class="n">v</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">nano</span><span class="o">::</span><span class="n">den</span><span class="p">),</span><span class="w"> </span><span class="n">tv_nsec</span><span class="p">(</span><span class="n">v</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">nano</span><span class="o">::</span><span class="n">den</span><span class="p">)</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="kt">time_t</span><span class="w"> </span><span class="n">tv_sec</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">long</span><span class="w"> </span><span class="n">tv_nsec</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="kt">bool</span><span class="w"> </span><span class="k">operator</span><span class="o">==</span><span class="p">(</span><span class="n">fs_timespec_rep</span><span class="p">,</span><span class="w"> </span><span class="n">fs_timespec_rep</span><span class="p">);</span>
+<span class="n">fs_int128_rep</span><span class="w"> </span><span class="k">operator</span><span class="o">+</span><span class="p">(</span><span class="n">fs_timespec_rep</span><span class="p">,</span><span class="w"> </span><span class="n">fs_timespec_rep</span><span class="p">);</span>
+<span class="c1">// ... arithmetic operators ... //</span>
+</pre></div>
+</div>
+<p>The first thing to notice is that we can’t construct <code class="docutils literal notranslate"><span class="pre">fs_timespec_rep</span></code> like
+a <code class="docutils literal notranslate"><span class="pre">timespec</span></code> by passing <code class="docutils literal notranslate"><span class="pre">{secs,</span> <span class="pre">nsecs}</span></code>. Instead we’re limited to
+constructing it from a single 64 bit integer.</p>
+<p>We also can’t allow the user to inspect the <code class="docutils literal notranslate"><span class="pre">tv_sec</span></code> or <code class="docutils literal notranslate"><span class="pre">tv_nsec</span></code> values
+directly. A <code class="docutils literal notranslate"><span class="pre">chrono::duration</span></code> represents its value as a tick period and a
+number of ticks stored using <code class="docutils literal notranslate"><span class="pre">rep</span></code>. The representation is unaware of the
+tick period it is being used to represent, but <code class="docutils literal notranslate"><span class="pre">timespec</span></code> is setup to assume
+a nanosecond tick period; which is the only case where the names <code class="docutils literal notranslate"><span class="pre">tv_sec</span></code>
+and <code class="docutils literal notranslate"><span class="pre">tv_nsec</span></code> match the values they store.</p>
+<p>When we convert a nanosecond duration to seconds, <code class="docutils literal notranslate"><span class="pre">fs_timespec_rep</span></code> will
+use <code class="docutils literal notranslate"><span class="pre">tv_sec</span></code> to represent the number of giga seconds, and <code class="docutils literal notranslate"><span class="pre">tv_nsec</span></code> the
+remaining seconds. Let’s consider how this might cause a bug were users allowed
+to manipulate the fields directly.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">class</span><span class="w"> </span><span class="nc">Period</span><span class="o">&gt;</span>
+<span class="n">timespec</span><span class="w"> </span><span class="n">convert_to_timespec</span><span class="p">(</span><span class="n">duration</span><span class="o">&lt;</span><span class="n">fs_time_rep</span><span class="p">,</span><span class="w"> </span><span class="n">Period</span><span class="o">&gt;</span><span class="w"> </span><span class="n">dur</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fs_timespec_rep</span><span class="w"> </span><span class="n">rep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">dur</span><span class="p">.</span><span class="n">count</span><span class="p">();</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="n">rep</span><span class="p">.</span><span class="n">tv_sec</span><span class="p">,</span><span class="w"> </span><span class="n">rep</span><span class="p">.</span><span class="n">tv_nsec</span><span class="p">};</span><span class="w"> </span><span class="c1">// Oops! Period may not be nanoseconds.</span>
+<span class="p">}</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">class</span><span class="w"> </span><span class="nc">Duration</span><span class="o">&gt;</span>
+<span class="n">Duration</span><span class="w"> </span><span class="n">convert_to_duration</span><span class="p">(</span><span class="n">timespec</span><span class="w"> </span><span class="n">ts</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Duration</span><span class="w"> </span><span class="nf">dur</span><span class="p">({</span><span class="n">ts</span><span class="p">.</span><span class="n">tv_sec</span><span class="p">,</span><span class="w"> </span><span class="n">ts</span><span class="p">.</span><span class="n">tv_nsec</span><span class="p">});</span><span class="w"> </span><span class="c1">// Oops! Period may not be nanoseconds.</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">file_time_type</span><span class="p">(</span><span class="n">dur</span><span class="p">);</span>
+<span class="w">  </span><span class="n">file_time_type</span><span class="w"> </span><span class="n">tp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">last_write_time</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">dur</span><span class="w"> </span><span class="o">=</span>
+<span class="p">}</span>
+
+<span class="kt">time_t</span><span class="w"> </span><span class="n">extract_seconds</span><span class="p">(</span><span class="n">file_time_type</span><span class="w"> </span><span class="n">tp</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// Converting to seconds is a silly bug, but I could see it happening.</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">SecsT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chrono</span><span class="o">::</span><span class="n">duration</span><span class="o">&lt;</span><span class="n">file_time_type</span><span class="o">::</span><span class="n">rep</span><span class="p">,</span><span class="w"> </span><span class="n">ratio</span><span class="o">&lt;</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&gt;&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">secs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">duration_cast</span><span class="o">&lt;</span><span class="n">Secs</span><span class="o">&gt;</span><span class="p">(</span><span class="n">tp</span><span class="p">.</span><span class="n">time_since_epoch</span><span class="p">());</span>
+<span class="w">  </span><span class="c1">// tv_sec is now representing gigaseconds.</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">secs</span><span class="p">.</span><span class="n">count</span><span class="p">().</span><span class="n">tv_sec</span><span class="p">;</span><span class="w"> </span><span class="c1">// Oops!</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Despite <code class="docutils literal notranslate"><span class="pre">fs_timespec_rep</span></code> not being usable in any manner resembling
+<code class="docutils literal notranslate"><span class="pre">timespec</span></code>, it still might buy us our goal of matching its range exactly,
+right?</p>
+<p>Sort of. Chrono provides a specialization point which specifies the minimum
+and maximum values for a custom representation. It looks like this:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">duration_values</span><span class="o">&lt;</span><span class="n">fs_timespec_rep</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="n">fs_timespec_rep</span><span class="w"> </span><span class="nf">zero</span><span class="p">();</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="n">fs_timespec_rep</span><span class="w"> </span><span class="nf">min</span><span class="p">();</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="n">fs_timespec_rep</span><span class="w"> </span><span class="nf">max</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// assume friendship.</span>
+<span class="w">    </span><span class="n">fs_timespec_rep</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
+<span class="w">    </span><span class="n">val</span><span class="p">.</span><span class="n">tv_sec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">numeric_limits</span><span class="o">&lt;</span><span class="kt">time_t</span><span class="o">&gt;::</span><span class="n">max</span><span class="p">();</span>
+<span class="w">    </span><span class="n">val</span><span class="p">.</span><span class="n">tv_nsec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nano</span><span class="o">::</span><span class="n">den</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">val</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>Notice that <code class="docutils literal notranslate"><span class="pre">duration_values</span></code> doesn’t tell the representation what tick
+period it’s actually representing. This would indeed correctly limit the range
+of <code class="docutils literal notranslate"><span class="pre">duration&lt;fs_timespec_rep,</span> <span class="pre">nano&gt;</span></code> to exactly that of <code class="docutils literal notranslate"><span class="pre">timespec</span></code>. But
+nanoseconds isn’t the only tick period it will be used to represent. For
+example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">test</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">rep</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">file_time_type</span><span class="o">::</span><span class="n">rep</span><span class="p">;</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">fs_nsec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">duration</span><span class="o">&lt;</span><span class="n">rep</span><span class="p">,</span><span class="w"> </span><span class="n">nano</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">using</span><span class="w"> </span><span class="n">fs_sec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">duration</span><span class="o">&lt;</span><span class="n">rep</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">fs_nsec</span><span class="w"> </span><span class="n">nsecs</span><span class="p">(</span><span class="n">fs_seconds</span><span class="o">::</span><span class="n">max</span><span class="p">());</span><span class="w"> </span><span class="c1">// Truncates</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Though the above example may appear silly, I think it follows from the incorrect
+notion that using a <code class="docutils literal notranslate"><span class="pre">timespec</span></code> rep in chrono actually makes it act as if it
+were an actual <code class="docutils literal notranslate"><span class="pre">timespec</span></code>.</p>
+</section>
+<section id="interactions-with-32-bit-time-t">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Interactions with 32 bit <code class="docutils literal notranslate"><span class="pre">time_t</span></code></a><a class="headerlink" href="#interactions-with-32-bit-time-t" title="Link to this heading">¶</a></h3>
+<p>Up until now we’ve only be considering cases where <code class="docutils literal notranslate"><span class="pre">time_t</span></code> is 64 bits, but what
+about 32 bit systems/builds where <code class="docutils literal notranslate"><span class="pre">time_t</span></code> is 32 bits? (this is the common case
+for 32 bit builds).</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">time_t</span></code> is 32 bits, we can implement <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> simply using 64-bit
+<code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code>. There is no need to get either <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code> or <code class="docutils literal notranslate"><span class="pre">timespec</span></code> emulation
+involved. And nor should we, as it would suffer from the numerous complications
+described by this paper.</p>
+<p>Obviously our implementation for 32-bit builds should act as similarly to the
+64-bit build as possible. Code which compiles in one, should compile in the other.
+This consideration is important when choosing between <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code> and
+emulating <code class="docutils literal notranslate"><span class="pre">timespec</span></code>. The solution which provides the most uniformity with
+the least eccentricity is the preferable one.</p>
+</section>
+</section>
+<section id="summary">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Summary</a><a class="headerlink" href="#summary" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> time point is used to represent the write times for files.
+Its job is to act as part of a C++ wrapper for less ideal system interfaces. The
+underlying filesystem uses the <code class="docutils literal notranslate"><span class="pre">timespec</span></code> struct for the same purpose.</p>
+<p>However, the initial implementation of <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> could not represent
+either the range or resolution of <code class="docutils literal notranslate"><span class="pre">timespec</span></code>, making it unsuitable. Fixing
+this requires an implementation which uses more than 64 bits to store the
+time point.</p>
+<p>We primarily considered two solutions: Using <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code> and using a
+arithmetic emulation of <code class="docutils literal notranslate"><span class="pre">timespec</span></code>. Each has its pros and cons, and both
+come with more than one complication.</p>
+<section id="the-potential-solutions">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">The Potential Solutions</a><a class="headerlink" href="#the-potential-solutions" title="Link to this heading">¶</a></h3>
+<section id="long-long-the-status-quo">
+<h4><a class="toc-backref" href="#id12" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code> - The Status Quo</a><a class="headerlink" href="#long-long-the-status-quo" title="Link to this heading">¶</a></h4>
+<p>Pros:</p>
+<ul class="simple">
+<li><p>As a type <code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code> plays the nicest with others:</p>
+<ul>
+<li><p>It works with streaming operators and other library entities which support
+builtin integer types, but don’t support <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code>.</p></li>
+<li><p>Its the representation used by chrono’s <code class="docutils literal notranslate"><span class="pre">nanosecond</span></code> and <code class="docutils literal notranslate"><span class="pre">second</span></code> typedefs.</p></li>
+</ul>
+</li>
+</ul>
+<p>Cons:</p>
+<ul class="simple">
+<li><p>It cannot provide the same resolution as <code class="docutils literal notranslate"><span class="pre">timespec</span></code> unless we limit it
+to a range of +/- 300 years from the epoch.</p></li>
+<li><p>It cannot provide the same range as <code class="docutils literal notranslate"><span class="pre">timespec</span></code> unless we limit its resolution
+to seconds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">last_write_time</span></code> has to report an error when the time reported by the filesystem
+is unrepresentable.</p></li>
+</ul>
+</section>
+<section id="int128-t">
+<h4><a class="toc-backref" href="#id13" role="doc-backlink">__int128_t</a><a class="headerlink" href="#int128-t" title="Link to this heading">¶</a></h4>
+<p>Pros:</p>
+<ul>
+<li><p>It is an integer type.</p></li>
+<li><p>It makes the implementation simple and efficient.</p></li>
+<li><p>Acts exactly like other arithmetic types.</p></li>
+<li><p>Can be implicitly converted to a builtin integer type by the user.</p>
+<ul>
+<li><p>This is important for doing things like:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">c_interface_using_time_t</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="o">*</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">time_t</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="n">path</span><span class="w"> </span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">file_time_type</span><span class="w"> </span><span class="n">tp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">last_write_time</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">time_t</span><span class="w"> </span><span class="n">secs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">duration_cast</span><span class="o">&lt;</span><span class="n">seconds</span><span class="o">&gt;</span><span class="p">(</span><span class="n">tp</span><span class="p">.</span><span class="n">time_since_epoch</span><span class="p">()).</span><span class="n">count</span><span class="p">();</span>
+<span class="w">  </span><span class="n">c_interface_using_time_t</span><span class="p">(</span><span class="n">p</span><span class="p">.</span><span class="n">c_str</span><span class="p">(),</span><span class="w"> </span><span class="n">secs</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+</ul>
+</li>
+</ul>
+<p>Cons:</p>
+<ul class="simple">
+<li><p>It isn’t always available (but on 64 bit machines, it normally is).</p></li>
+<li><p>It causes <code class="docutils literal notranslate"><span class="pre">file_time_type</span></code> to have a larger range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code>.</p></li>
+<li><p>It doesn’t always act the same as other builtin integer types. For example
+with <code class="docutils literal notranslate"><span class="pre">cout</span></code> or <code class="docutils literal notranslate"><span class="pre">to_string</span></code>.</p></li>
+<li><p>Allows implicit truncation to 64 bit integers.</p></li>
+<li><p>It can be implicitly converted to a builtin integer type by the user,
+truncating its value.</p></li>
+</ul>
+</section>
+<section id="arithmetic-timespec-emulation">
+<h4><a class="toc-backref" href="#id14" role="doc-backlink">Arithmetic <code class="docutils literal notranslate"><span class="pre">timespec</span></code> Emulation</a><a class="headerlink" href="#arithmetic-timespec-emulation" title="Link to this heading">¶</a></h4>
+<p>Pros:</p>
+<ul class="simple">
+<li><p>It has the exact same range and resolution of <code class="docutils literal notranslate"><span class="pre">timespec</span></code> when representing
+a nanosecond tick period.</p></li>
+<li><p>It’s always available, unlike <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code>.</p></li>
+</ul>
+<p>Cons:</p>
+<ul class="simple">
+<li><p>It has a larger range when representing any period longer than a nanosecond.</p></li>
+<li><p>Doesn’t actually allow users to use it like a <code class="docutils literal notranslate"><span class="pre">timespec</span></code>.</p></li>
+<li><p>The required representation of using <code class="docutils literal notranslate"><span class="pre">tv_sec</span></code> to store the giga tick count
+and <code class="docutils literal notranslate"><span class="pre">tv_nsec</span></code> to store the remainder adds nothing over a 128 bit integer,
+but complicates a lot.</p></li>
+<li><p>It isn’t a builtin integer type, and can’t be used anything like one.</p></li>
+<li><p>Chrono can be made to work with it, but not nicely.</p></li>
+<li><p>Emulating arithmetic classes come with their own host of problems regarding
+overload resolution (Each operator needs three SFINAE constrained versions of
+it in order to act like builtin integer types).</p></li>
+<li><p>It offers little over simply using <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code>.</p></li>
+<li><p>It acts the most differently than implementations using an actual integer type,
+which has a high chance of breaking source compatibility.</p></li>
+</ul>
+</section>
+</section>
+</section>
+<section id="selected-solution-using-int128-t">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">Selected Solution - Using <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code></a><a class="headerlink" href="#selected-solution-using-int128-t" title="Link to this heading">¶</a></h2>
+<p>The solution I selected for libc++ is using <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code> when available,
+and otherwise falling back to using <code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code> with nanosecond precision.</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code> is available, or when <code class="docutils literal notranslate"><span class="pre">time_t</span></code> is 32-bits, the implementation
+provides same resolution and a greater range than <code class="docutils literal notranslate"><span class="pre">timespec</span></code>. Otherwise
+it still provides the same resolution, but is limited to a range of +/- 300
+years. This final case should be rather rare, as <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code>
+is normally available in 64-bit builds, and <code class="docutils literal notranslate"><span class="pre">time_t</span></code> is normally 32-bits
+during 32-bit builds.</p>
+<p>Although falling back to <code class="docutils literal notranslate"><span class="pre">long</span> <span class="pre">long</span></code> and nanosecond precision is less than
+ideal, it also happens to be the implementation provided by both libstdc++
+and MSVC. (So that makes it better, right?)</p>
+<p>Although the <code class="docutils literal notranslate"><span class="pre">timespec</span></code> emulation solution is feasible and would largely
+do what we want, it comes with too many complications, potential problems
+and discrepancies when compared to “normal” chrono time points and durations.</p>
+<p>An emulation of a builtin arithmetic type using a class is never going to act
+exactly the same, and the difference will be felt by users. It’s not reasonable
+to expect them to tolerate and work around these differences. And once
+we commit to an ABI it will be too late to change. Committing to this seems
+risky.</p>
+<p>Therefore, <code class="docutils literal notranslate"><span class="pre">__int128_t</span></code> seems like the better solution.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="FeatureTestMacros.html">Feature Test Macros</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="HeaderRemovalPolicy.html">Header Removal Policy</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2025, LLVM Project.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

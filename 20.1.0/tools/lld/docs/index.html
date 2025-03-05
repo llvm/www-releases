@@ -1,0 +1,262 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>LLD - The LLVM Linker &#8212; lld 20.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm.css?v=1cf7c864" />
+    <script src="_static/documentation_options.js?v=383a7952"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="_static/favicon.ico"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="The ELF, COFF and Wasm Linkers" href="NewLLD.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+<a href="#"><img src="_static/logo.png" alt="LLVM Documentation"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="NewLLD.html" title="The ELF, COFF and Wasm Linkers"
+             accesskey="N">next</a> |</li>
+  <li><a href="#">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">LLD - The LLVM Linker</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper"><h3>Bugs</h3>
+
+<p>
+To report bugs, please visit
+<a href="https://github.com/llvm/llvm-project/labels/lld:COFF">PE/COFF</a>,
+<a href="https://github.com/llvm/llvm-project/labels/lld:ELF">ELF</a>,
+<a href="https://github.com/llvm/llvm-project/labels/lld:MachO">Mach-O</a>, or
+<a href="https://github.com/llvm/llvm-project/labels/lld:wasm">WebAssembly</a>.
+</p>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="lld-the-llvm-linker">
+<h1>LLD - The LLVM Linker<a class="headerlink" href="#lld-the-llvm-linker" title="Link to this heading">¶</a></h1>
+<p>LLD is a linker from the LLVM project that is a drop-in replacement
+for system linkers and runs much faster than them. It also provides
+features that are useful for toolchain developers.</p>
+<p>The linker supports ELF (Unix), PE/COFF (Windows), Mach-O (macOS) and
+WebAssembly in descending order of completeness. Internally, LLD consists of
+several different linkers. The ELF port is the one that will be described in
+this document. The PE/COFF port is complete, including
+Windows debug info (PDB) support. The WebAssembly port is still a work in
+progress (See <a class="reference internal" href="WebAssembly.html"><span class="doc">WebAssembly lld port</span></a>).</p>
+<section id="features">
+<h2>Features<a class="headerlink" href="#features" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>LLD is a drop-in replacement for the GNU linkers that accepts the
+same command line arguments and linker scripts as GNU.</p></li>
+<li><p>LLD is very fast. When you link a large program on a multicore
+machine, you can expect that LLD runs more than twice as fast as the GNU
+gold linker. Your mileage may vary, though.</p></li>
+<li><p>It supports various CPUs/ABIs including AArch64, AMDGPU, ARM, Hexagon,
+LoongArch, MIPS 32/64 big/little-endian, PowerPC, PowerPC64, RISC-V,
+SPARC V9, x86-32 and x86-64. Among these, AArch64, ARM (&gt;= v4), LoongArch,
+PowerPC, PowerPC64, RISC-V, x86-32 and x86-64 have production quality.
+MIPS seems decent too.</p></li>
+<li><p>It is always a cross-linker, meaning that it always supports all the
+above targets however it was built. In fact, we don’t provide a
+build-time option to enable/disable each target. This should make it
+easy to use our linker as part of a cross-compile toolchain.</p></li>
+<li><p>You can embed LLD in your program to eliminate dependencies on
+external linkers. All you have to do is to construct object files
+and command line arguments just like you would do to invoke an
+external linker and then call the linker’s main function,
+<code class="docutils literal notranslate"><span class="pre">lld::lldMain</span></code>, from your code.</p></li>
+<li><p>It is small. We are using LLVM libObject library to read from object
+files, so it is not a completely fair comparison, but as of February
+2017, LLD/ELF consists only of 21k lines of C++ code while GNU gold
+consists of 198k lines of C++ code.</p></li>
+<li><p>Link-time optimization (LTO) is supported by default. Essentially,
+all you have to do to do LTO is to pass the <code class="docutils literal notranslate"><span class="pre">-flto</span></code> option to clang.
+Then clang creates object files not in the native object file format
+but in LLVM bitcode format. LLD reads bitcode object files, compile
+them using LLVM and emit an output file. Because in this way LLD can
+see the entire program, it can do the whole program optimization.</p></li>
+<li><p>Some very old features for ancient Unix systems (pre-90s or even
+before that) have been removed. Some default settings have been
+tuned for the 21st century. For example, the stack is marked as
+non-executable by default to tighten security.</p></li>
+</ul>
+</section>
+<section id="performance">
+<h2>Performance<a class="headerlink" href="#performance" title="Link to this heading">¶</a></h2>
+<p>This is a link time comparison on a 2-socket 20-core 40-thread Xeon
+E5-2680 2.80 GHz machine with an SSD drive. We ran gold and lld with
+or without multi-threading support. To disable multi-threading, we
+added <code class="docutils literal notranslate"><span class="pre">-no-threads</span></code> to the command lines.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Program</p></td>
+<td><p>Output size</p></td>
+<td><p>GNU ld</p></td>
+<td><p>GNU gold w/o threads</p></td>
+<td><p>GNU gold w/threads</p></td>
+<td><p>lld w/o threads</p></td>
+<td><p>lld w/threads</p></td>
+</tr>
+<tr class="row-even"><td><p>ffmpeg dbg</p></td>
+<td><p>92 MiB</p></td>
+<td><p>1.72s</p></td>
+<td><p>1.16s</p></td>
+<td><p>1.01s</p></td>
+<td><p>0.60s</p></td>
+<td><p>0.35s</p></td>
+</tr>
+<tr class="row-odd"><td><p>mysqld dbg</p></td>
+<td><p>154 MiB</p></td>
+<td><p>8.50s</p></td>
+<td><p>2.96s</p></td>
+<td><p>2.68s</p></td>
+<td><p>1.06s</p></td>
+<td><p>0.68s</p></td>
+</tr>
+<tr class="row-even"><td><p>clang dbg</p></td>
+<td><p>1.67 GiB</p></td>
+<td><p>104.03s</p></td>
+<td><p>34.18s</p></td>
+<td><p>23.49s</p></td>
+<td><p>14.82s</p></td>
+<td><p>5.28s</p></td>
+</tr>
+<tr class="row-odd"><td><p>chromium dbg</p></td>
+<td><p>1.14 GiB</p></td>
+<td><p>209.05s <a class="footnote-reference brackets" href="#id2" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a></p></td>
+<td><p>64.70s</p></td>
+<td><p>60.82s</p></td>
+<td><p>27.60s</p></td>
+<td><p>16.70s</p></td>
+</tr>
+</tbody>
+</table>
+<p>As you can see, lld is significantly faster than GNU linkers.
+Note that this is just a benchmark result of our environment.
+Depending on number of available cores, available amount of memory or
+disk latency/throughput, your results may vary.</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id2" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
+<p>Since GNU ld doesn’t support the <code class="docutils literal notranslate"><span class="pre">-icf=all</span></code> and
+<code class="docutils literal notranslate"><span class="pre">-gdb-index</span></code> options, we removed them from the command line
+for GNU ld. GNU ld would have been slower than this if it had
+these options.</p>
+</aside>
+</aside>
+</section>
+<section id="build">
+<h2>Build<a class="headerlink" href="#build" title="Link to this heading">¶</a></h2>
+<p>If you have already checked out LLVM using SVN, you can check out LLD
+under <code class="docutils literal notranslate"><span class="pre">tools</span></code> directory just like you probably did for clang. For the
+details, see <a class="reference external" href="https://llvm.org/docs/GettingStarted.html">Getting Started with the LLVM System</a>.</p>
+<p>If you haven’t checked out LLVM, the easiest way to build LLD is to
+check out the entire LLVM projects/sub-projects from a git mirror and
+build that tree. You need <cite>cmake</cite> and of course a C++ compiler.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/llvm/llvm-project<span class="w"> </span>llvm-project
+<span class="gp">$ </span>mkdir<span class="w"> </span>build
+<span class="gp">$ </span><span class="nb">cd</span><span class="w"> </span>build
+<span class="gp">$ </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>-DLLVM_ENABLE_PROJECTS<span class="o">=</span>lld<span class="w"> </span>-DCMAKE_INSTALL_PREFIX<span class="o">=</span>/usr/local<span class="w"> </span>../llvm-project/llvm
+<span class="gp">$ </span>make<span class="w"> </span>install
+</pre></div>
+</div>
+</section>
+<section id="using-lld">
+<h2>Using LLD<a class="headerlink" href="#using-lld" title="Link to this heading">¶</a></h2>
+<p>LLD is installed as <code class="docutils literal notranslate"><span class="pre">ld.lld</span></code>. On Unix, linkers are invoked by
+compiler drivers, so you are not expected to use that command
+directly. There are a few ways to tell compiler drivers to use ld.lld
+instead of the default linker.</p>
+<p>The easiest way to do that is to overwrite the default linker. After
+installing LLD to somewhere on your disk, you can create a symbolic
+link by doing <code class="docutils literal notranslate"><span class="pre">ln</span> <span class="pre">-s</span> <span class="pre">/path/to/ld.lld</span> <span class="pre">/usr/bin/ld</span></code> so that
+<code class="docutils literal notranslate"><span class="pre">/usr/bin/ld</span></code> is resolved to LLD.</p>
+<p>If you don’t want to change the system setting, you can use clang’s
+<code class="docutils literal notranslate"><span class="pre">-fuse-ld</span></code> option. In this way, you want to set <code class="docutils literal notranslate"><span class="pre">-fuse-ld=lld</span></code> to
+LDFLAGS when building your programs.</p>
+<p>LLD leaves its name and version number to a <code class="docutils literal notranslate"><span class="pre">.comment</span></code> section in an
+output. If you are in doubt whether you are successfully using LLD or
+not, run <code class="docutils literal notranslate"><span class="pre">readelf</span> <span class="pre">--string-dump</span> <span class="pre">.comment</span> <span class="pre">&lt;output-file&gt;</span></code> and examine the
+output. If the string “Linker: LLD” is included in the output, you are
+using LLD.</p>
+</section>
+<section id="internals">
+<h2>Internals<a class="headerlink" href="#internals" title="Link to this heading">¶</a></h2>
+<p>For the internals of the linker, please read <a class="reference internal" href="NewLLD.html"><span class="doc">The ELF, COFF and Wasm Linkers</span></a>. It is a bit
+outdated but the fundamental concepts remain valid. We’ll update the
+document soon.</p>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="NewLLD.html">The ELF, COFF and Wasm Linkers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="NewLLD.html#design">Design</a></li>
+<li class="toctree-l1"><a class="reference internal" href="WebAssembly.html">WebAssembly lld port</a></li>
+<li class="toctree-l1"><a class="reference internal" href="windows_support.html">Windows support</a></li>
+<li class="toctree-l1"><a class="reference internal" href="missingkeyfunction.html">Missing Key Function</a></li>
+<li class="toctree-l1"><a class="reference internal" href="error_handling_script.html">Error Handling Script</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Partitions.html">Partitions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ReleaseNotes.html">lld 20.1.0 Release Notes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ELF/large_sections.html">Large data sections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ELF/linker_script.html">Linker Script implementation notes and policy</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ELF/start-stop-gc.html">-z start-stop-gc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ELF/warn_backrefs.html">–warn-backrefs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="MachO/index.html">Mach-O LLD Port</a></li>
+</ul>
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="NewLLD.html" title="The ELF, COFF and Wasm Linkers"
+             >next</a> |</li>
+  <li><a href="#">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">LLD - The LLVM Linker</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2025, LLVM Project.
+      Last updated on 2025-03-04.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>C++ Safe Buffers &#8212; Clang 20.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=383a7952"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Data flow analysis: an informal introduction" href="DataFlowAnalysisIntro.html" />
+    <link rel="prev" title="Thread Safety Analysis" href="ThreadSafetyAnalysis.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 20.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>C++ Safe Buffers</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ThreadSafetyAnalysis.html">Thread Safety Analysis</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="DataFlowAnalysisIntro.html">Data flow analysis: an informal introduction</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="c-safe-buffers">
+<h1>C++ Safe Buffers<a class="headerlink" href="#c-safe-buffers" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#pre-requisites" id="id2">Pre-Requisites</a></p></li>
+<li><p><a class="reference internal" href="#the-programming-model-for-c" id="id3">The Programming Model for C++</a></p>
+<ul>
+<li><p><a class="reference internal" href="#buffer-operations-should-never-be-performed-over-raw-pointers" id="id4">Buffer operations should never be performed over raw pointers</a></p></li>
+<li><p><a class="reference internal" href="#all-buffers-need-to-be-encapsulated-into-safe-container-and-view-types" id="id5">All buffers need to be encapsulated into safe container and view types</a></p></li>
+<li><p><a class="reference internal" href="#encapsulation-of-bounds-information-must-be-respected-continuously" id="id6">Encapsulation of bounds information must be respected continuously</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#backwards-compatibility-interoperation-with-unsafe-code-customization" id="id7">Backwards Compatibility, Interoperation with Unsafe Code, Customization</a></p>
+<ul>
+<li><p><a class="reference internal" href="#suppress-unwanted-warnings-with-pragma-clang-unsafe-buffer-usage" id="id8">Suppress unwanted warnings with <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code></a></p></li>
+<li><p><a class="reference internal" href="#flag-bounds-information-discontinuities-with-clang-unsafe-buffer-usage" id="id9">Flag bounds information discontinuities with <code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#future-work" id="id10">Future Work</a></p>
+<ul>
+<li><p><a class="reference internal" href="#fix-it-hints-for-wunsafe-buffer-usage" id="id11">Fix-It Hints for <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code></a></p></li>
+<li><p><a class="reference internal" href="#static-analysis-to-identify-suspicious-sources-of-bounds-information" id="id12">Static Analysis to Identify Suspicious Sources of Bounds Information</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Clang can be used to harden your C++ code against buffer overflows, an otherwise
+common security issue with C-based languages.</p>
+<p>The solution described in this document is an integrated programming model as
+it combines:</p>
+<ul class="simple">
+<li><p>a family of opt-in Clang warnings (<code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code>) emitted at
+during compilation to help you update your code to encapsulate and propagate
+the bounds information associated with pointers;</p></li>
+<li><p>runtime assertions implemented as part of
+(<a class="reference external" href="https://libcxx.llvm.org/Hardening.html">libc++ hardening modes</a>)
+that eliminate undefined behavior as long as the coding convention
+is followed and the bounds information is therefore available and correct.</p></li>
+</ul>
+<p>The goal of this work is to enable development of bounds-safe C++ code. It is
+not a “push-button” solution; depending on your codebase’s existing
+coding style, significant (even if largely mechanical) changes to your code
+may be necessary. However, it allows you to achieve valuable safety guarantees
+on security-critical parts of your codebase.</p>
+<p>This solution is under active development. It is already useful for its purpose
+but more work is being done to improve ergonomics and safety guarantees
+and reduce adoption costs.</p>
+<p>The solution aligns in spirit with the “Ranges” safety profile
+that was <a class="reference external" href="https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3274r0.pdf">proposed</a>
+by Bjarne Stroustrup for standardization alongside other C++ safety features.</p>
+</section>
+<section id="pre-requisites">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Pre-Requisites</a><a class="headerlink" href="#pre-requisites" title="Link to this heading">¶</a></h2>
+<p>In order to achieve bounds safety, your codebase needs to have access to
+well-encapsulated bounds-safe container, view, and iterator types.
+If your project uses libc++, standard container and view types such as
+<code class="docutils literal notranslate"><span class="pre">std::vector</span></code> and <code class="docutils literal notranslate"><span class="pre">std::span</span></code> can be made bounds-safe by enabling
+the “fast” <a class="reference external" href="https://libcxx.llvm.org/Hardening.html">hardening mode</a>
+(passing <code class="docutils literal notranslate"><span class="pre">-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST</span></code>) to your
+compiler) or any of the stricter hardening modes.</p>
+<p>In order to harden iterators, you’ll need to also obtain a libc++ binary
+built with <code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_BOUNDED_ITERATORS</span></code> – which is a libc++ ABI setting
+that needs to be set for your entire target platform if you need to maintain
+binary compatibility with the rest of the platform.</p>
+<p>A relatively fresh version of C++ is recommended. In particular, the very useful
+standard view class <code class="docutils literal notranslate"><span class="pre">std::span</span></code> requires C++20.</p>
+<p>Other implementations of the C++ standard library may provide different
+flags to enable such hardening.</p>
+<p>If you’re using custom containers and views, they will need to be hardened
+this way as well, but you don’t necessarily need to do this ahead of time.</p>
+<p>This approach can theoretically be applied to plain C codebases,
+assuming that safe primitives are developed to encapsulate all buffer accesses,
+acting as “hardened custom containers” to replace raw pointers.
+However, such approach would be very unergonomic in C, and safety guarantees
+will be lower due to lack of good encapsulation technology. A better approach
+to bounds safety for non-C++ programs,
+<a class="reference external" href="https://clang.llvm.org/docs/BoundsSafety.html">-fbounds-safety</a>,
+is currently in development.</p>
+<p>Technically, safety guarantees cannot be provided without hardening
+the entire technology stack, including all of your dependencies.
+However, applying such hardening technology to even a small portion
+of your code may be significantly better than nothing.</p>
+</section>
+<section id="the-programming-model-for-c">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">The Programming Model for C++</a><a class="headerlink" href="#the-programming-model-for-c" title="Link to this heading">¶</a></h2>
+<p>Assuming that hardened container, view, and iterator classes are available,
+what remains is to make sure they are used consistently in your code.
+Below we define the specific coding convention that needs to be followed
+in order to guarantee safety and how the compiler technology
+around <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> assists with that.</p>
+<section id="buffer-operations-should-never-be-performed-over-raw-pointers">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Buffer operations should never be performed over raw pointers</a><a class="headerlink" href="#buffer-operations-should-never-be-performed-over-raw-pointers" title="Link to this heading">¶</a></h3>
+<p>Every time a memory access is made, a bounds-safe program must guarantee
+that the range of accessed memory addresses falls into the boundaries
+of the memory allocated for the object that’s being accessed.
+In order to establish such a guarantee, the information about such valid range
+of addresses – the <strong>bounds information</strong> associated with the accessed address
+– must be formally available every time a memory access is performed.</p>
+<p>A raw pointer does not naturally carry any bounds information.
+The bounds information for the pointer may be available <em>somewhere</em>, but
+it is not associated with the pointer in a formal manner, so a memory access
+performed through a raw pointer cannot be automatically verified to be
+bounds-safe by the compiler.</p>
+<p>That said, the Safe Buffers programming model does <strong>not</strong> try to eliminate
+<strong>all</strong> pointer usage. Instead it assumes that most pointers point to
+individual objects, not buffers, and therefore they typically aren’t
+associated with buffer overflow risks. For that reason, in order to identify
+the code that requires manual intervention, it is desirable to initially shift
+the focus away from the pointers themselves, and instead focus on their
+<strong>usage patterns</strong>.</p>
+<p>The compiler warning <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> is built to assist you
+with this step of the process. A <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> warning is
+emitted whenever one of the following <strong>buffer operations</strong> are performed
+on a raw pointer:</p>
+<ul class="simple">
+<li><p>array indexing with <code class="docutils literal notranslate"><span class="pre">[]</span></code>,</p></li>
+<li><p>pointer arithmetic,</p></li>
+<li><p>bounds-unsafe standard C functions such as <code class="docutils literal notranslate"><span class="pre">std::memcpy()</span></code>,</p></li>
+<li><p>C++ smart pointer operations such as <code class="docutils literal notranslate"><span class="pre">std::unique_ptr&lt;T[N]&gt;::operator[]()</span></code>,
+which unfortunately cannot be made fully safe within the rules of
+the C++ standard (as of C++23).</p></li>
+</ul>
+<p>This is sufficient for identifying each raw buffer pointer in the program at
+<strong>at least one point</strong> during its lifetime across your software stack.</p>
+<p>For example, both of the following functions are flagged by
+<code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> because <code class="docutils literal notranslate"><span class="pre">pointer</span></code> gets identified as an unsafe
+buffer pointer. Even though the second function does not directly access
+the buffer, the pointer arithmetic operation inside it may easily be
+the only formal “hint” in the program that the pointer does indeed point
+to a buffer of multiple objects:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">get_last_element</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">ptr</span><span class="p">[</span><span class="n">sz</span> <span class="o">-</span> <span class="mi">1</span><span class="p">];</span> <span class="o">//</span> <span class="n">warning</span><span class="p">:</span> <span class="n">unsafe</span> <span class="n">buffer</span> <span class="n">access</span>
+<span class="p">}</span>
+
+<span class="nb">int</span> <span class="o">*</span><span class="n">get_last_element_ptr</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">ptr</span> <span class="o">+</span> <span class="p">(</span><span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">);</span> <span class="o">//</span> <span class="n">warning</span><span class="p">:</span> <span class="n">unsafe</span> <span class="n">pointer</span> <span class="n">arithmetic</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="all-buffers-need-to-be-encapsulated-into-safe-container-and-view-types">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">All buffers need to be encapsulated into safe container and view types</a><a class="headerlink" href="#all-buffers-need-to-be-encapsulated-into-safe-container-and-view-types" title="Link to this heading">¶</a></h3>
+<p>It immediately follows from the previous requirement that once an unsafe pointer
+is identified at any point during its lifetime, it should be immediately wrapped
+into a safe container type (if the allocation site is “nearby”) or a safe
+view type (if the allocation site is “far away”). Not only memory accesses,
+but also non-access operations such as pointer arithmetic need to be covered
+this way in order to benefit from the respective runtime bounds checks.</p>
+<p>If a <strong>container</strong> type (<code class="docutils literal notranslate"><span class="pre">std::array</span></code>, <code class="docutils literal notranslate"><span class="pre">std::vector</span></code>, <code class="docutils literal notranslate"><span class="pre">std::string</span></code>)
+is used for allocating the buffer, this is the best-case scenario because
+the container naturally has access to the correct bounds information for the
+buffer, and the runtime bounds checks immediately kick in. Additionally,
+the container type may provide automatic lifetime management for the buffer
+(which may or may not be desirable).</p>
+<p>If a <strong>view</strong> type is used (<code class="docutils literal notranslate"><span class="pre">std::span</span></code>, <code class="docutils literal notranslate"><span class="pre">std::string_view</span></code>), this typically
+means that the bounds information for the “adopted” pointer needs to be passed
+to the view’s constructor manually. This makes runtime checks immediately
+kick in with respect to the provided bounds information, which is an immediate
+improvement over the raw pointer. However, this situation is still fundamentally
+insufficient for security purposes, because <strong>bounds information provided
+this way cannot be guaranteed to be correct</strong>.</p>
+<p>For example, the function <code class="docutils literal notranslate"><span class="pre">get_last_element()</span></code> we’ve seen in the previous
+section can be made <strong>slightly</strong> safer this way:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">get_last_element</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">sp</span><span class="p">(</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+  <span class="k">return</span> <span class="n">sp</span><span class="p">[</span><span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">];</span> <span class="o">//</span> <span class="n">warning</span> <span class="n">addressed</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Here <code class="docutils literal notranslate"><span class="pre">std::span</span></code> eliminates the potential concern that the operation
+<code class="docutils literal notranslate"><span class="pre">size</span> <span class="pre">-</span> <span class="pre">1</span></code> may overflow when <code class="docutils literal notranslate"><span class="pre">sz</span></code> is equal to <code class="docutils literal notranslate"><span class="pre">0</span></code>, leading to a buffer
+“underrun”. However, such program does not provide a guarantee that
+the variable <code class="docutils literal notranslate"><span class="pre">sz</span></code> correctly represents the <strong>actual</strong> size fo the buffer
+pointed to by <code class="docutils literal notranslate"><span class="pre">ptr</span></code>. The <code class="docutils literal notranslate"><span class="pre">std::span</span></code> constructed this way may be ill-formed.
+It may fail to protect you from overrunning the original buffer.</p>
+<p>The following example demonstrates one of the most dangerous anti-patterns
+of this nature:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">convert_data</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">source_buf</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">source_size</span><span class="p">,</span>
+                  <span class="nb">int</span> <span class="o">*</span><span class="n">target_buf</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">target_size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="o">//</span> <span class="n">Terrible</span><span class="p">:</span> <span class="n">mismatched</span> <span class="n">pointer</span> <span class="o">/</span> <span class="n">size</span><span class="o">.</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">target_span</span><span class="p">(</span><span class="n">target_buf</span><span class="p">,</span> <span class="n">source_size</span><span class="p">);</span>
+  <span class="o">//</span> <span class="o">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The second parameter of <code class="docutils literal notranslate"><span class="pre">std::span</span></code> should never be the <strong>desired</strong> size
+of the buffer. It should always be the <strong>actual</strong> size of the buffer.
+Such code often indicates that the original code has already contained
+a vulnerability – and the use of a safe view class failed to prevent it.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">target_span</span></code> actually needs to be of size <code class="docutils literal notranslate"><span class="pre">source_size</span></code>, a significantly
+safer way to produce such a span would be to build it with the correct size
+first, and then resize it to the desired size by calling <code class="docutils literal notranslate"><span class="pre">.first()</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">convert_data</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">source_buf</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">source_size</span><span class="p">,</span>
+                  <span class="nb">int</span> <span class="o">*</span><span class="n">target_buf</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">target_size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="o">//</span> <span class="n">Safer</span><span class="o">.</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">target_span</span><span class="p">(</span><span class="n">target_buf</span><span class="p">,</span> <span class="n">target_size</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">(</span><span class="n">source_size</span><span class="p">);</span>
+  <span class="o">//</span> <span class="o">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>However, these are still half-measures. This code still accepts the
+bounds information from the caller in an <strong>informal</strong> manner, and such bounds
+information cannot be guaranteed to be correct.</p>
+<p>In order to mitigate problems of this nature in their entirety,
+the third guideline is imposed.</p>
+</section>
+<section id="encapsulation-of-bounds-information-must-be-respected-continuously">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Encapsulation of bounds information must be respected continuously</a><a class="headerlink" href="#encapsulation-of-bounds-information-must-be-respected-continuously" title="Link to this heading">¶</a></h3>
+<p>The allocation site of the object is the only reliable source of bounds
+information for that object. For objects with long lifespans across
+multiple functions or even libraries in the software stack, it is essential
+to formally preserve the original bounds information as it’s being passed
+from one piece of code to another.</p>
+<p>Standard container and view classes are designed to preserve bounds information
+correctly <strong>by construction</strong>. However, they offer a number of ways to “break”
+encapsulation, which may cause you to temporarily lose track of the correct
+bounds information:</p>
+<ul class="simple">
+<li><p>The two-parameter constructor <code class="docutils literal notranslate"><span class="pre">std::span(ptr,</span> <span class="pre">size)</span></code> allows you to
+assemble an ill-formed <code class="docutils literal notranslate"><span class="pre">std::span</span></code>;</p></li>
+<li><p>Conversely, you can unwrap a container or a view object into a raw pointer
+and a raw size by calling its <code class="docutils literal notranslate"><span class="pre">.data()</span></code> and <code class="docutils literal notranslate"><span class="pre">.size()</span></code> methods.</p></li>
+<li><p>The overloaded <code class="docutils literal notranslate"><span class="pre">operator&amp;()</span></code> found on container and iterator classes
+acts similarly to <code class="docutils literal notranslate"><span class="pre">.data()</span></code> in this regard; operations such as
+<code class="docutils literal notranslate"><span class="pre">&amp;span[0]</span></code> and <code class="docutils literal notranslate"><span class="pre">&amp;*span.begin()</span></code> are effectively unsafe.</p></li>
+</ul>
+<p>Additional <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> warnings are emitted when encapsulation
+of <strong>standard</strong> containers is broken in this manner. If you’re using
+non-standard containers, you can achieve a similar effect with facilities
+described in the next section: <a class="reference internal" href="#customization"><span class="std std-ref">Backwards Compatibility, Interoperation with Unsafe Code, Customization</span></a>.</p>
+<p>For example, our previous attempt to address the warning in
+<code class="docutils literal notranslate"><span class="pre">get_last_element()</span></code> has actually introduced a new warning along the way,
+that notifies you about the potentially incorrect bounds information
+passed into the two-parameter constructor of <code class="docutils literal notranslate"><span class="pre">std::span</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">get_last_element</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">sp</span><span class="p">(</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span> <span class="o">//</span> <span class="n">warning</span><span class="p">:</span> <span class="n">unsafe</span> <span class="n">constructor</span>
+  <span class="k">return</span> <span class="n">sp</span><span class="p">[</span><span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">];</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In order to address this warning, you need to make the function receive
+the bounds information from the allocation site in a formal manner.
+The function doesn’t necessarily need to know where the allocation site is;
+it simply needs to be able to accept bounds information <strong>when</strong> it’s available.
+You can achieve this by refactoring the function to accept a <code class="docutils literal notranslate"><span class="pre">std::span</span></code>
+as a parameter:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">get_last_element</span><span class="p">(</span><span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">sp</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">sp</span><span class="p">[</span><span class="n">size</span> <span class="o">-</span> <span class="mi">1</span><span class="p">];</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This solution puts the responsibility for making sure the span is well-formed
+on the <strong>caller</strong>. They should do the same, so that eventually the
+responsibility is placed on the allocation site!</p>
+<p>Such definition is also very ergonomic as it naturally accepts arbitrary
+standard containers without any additional code at the call site:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">use_last_element</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">vec</span> <span class="p">{</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span> <span class="p">};</span>
+  <span class="nb">int</span> <span class="n">x</span> <span class="o">=</span> <span class="n">get_last_element</span><span class="p">(</span><span class="n">vec</span><span class="p">);</span>  <span class="o">//</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Such code is naturally bounds-safe because bounds-information is passed down
+from the allocation site to the buffer access site. Only safe operations
+are performed on container types. The containers are never “unforged” into
+raw pointer-size pairs and never “reforged” again. This is what ideal
+bounds-safe C++ code looks like.</p>
+</section>
+</section>
+<section id="backwards-compatibility-interoperation-with-unsafe-code-customization">
+<span id="customization"></span><h2><a class="toc-backref" href="#id7" role="doc-backlink">Backwards Compatibility, Interoperation with Unsafe Code, Customization</a><a class="headerlink" href="#backwards-compatibility-interoperation-with-unsafe-code-customization" title="Link to this heading">¶</a></h2>
+<p>Some of the code changes described above can be somewhat intrusive.
+For example, changing a function that previously accepted a pointer and a size
+separately, to accept a <code class="docutils literal notranslate"><span class="pre">std::span</span></code> instead, may require you to update
+every call site of the function. This is often undesirable and sometimes
+completely unacceptable when backwards compatibility is required.</p>
+<p>In order to facilitate <strong>incremental adoption</strong> of the coding convention
+described above, as well as to handle various unusual situations, the compiler
+provides two additional facilities to give the user more control over
+<code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> diagnostics:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code> to mark code as unsafe and <strong>suppress</strong>
+<code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> warnings in that code.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code> to annotate potential sources of
+discontinuity of bounds information – thus introducing
+<strong>additional</strong> <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> warnings.</p></li>
+</ul>
+<p>In this section we describe these facilities in detail and show how they can
+help you with various unusual situations.</p>
+<section id="suppress-unwanted-warnings-with-pragma-clang-unsafe-buffer-usage">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Suppress unwanted warnings with <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code></a><a class="headerlink" href="#suppress-unwanted-warnings-with-pragma-clang-unsafe-buffer-usage" title="Link to this heading">¶</a></h3>
+<p>If you really need to write unsafe code, you can always suppress all
+<code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> warnings in a section of code by surrounding
+that code with the <code class="docutils literal notranslate"><span class="pre">unsafe_buffer_usage</span></code> pragma. For example, if you don’t
+want to address the warning in our example function <code class="docutils literal notranslate"><span class="pre">get_last_element()</span></code>,
+here is how you can suppress it:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">int</span> <span class="n">get_last_element</span><span class="p">(</span><span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">#pragma clang unsafe_buffer_usage begin</span>
+  <span class="k">return</span> <span class="n">ptr</span><span class="p">[</span><span class="n">sz</span> <span class="o">-</span> <span class="mi">1</span><span class="p">];</span> <span class="o">//</span> <span class="n">warning</span> <span class="n">suppressed</span>
+  <span class="c1">#pragma clang unsafe_buffer_usage end</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This behavior is analogous to <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">diagnostic</span></code> (<a class="reference external" href="https://clang.llvm.org/docs/UsersManual.html#controlling-diagnostics-via-pragmas">documentation</a>)
+However, <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code> is specialized and recommended
+over <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">diagnostic</span></code> for a number of technical and non-technical
+reasons. Most importantly, <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code> is more
+suitable for security audits because it is significantly simpler and
+describes unsafe code in a more formal manner. On the contrary,
+<code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">diagnostic</span></code> comes with a push/pop syntax (as opposed to
+the begin/end syntax) and it offers ways to suppress warnings without
+mentioning them by name (such as <code class="docutils literal notranslate"><span class="pre">-Weverything</span></code>), which can make it
+difficult to determine at a glance whether the warning is suppressed
+on any given line of code.</p>
+<p>There are a few natural reasons to use this pragma:</p>
+<ul class="simple">
+<li><p>In implementations of safe custom containers. You need this because ultimately
+<code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> cannot help you verify that your custom container
+is safe. It will naturally remind you to audit your container’s implementation
+to make sure it has all the necessary runtime checks, but ultimately you’ll
+need to suppress it once the audit is complete.</p></li>
+<li><p>In performance-critical code where bounds-safety-related runtime checks
+cause an unacceptable performance regression. The compiler can theoretically
+optimize them away (eg. replace a repeated bounds check in a loop with
+a single check before the loop) but it is not guaranteed to do that.</p></li>
+<li><p>For incremental adoption purposes. If you want to adopt the coding convention
+gradually, you can always surround an entire file with the
+<code class="docutils literal notranslate"><span class="pre">unsafe_buffer_usage</span></code> pragma and then “make holes” in it whenever
+you address warnings on specific portions of the code.</p></li>
+<li><p>In the code that interoperates with unsafe code. This may be code that
+will never follow the programming model (such as plain C  code that will
+never be converted to C++) or with the code that simply haven’t been converted
+yet.</p></li>
+</ul>
+<p>Interoperation with unsafe code may require a lot of suppressions.
+You are encouraged to introduce “unsafe wrapper functions” for various unsafe
+operations that you need to perform regularly.</p>
+<p>For example, if you regularly receive pointer/size pairs from unsafe code,
+you may want to introduce a wrapper function for the unsafe span constructor:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1">#pragma clang unsafe_buffer_usage begin</span>
+
+<span class="n">template</span> <span class="o">&lt;</span><span class="n">typename</span> <span class="n">T</span><span class="o">&gt;</span>
+<span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span> <span class="n">unsafe_forge_span</span><span class="p">(</span><span class="n">T</span> <span class="o">*</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size_t</span> <span class="n">size</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">return</span> <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="p">(</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="c1">#pragma clang unsafe_buffer_usage end</span>
+</pre></div>
+</div>
+<p>Such wrapper function can be used to suppress warnings about unsafe span
+constructor usage in a more ergonomic manner:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">use_unsafe_c_struct</span><span class="p">(</span><span class="n">unsafe_c_struct</span> <span class="o">*</span><span class="n">s</span><span class="p">)</span> <span class="p">{</span>
+  <span class="o">//</span> <span class="n">No</span> <span class="n">warning</span> <span class="n">here</span><span class="o">.</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">sp</span> <span class="o">=</span> <span class="n">unsafe_forge_span</span><span class="p">(</span><span class="n">s</span><span class="o">-&gt;</span><span class="n">pointer</span><span class="p">,</span> <span class="n">s</span><span class="o">-&gt;</span><span class="n">size</span><span class="p">);</span>
+  <span class="o">//</span> <span class="o">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The code remains unsafe but it also continues to be nicely readable, and it
+proves that <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> has done it best to notify you about
+the potential unsafety. A security auditor will need to keep an eye on such
+unsafe wrappers. <strong>It is still up to you to confirm that the bounds information
+passed into the wrapper is correct.</strong></p>
+</section>
+<section id="flag-bounds-information-discontinuities-with-clang-unsafe-buffer-usage">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Flag bounds information discontinuities with <code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code></a><a class="headerlink" href="#flag-bounds-information-discontinuities-with-clang-unsafe-buffer-usage" title="Link to this heading">¶</a></h3>
+<p>The clang attribute <code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code>
+(<a class="reference external" href="https://clang.llvm.org/docs/AttributeReference.html#unsafe-buffer-usage">attribute documentation</a>)
+allows the user to annotate various objects, such as functions or member
+variables, as incompatible with the Safe Buffers programming model.
+You are encouraged to do that for arbitrary reasons, but typically the main
+reason to do that is when an unsafe function needs to be provided for
+backwards compatibility.</p>
+<p>For example, in the previous section we’ve seen how the example function
+<code class="docutils literal notranslate"><span class="pre">get_last_element()</span></code> needed to have its parameter types changed in order
+to preserve the continuity of bounds information when receiving a buffer pointer
+from the caller. However, such a change breaks both API and ABI compatibility.
+The code that previously used this function will no longer compile, nor link,
+until every call site of that function is updated. You can reclaim the
+backwards compatibility – in terms of both API and ABI – by adding
+a “compatibility overload”:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>int get_last_element(std::span&lt;int&gt; sp) {
+  return sp[size - 1];
+}
+
+[[clang::unsafe_buffer_usage]] // Please use the new function.
+int get_last_element(int *pointer, size_t size) {
+  // Avoid code duplication - simply invoke the safe function!
+  // The pragma suppresses the unsafe constructor warning.
+  #pragma clang unsafe_buffer_usage begin
+  return get_last_element(std::span(pointer, size));
+  #pragma clang unsafe_buffer_usage end
+}
+</pre></div>
+</div>
+<p>Such an overload allows the surrounding code to continue to work.
+It is both source-compatible and binary-compatible. It is also strictly safer
+than the original function because the unsafe buffer access through raw pointer
+is replaced with a safe <code class="docutils literal notranslate"><span class="pre">std::span</span></code> access no matter how it’s called. However,
+because it requires the caller to pass the pointer and the size separately,
+it violates our “bounds information continuity” principle. This means that
+the callers who care about bounds safety needs to be encouraged to use the
+<code class="docutils literal notranslate"><span class="pre">std::span</span></code>-based overload instead. Luckily, the attribute
+<code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code> causes a <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> warning
+to be displayed at every call site of the compatibility overload in order to
+remind the callers to update their code:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">use_last_element</span><span class="p">()</span> <span class="p">{</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">vec</span> <span class="p">{</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span> <span class="p">};</span>
+
+  <span class="o">//</span> <span class="n">no</span> <span class="n">warning</span>
+  <span class="nb">int</span> <span class="n">x</span> <span class="o">=</span> <span class="n">get_last_element</span><span class="p">(</span><span class="n">vec</span><span class="p">);</span>
+
+  <span class="o">//</span> <span class="n">warning</span><span class="p">:</span> <span class="n">this</span> <span class="n">overload</span> <span class="n">introduces</span> <span class="n">unsafe</span> <span class="n">buffer</span> <span class="n">manipulation</span>
+  <span class="nb">int</span> <span class="n">x</span> <span class="o">=</span> <span class="n">get_last_element</span><span class="p">(</span><span class="n">vec</span><span class="o">.</span><span class="n">data</span><span class="p">(),</span> <span class="n">vec</span><span class="o">.</span><span class="n">size</span><span class="p">());</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The compatibility overload can be further simplified with the help of the
+<code class="docutils literal notranslate"><span class="pre">unsafe_forge_span()</span></code> wrapper as described in the previous section –
+and it even makes the pragmas unnecessary:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>[[clang::unsafe_buffer_usage]] // Please use the new function.
+int get_last_element(int *pointer, size_t size) {
+  // Avoid code duplication - simply invoke the safe function!
+  return get_last_element(unsafe_forge_span(pointer, size));
+}
+</pre></div>
+</div>
+<p>Notice how the attribute <code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code> does <strong>not</strong>
+suppress the warnings within the function on its own. Similarly, functions whose
+entire definitions are covered by <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code> do
+<strong>not</strong> become automatically annotated with the attribute
+<code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code>. They serve two different purposes:</p>
+<ul class="simple">
+<li><p>The pragma says that the function isn’t safely <strong>written</strong>;</p></li>
+<li><p>The attribute says that the function isn’t safe to <strong>use</strong>.</p></li>
+</ul>
+<p>Also notice how we’ve made an <strong>unsafe</strong> wrapper for a <strong>safe</strong> function.
+This is significantly better than making a <strong>safe</strong> wrapper for an <strong>unsafe</strong>
+function. In other words, the following solution is significantly more unsafe
+and undesirable than the previous solution:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>int get_last_element(std::span&lt;int&gt; sp) {
+  // You&#39;ve just added that attribute, and now you need to
+  // immediately suppress the warning that comes with it?
+  #pragma clang unsafe_buffer_usage begin
+  return get_last_element(sp.data(), sp.size());
+  #pragma clang unsafe_buffer_usage end
+}
+
+
+[[clang::unsafe_buffer_usage]]
+int get_last_element(int *pointer, size_t size) {
+  // This access is still completely unchecked. What&#39;s the point of having
+  // perfect bounds information if you aren&#39;t performing runtime checks?
+  #pragma clang unsafe_buffer_usage begin
+  return ptr[sz - 1];
+  #pragma clang unsafe_buffer_usage end
+}
+</pre></div>
+</div>
+<p><strong>Structs and classes</strong>, unlike functions, cannot be overloaded. If a struct
+contains an unsafe buffer (in the form of a nested array or a pointer/size pair)
+then it is typically impossible to replace them with a safe container (such as
+<code class="docutils literal notranslate"><span class="pre">std::array</span></code> or <code class="docutils literal notranslate"><span class="pre">std::span</span></code> respectively) without breaking the layout
+of the struct and introducing both source and binary incompatibilities with
+the surrounding client code.</p>
+<p>Additionally, member variables of a class cannot be naturally “hidden” from
+client code. If a class needs to be used by clients who haven’t updated to
+C++20 yet, you cannot use the C++20-specific <code class="docutils literal notranslate"><span class="pre">std::span</span></code> as a member variable
+type. If the definition of a struct is shared with plain C code that manipulates
+member variables directly, you cannot use any C++-specific types for these
+member variables.</p>
+<p>In such cases there’s usually no backwards-compatible way to use safe types
+directly. The best option is usually to discourage the clients from using
+member variables directly by annotating the member variables with the attribute
+<code class="docutils literal notranslate"><span class="pre">[[clang::unsafe_buffer_usage]]</span></code>, and then to change the interface
+of the class to provide safe “accessors” to the unsafe data.</p>
+<p>For example, let’s assume the worst-case scenario: <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">foo</span></code> is an unsafe
+struct type fully defined in a header shared between plain C code and C++ code:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">struct</span> <span class="n">foo</span> <span class="p">{</span>
+  <span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">;</span>
+  <span class="n">size_t</span> <span class="n">size</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>In this case you can achieve safety in C++ code by annotating the member
+variables as unsafe and encapsulating them into safe accessor methods:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">struct</span> <span class="n">foo</span> <span class="p">{</span>
+  <span class="p">[[</span><span class="n">clang</span><span class="p">::</span><span class="n">unsafe_buffer_usage</span><span class="p">]]</span>
+  <span class="nb">int</span> <span class="o">*</span><span class="n">pointer</span><span class="p">;</span>
+  <span class="p">[[</span><span class="n">clang</span><span class="p">::</span><span class="n">unsafe_buffer_usage</span><span class="p">]]</span>
+  <span class="n">size_t</span> <span class="n">size</span><span class="p">;</span>
+
+<span class="o">//</span> <span class="n">Avoid</span> <span class="n">showing</span> <span class="n">this</span> <span class="n">code</span> <span class="n">to</span> <span class="n">clients</span> <span class="n">who</span> <span class="n">are</span> <span class="n">unable</span> <span class="n">to</span> <span class="n">digest</span> <span class="n">it</span><span class="o">.</span>
+<span class="c1">#if __cplusplus &gt;= 202002L</span>
+  <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">get_pointer_as_span</span><span class="p">()</span> <span class="p">{</span>
+    <span class="c1">#pragma clang unsafe_buffer_usage begin</span>
+    <span class="k">return</span> <span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="p">(</span><span class="n">pointer</span><span class="p">,</span> <span class="n">size</span><span class="p">);</span>
+    <span class="c1">#pragma clang unsafe_buffer_usage end</span>
+  <span class="p">}</span>
+
+  <span class="n">void</span> <span class="n">set_pointer_from_span</span><span class="p">(</span><span class="n">std</span><span class="p">::</span><span class="n">span</span><span class="o">&lt;</span><span class="nb">int</span><span class="o">&gt;</span> <span class="n">sp</span><span class="p">)</span> <span class="p">{</span>
+    <span class="c1">#pragma clang unsafe_buffer_usage begin</span>
+    <span class="n">pointer</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">data</span><span class="p">();</span>
+    <span class="n">size</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">size</span><span class="p">();</span>
+    <span class="c1">#pragma clang unsafe_buffer_usage end</span>
+  <span class="p">}</span>
+
+  <span class="o">//</span> <span class="n">Potentially</span> <span class="n">more</span> <span class="n">utility</span> <span class="n">functions</span><span class="o">.</span>
+<span class="c1">#endif</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="future-work">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Future Work</a><a class="headerlink" href="#future-work" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code> technology is in active development. The warning
+is largely ready for everyday use but it is continuously improved to reduce
+unnecessary noise as well as cover some of the trickier unsafe operations.</p>
+<section id="fix-it-hints-for-wunsafe-buffer-usage">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Fix-It Hints for <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code></a><a class="headerlink" href="#fix-it-hints-for-wunsafe-buffer-usage" title="Link to this heading">¶</a></h3>
+<p>A code transformation tool is in development that can semi-automatically
+transform large bodies of code to follow the C++ Safe Buffers programming model.
+It can currently be accessed by passing the experimental flag
+<code class="docutils literal notranslate"><span class="pre">-fsafe-buffer-usage-suggestions</span></code> in addition to <code class="docutils literal notranslate"><span class="pre">-Wunsafe-buffer-usage</span></code>.</p>
+<p>Fixits produced this way currently assume the default approach described
+in this document as they suggest standard containers and views (most notably
+<code class="docutils literal notranslate"><span class="pre">std::span</span></code> and <code class="docutils literal notranslate"><span class="pre">std::array</span></code>) as replacements for raw buffer pointers.
+This also additionally requires libc++ hardening in order to make the runtime
+bounds checks actually happen.</p>
+</section>
+<section id="static-analysis-to-identify-suspicious-sources-of-bounds-information">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Static Analysis to Identify Suspicious Sources of Bounds Information</a><a class="headerlink" href="#static-analysis-to-identify-suspicious-sources-of-bounds-information" title="Link to this heading">¶</a></h3>
+<p>The unsafe constructor <code class="docutils literal notranslate"><span class="pre">span(pointer,</span> <span class="pre">size)</span></code> is often a necessary evil
+when it comes to interoperation with unsafe code. However, passing the
+correct bounds information to such constructor is often difficult.
+In order to detect those <code class="docutils literal notranslate"><span class="pre">span(target_pointer,</span> <span class="pre">source_size)</span></code> anti-patterns,
+path-sensitive analysis performed by <a class="reference external" href="https://clang-analyzer.llvm.org">the clang static analyzer</a> can be taught to identify situations
+when the pointer and the size are coming from “suspiciously different” sources.</p>
+<p>Such analysis will be able to identify the source of information with
+significantly higher precision than that of the compiler, making it much better
+at identifying incorrect bounds information in your code while producing
+significantly fewer warnings. It will also need to bypass
+<code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">clang</span> <span class="pre">unsafe_buffer_usage</span></code> suppressions and “see through”
+unsafe wrappers such as <code class="docutils literal notranslate"><span class="pre">unsafe_forge_span</span></code> – something that
+the static analyzer is naturally capable of doing.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ThreadSafetyAnalysis.html">Thread Safety Analysis</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="DataFlowAnalysisIntro.html">Data flow analysis: an informal introduction</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

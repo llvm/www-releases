@@ -1,0 +1,245 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Bisecting LLVM code &#8212; LLVM 20.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=383a7952"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Policies on git repositories" href="GitRepositoryPolicy.html" />
+    <link rel="prev" title="LLVM Coding Standards" href="CodingStandards.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="GitRepositoryPolicy.html" title="Policies on git repositories"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="CodingStandards.html" title="LLVM Coding Standards"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="GettingInvolved.html" accesskey="U">Getting Involved</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Bisecting LLVM code</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/GitBisecting.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="bisecting-llvm-code">
+<h1>Bisecting LLVM code<a class="headerlink" href="#bisecting-llvm-code" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span></code> is a useful tool for finding which revision caused a bug.</p>
+<p>This document describes how to use <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span></code>. In particular, while LLVM
+has a mostly linear history, it has a few merge commits that added projects –
+and these merged the linear history of those projects. As a consequence, the
+LLVM repository has multiple roots: One “normal” root, and then one for each
+toplevel project that was developed out-of-tree and then merged later.
+As of early 2020, the only such merged project is MLIR, but flang will likely
+be merged in a similar way soon.</p>
+</section>
+<section id="basic-operation">
+<h2>Basic operation<a class="headerlink" href="#basic-operation" title="Link to this heading">¶</a></h2>
+<p>See <a class="reference external" href="https://git-scm.com/docs/git-bisect">https://git-scm.com/docs/git-bisect</a> for a good overview. In summary:</p>
+<blockquote>
+<div><div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>bisect<span class="w"> </span>start
+git<span class="w"> </span>bisect<span class="w"> </span>bad<span class="w"> </span>main
+git<span class="w"> </span>bisect<span class="w"> </span>good<span class="w"> </span>f00ba
+</pre></div>
+</div>
+</div></blockquote>
+<p>git will check out a revision in between. Try to reproduce your problem at
+that revision, and run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">good</span></code> or <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">bad</span></code>.</p>
+<p>If you can’t repro at the current commit (maybe the build is broken), run
+<code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">skip</span></code> and git will pick a nearby alternate commit.</p>
+<p>(To abort a bisect, run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">reset</span></code>, and if git complains about not
+being able to reset, do the usual <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">checkout</span> <span class="pre">-f</span> <span class="pre">main;</span> <span class="pre">git</span> <span class="pre">reset</span> <span class="pre">--hard</span>
+<span class="pre">origin/main</span></code> dance and try again).</p>
+</section>
+<section id="git-bisect-run">
+<h2><code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">run</span></code><a class="headerlink" href="#git-bisect-run" title="Link to this heading">¶</a></h2>
+<p>A single bisect step often requires first building clang, and then compiling
+a large code base with just-built clang. This can take a long time, so it’s
+good if it can happen completely automatically. <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">run</span></code> can do
+this for you if you write a run script that reproduces the problem
+automatically. Writing the script can take 10-20 minutes, but it’s almost
+always worth it – you can do something else while the bisect runs (such
+as writing this document).</p>
+<p>Here’s an example run script. It assumes that you’re in <code class="docutils literal notranslate"><span class="pre">llvm-project</span></code> and
+that you have a sibling <code class="docutils literal notranslate"><span class="pre">llvm-build-project</span></code> build directory where you
+configured CMake to use Ninja. You have a file <code class="docutils literal notranslate"><span class="pre">repro.c</span></code> in the current
+directory that makes clang crash at trunk, but it worked fine at revision
+<code class="docutils literal notranslate"><span class="pre">f00ba</span></code>.</p>
+<blockquote>
+<div><div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Build clang. If the build fails, `exit 125` causes this</span>
+<span class="c1"># revision to be skipped</span>
+ninja<span class="w"> </span>-C<span class="w"> </span>../llvm-build-project<span class="w"> </span>clang<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">125</span>
+
+../llvm-build-project/bin/clang<span class="w"> </span>repro.c
+</pre></div>
+</div>
+</div></blockquote>
+<p>To make sure your run script works, it’s a good idea to run <code class="docutils literal notranslate"><span class="pre">./run.sh</span></code> by
+hand and tweak the script until it works, then run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">good</span></code> or
+<code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">bad</span></code> manually once based on the result of the script
+(check <code class="docutils literal notranslate"><span class="pre">echo</span> <span class="pre">$?</span></code> after your script ran), and only then run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">run</span>
+<span class="pre">./run.sh</span></code>. Don’t forget to mark your run script as executable – <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span>
+<span class="pre">run</span></code> doesn’t check for that, it just assumes the run script failed each time.</p>
+<p>Once your run script works, run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">run</span> <span class="pre">./run.sh</span></code> and a few hours
+later you’ll know which commit caused the regression.</p>
+<p>(This is a very simple run script. Often, you want to use just-built clang
+to build a different project and then run a built executable of that project
+in the run script.)</p>
+</section>
+<section id="bisecting-across-multiple-roots">
+<h2>Bisecting across multiple roots<a class="headerlink" href="#bisecting-across-multiple-roots" title="Link to this heading">¶</a></h2>
+<p>Here’s how LLVM’s history currently looks:</p>
+<blockquote>
+<div><div class="highlight-none notranslate"><div class="highlight"><pre><span></span>A-o-o-......-o-D-o-o-HEAD
+              /
+  B-o-...-o-C-
+</pre></div>
+</div>
+</div></blockquote>
+<p><code class="docutils literal notranslate"><span class="pre">A</span></code> is the first commit in LLVM ever, <code class="docutils literal notranslate"><span class="pre">97724f18c79c</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">B</span></code> is the first commit in MLIR, <code class="docutils literal notranslate"><span class="pre">aed0d21a62db</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">D</span></code> is the merge commit that merged MLIR into the main LLVM repository,
+<code class="docutils literal notranslate"><span class="pre">0f0d0ed1c78f</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">C</span></code> is the last commit in MLIR before it got merged, <code class="docutils literal notranslate"><span class="pre">0f0d0ed1c78f^2</span></code>. (The
+<code class="docutils literal notranslate"><span class="pre">^n</span></code> modifier selects the n’th parent of a merge commit.)</p>
+<p><code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span></code> goes through all parent revisions. Due to the way MLIR was
+merged, at every revision at <code class="docutils literal notranslate"><span class="pre">C</span></code> or earlier, <em>only</em> the <code class="docutils literal notranslate"><span class="pre">mlir/</span></code> directory
+exists, and nothing else does.</p>
+<p>As of early 2020, there is no flag to <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span></code> to tell it to not
+descend into all reachable commits. Ideally, we’d want to tell it to only
+follow the first parent of <code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+<p>The best workaround is to pass a list of directories to <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span></code>:
+If you know the bug is due to a change in llvm, clang, or compiler-rt, use</p>
+<blockquote>
+<div><div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>bisect<span class="w"> </span>start<span class="w"> </span>--<span class="w"> </span>clang<span class="w"> </span>llvm<span class="w"> </span>compiler-rt
+</pre></div>
+</div>
+</div></blockquote>
+<p>That way, the commits in <code class="docutils literal notranslate"><span class="pre">mlir</span></code> are never evaluated.</p>
+<p>Alternatively, <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">skip</span> <span class="pre">aed0d21a6</span> <span class="pre">aed0d21a6..0f0d0ed1c78f</span></code> explicitly
+skips all commits on that branch. It takes 1.5 minutes to run on a fast
+machine, and makes <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">bisect</span> <span class="pre">log</span></code> output unreadable. (<code class="docutils literal notranslate"><span class="pre">aed0d21a6</span></code> is
+listed twice because git ranges exclude the revision listed on the left,
+so it needs to be ignored explicitly.)</p>
+</section>
+<section id="more-resources">
+<h2>More Resources<a class="headerlink" href="#more-resources" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://git-scm.com/book/en/v2/Git-Tools-Revision-Selection">https://git-scm.com/book/en/v2/Git-Tools-Revision-Selection</a></p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="GitRepositoryPolicy.html" title="Policies on git repositories"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="CodingStandards.html" title="LLVM Coding Standards"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="GettingInvolved.html" >Getting Involved</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Bisecting LLVM code</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-03-04.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
