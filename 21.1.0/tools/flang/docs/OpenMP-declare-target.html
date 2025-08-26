@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>OpenMP Declare Target &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1d8edcb3"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Fortran descriptor type mapping for OpenMP offload" href="OpenMP-descriptor-management.html" />
+    <link rel="prev" title="OpenMP 4.5 Grammar" href="OpenMP-4.5-grammar.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>OpenMP Declare Target</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMP-4.5-grammar.html">OpenMP 4.5 Grammar</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OpenMP-descriptor-management.html">Fortran descriptor type mapping for OpenMP offload</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/OpenMP-declare-target.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM
+   Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="openmp-declare-target">
+<h1>OpenMP Declare Target<a class="headerlink" href="#openmp-declare-target" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction-to-declare-target" id="id1">Introduction to Declare Target</a></p></li>
+<li><p><a class="reference internal" href="#declare-target-as-represented-in-the-openmp-dialect" id="id2">Declare Target as represented in the OpenMP Dialect</a></p></li>
+<li><p><a class="reference internal" href="#declare-target-fortran-openmp-lowering" id="id3">Declare Target Fortran OpenMP Lowering</a></p></li>
+<li><p><a class="reference internal" href="#declare-target-transformation-passes-for-flang" id="id4">Declare Target Transformation Passes for Flang</a></p></li>
+<li><p><a class="reference internal" href="#declare-target-openmp-dialect-to-llvm-ir-lowering" id="id5">Declare Target OpenMP Dialect To LLVM-IR Lowering</a></p></li>
+<li><p><a class="reference internal" href="#current-support" id="id6">Current Support</a></p></li>
+</ul>
+</nav>
+<section id="introduction-to-declare-target">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction to Declare Target</a><a class="headerlink" href="#introduction-to-declare-target" title="Link to this heading">¶</a></h2>
+<p>In OpenMP <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> is a directive that can be applied to a function or
+variable (primarily global) to notate to the compiler that it should be
+generated in a particular device’s environment. In essence whether something
+should be emitted for host or device, or both. An example of its usage for
+both data and functions can be seen below.</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">test_0</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">sp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<span class="c">!$omp declare target link(sp)</span>
+<span class="k">end module </span><span class="n">test_0</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="w">    </span><span class="k">use </span><span class="n">test_0</span>
+<span class="c">!$omp target map(tofrom:sp)</span>
+<span class="w">    </span><span class="n">sp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<span class="c">!$omp end target</span>
+<span class="k">end program</span>
+</pre></div>
+</div>
+<p>In the above example, we create a variable in a separate module, mark it
+as <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> and then map it, embedding it into the device IR and
+assigning to it.</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">function </span><span class="n">func_t_device</span><span class="p">()</span><span class="w"> </span><span class="k">result</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<span class="w">    </span><span class="c">!$omp declare target to(func_t_device) device_type(nohost)</span>
+<span class="w">        </span><span class="kt">INTEGER</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">I</span>
+<span class="w">        </span><span class="n">I</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<span class="k">end function </span><span class="n">func_t_device</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="c">!$omp target</span>
+<span class="w">    </span><span class="k">call </span><span class="n">func_t_device</span><span class="p">()</span>
+<span class="c">!$omp end target</span>
+<span class="k">end program</span>
+</pre></div>
+</div>
+<p>In the above example, we are stating that a function is required on device
+utilising <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>, and that we will not be utilising it on host,
+so we are in theory free to remove or ignore it there. A user could also
+in this case, leave off the <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> from the function and it
+would be implicitly marked <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span> <span class="pre">any</span></code> (for both host and device),
+as it’s been utilised within a target region.</p>
+</section>
+<section id="declare-target-as-represented-in-the-openmp-dialect">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Declare Target as represented in the OpenMP Dialect</a><a class="headerlink" href="#declare-target-as-represented-in-the-openmp-dialect" title="Link to this heading">¶</a></h2>
+<p>In the OpenMP Dialect <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> is not represented by a specific
+<code class="docutils literal notranslate"><span class="pre">operation</span></code>. Instead, it’s an OpenMP dialect specific <code class="docutils literal notranslate"><span class="pre">attribute</span></code> that can be
+applied to any operation in any dialect, which helps to simplify the
+utilisation of it. Rather than replacing or modifying existing global or
+function <code class="docutils literal notranslate"><span class="pre">operations</span></code> in a dialect, it applies to it as extra metadata that
+the lowering can use in different ways as is necessary.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">attribute</span></code> is composed of multiple fields representing the clauses you
+would find on the <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> directive i.e. device type (<code class="docutils literal notranslate"><span class="pre">nohost</span></code>,
+<code class="docutils literal notranslate"><span class="pre">any</span></code>, <code class="docutils literal notranslate"><span class="pre">host</span></code>) or the capture clause (<code class="docutils literal notranslate"><span class="pre">link</span></code> or <code class="docutils literal notranslate"><span class="pre">to</span></code>). A small example of
+<code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> applied to a Fortran <code class="docutils literal notranslate"><span class="pre">real</span></code> can be found below:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">fir</span><span class="o">.</span><span class="k">global</span> <span class="n">internal</span> <span class="nd">@_QFEi</span> <span class="p">{</span><span class="n">omp</span><span class="o">.</span><span class="n">declare_target</span> <span class="o">=</span> 
+<span class="c1">#omp.declaretarget&lt;device_type = (any), capture_clause = (to)&gt;} : f32 {</span>
+    <span class="o">%</span><span class="mi">0</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">undefined</span> <span class="n">f32</span>
+    <span class="n">fir</span><span class="o">.</span><span class="n">has_value</span> <span class="o">%</span><span class="mi">0</span> <span class="p">:</span> <span class="n">f32</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This would look similar for function style <code class="docutils literal notranslate"><span class="pre">operations</span></code>.</p>
+<p>The application and access of this attribute is aided by an OpenMP Dialect
+MLIR Interface named <code class="docutils literal notranslate"><span class="pre">DeclareTargetInterface</span></code>, which can be utilised on
+operations to access the appropriate interface functions, e.g.:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="k">auto</span><span class="w"> </span><span class="n">declareTargetGlobal</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">dyn_cast</span><span class="o">&lt;</span><span class="n">mlir</span><span class="o">::</span><span class="n">omp</span><span class="o">::</span><span class="n">DeclareTargetInterface</span><span class="o">&gt;</span><span class="p">(</span><span class="n">Op</span><span class="p">.</span><span class="n">getOperation</span><span class="p">());</span>
+<span class="n">declareTargetGlobal</span><span class="p">.</span><span class="n">isDeclareTarget</span><span class="p">();</span>
+</pre></div>
+</div>
+</section>
+<section id="declare-target-fortran-openmp-lowering">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Declare Target Fortran OpenMP Lowering</a><a class="headerlink" href="#declare-target-fortran-openmp-lowering" title="Link to this heading">¶</a></h2>
+<p>The initial lowering of <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> to MLIR for both use-cases is done
+inside of the usual OpenMP lowering in flang/lib/Lower/OpenMP.cpp. However,
+some direct calls to <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> related functions from Flang’s
+lowering bridge in flang/lib/Lower/Bridge.cpp are made.</p>
+<p>The marking of operations with the declare target attribute happens in two
+phases, the second one optional and contingent on the first failing. The
+initial phase happens when the declare target directive and its clauses
+are initially processed, with the primary data gathering for the directive and
+clause happening in a function called <code class="docutils literal notranslate"><span class="pre">getDeclareTargetInfo</span></code>. This is then used
+to feed the <code class="docutils literal notranslate"><span class="pre">markDeclareTarget</span></code> function, which does the actual marking
+utilising the <code class="docutils literal notranslate"><span class="pre">DeclareTargetInterface</span></code>. If it encounters a variable or function
+that has been marked twice over multiple directives with two differing device
+types (e.g. <code class="docutils literal notranslate"><span class="pre">host</span></code>, <code class="docutils literal notranslate"><span class="pre">nohost</span></code>), then it will swap the device type to <code class="docutils literal notranslate"><span class="pre">any</span></code>.</p>
+<p>Whenever we invoke <code class="docutils literal notranslate"><span class="pre">genFIR</span></code> on an <code class="docutils literal notranslate"><span class="pre">OpenMPDeclarativeConstruct</span></code> from the
+lowering bridge, we are also invoking another function called
+<code class="docutils literal notranslate"><span class="pre">gatherOpenMPDeferredDeclareTargets</span></code>, which gathers information relevant to the
+application of the <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> attribute. This information
+includes the symbol that it should be applied to, device type clause,
+and capture clause, and it is stored in a vector that is part of the lowering
+bridge’s instantiation of the <code class="docutils literal notranslate"><span class="pre">AbstractConverter</span></code>. It is only stored if we
+encounter a function or variable symbol that does not have an operation
+instantiated for it yet. This cannot happen as part of the
+initial marking as we must store this data in the lowering bridge and we
+only have access to the abstract version of the converter via the OpenMP
+lowering.</p>
+<p>The information produced by the first phase is used in the second phase,
+which is a form of deferred processing of the <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> marked
+operations that have delayed generation and cannot be proccessed in the
+first phase. The main notable case this occurs currently is when a
+Fortran function interface has been marked. This is
+done via the function
+<code class="docutils literal notranslate"><span class="pre">markOpenMPDeferredDeclareTargetFunctions</span></code>, which is called from the lowering
+bridge at the end of the lowering process allowing us to mark those where
+possible. It iterates over the data previously gathered by
+<code class="docutils literal notranslate"><span class="pre">gatherOpenMPDeferredDeclareTargets</span></code>
+checking if any of the recorded symbols have now had their corresponding
+operations instantiated and applying the declare target attribute where
+possible utilising <code class="docutils literal notranslate"><span class="pre">markDeclareTarget</span></code>. However, it must be noted that it
+is still possible for operations not to be generated for certain symbols,
+in particular the case of function interfaces that are not directly used
+or defined within the current module. This means we cannot emit errors in
+the case of left-over unmarked symbols. These must (and should) be caught
+by the initial semantic analysis.</p>
+<p>NOTE: <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> can be applied to implicit <code class="docutils literal notranslate"><span class="pre">SAVE</span></code> attributed variables.
+However, by default Flang does not represent these as <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code>’s, which means
+we cannot tag and lower them as <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> normally. Instead, similarly
+to the way <code class="docutils literal notranslate"><span class="pre">threadprivate</span></code> handles these cases, we raise and initialize the
+variable as an internal <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code> and apply the attribute. This occurs in the
+flang/lib/Lower/OpenMP.cpp function <code class="docutils literal notranslate"><span class="pre">genDeclareTargetIntGlobal</span></code>.</p>
+</section>
+<section id="declare-target-transformation-passes-for-flang">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Declare Target Transformation Passes for Flang</a><a class="headerlink" href="#declare-target-transformation-passes-for-flang" title="Link to this heading">¶</a></h2>
+<p>There are currently two passes within Flang that are related to the processing
+of <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MarkDeclareTarget</span></code> - This pass is in charge of marking functions captured
+(called from) in <code class="docutils literal notranslate"><span class="pre">target</span></code> regions or other <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> marked functions as
+<code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>. It does so recursively, i.e. nested calls will also be
+implicitly marked. It currently will try to mark things as conservatively as
+possible, e.g. if captured in a <code class="docutils literal notranslate"><span class="pre">target</span></code> region it will apply <code class="docutils literal notranslate"><span class="pre">nohost</span></code>, unless
+it encounters a <code class="docutils literal notranslate"><span class="pre">host</span></code> <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> in which case it will apply the <code class="docutils literal notranslate"><span class="pre">any</span></code>
+device type. Functions are handled similarly, except we utilise the parent’s
+device type where possible.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FunctionFiltering</span></code> - This is executed after the <code class="docutils literal notranslate"><span class="pre">MarkDeclareTarget</span></code>
+pass, and its job is to conservatively remove host functions from
+the module where possible when compiling for the device. This helps make
+sure that most incompatible code for the host is not lowered for the
+device. Host functions with <code class="docutils literal notranslate"><span class="pre">target</span></code> regions in them need to be preserved
+(e.g. for lowering the <code class="docutils literal notranslate"><span class="pre">target</span> <span class="pre">region</span></code>(s) inside). Otherwise, it removes
+any function marked as a <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span> <span class="pre">host</span></code> function and any uses will be
+replaced with <code class="docutils literal notranslate"><span class="pre">undef</span></code>’s so that  the remaining host code doesn’t become broken.
+Host functions with <code class="docutils literal notranslate"><span class="pre">target</span></code> regions are marked with a <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span> <span class="pre">host</span></code>
+attribute so they will be removed after outlining the target regions contained
+inside.</p></li>
+</ul>
+<p>While this infrastructure could be generally applicable to more than just Flang,
+it is only utilised in the Flang frontend, so it resides there rather than in
+the OpenMP dialect codebase.</p>
+</section>
+<section id="declare-target-openmp-dialect-to-llvm-ir-lowering">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Declare Target OpenMP Dialect To LLVM-IR Lowering</a><a class="headerlink" href="#declare-target-openmp-dialect-to-llvm-ir-lowering" title="Link to this heading">¶</a></h2>
+<p>The OpenMP dialect lowering of <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> is done through the
+<code class="docutils literal notranslate"><span class="pre">amendOperation</span></code> flow, as it’s not an <code class="docutils literal notranslate"><span class="pre">operation</span></code> but rather an
+<code class="docutils literal notranslate"><span class="pre">attribute</span></code>. This is triggered immediately after the corresponding
+operation has been lowered to LLVM-IR. As it is applicable to
+different types of operations, we must specialise this function for
+each operation type that we may encounter. Currently, this is
+<code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code>’s and <code class="docutils literal notranslate"><span class="pre">FuncOp</span></code>’s.</p>
+<p><code class="docutils literal notranslate"><span class="pre">FuncOp</span></code> processing is fairly simple. When compiling for the device,
+<code class="docutils literal notranslate"><span class="pre">host</span></code> marked functions are removed, including those that could not
+be removed earlier due to having <code class="docutils literal notranslate"><span class="pre">target</span></code> directives within. This
+leaves <code class="docutils literal notranslate"><span class="pre">any</span></code>, <code class="docutils literal notranslate"><span class="pre">device</span></code> or indeterminable functions left in the
+module to lower further. When compiling for the host, no filtering is
+done because <code class="docutils literal notranslate"><span class="pre">nohost</span></code> functions must be available as a fallback
+implementation.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code>’s, the processing is a little more complex. We
+currently leverage the <code class="docutils literal notranslate"><span class="pre">registerTargetGlobalVariable</span></code> and
+<code class="docutils literal notranslate"><span class="pre">getAddrOfDeclareTargetVar</span></code> <code class="docutils literal notranslate"><span class="pre">OMPIRBuilder</span></code> functions shared with Clang.
+These two functions invoke each other depending on the clauses and options
+provided to the <code class="docutils literal notranslate"><span class="pre">OMPIRBuilder</span></code> (in particular, unified shared memory). Their
+main purposes are the generation of a new global device pointer with a
+“ref_” prefix on the device and enqueuing metadata generation by the
+<code class="docutils literal notranslate"><span class="pre">OMPIRBuilder</span></code> to be produced at module finalization time. This is done
+for both host and device and it links the newly generated device global
+pointer and the host pointer together across the two modules.</p>
+<p>Similarly to other metadata (e.g. for <code class="docutils literal notranslate"><span class="pre">TargetOp</span></code>) that is shared across
+both host and device modules, processing of <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code>’s in the device
+needs access to the previously generated host IR file, which is done
+through another <code class="docutils literal notranslate"><span class="pre">attribute</span></code> applied to the <code class="docutils literal notranslate"><span class="pre">ModuleOp</span></code> by the compiler
+frontend. The file is loaded in and consumed by the <code class="docutils literal notranslate"><span class="pre">OMPIRBuilder</span></code> to
+populate it’s <code class="docutils literal notranslate"><span class="pre">OffloadInfoManager</span></code> data structures, keeping host and
+device appropriately synchronised.</p>
+<p>The second (and more important to remember) is that as we effectively replace
+the original LLVM-IR generated for the <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> marked <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code> we
+have some corrections we need to do for <code class="docutils literal notranslate"><span class="pre">TargetOp</span></code>’s (or other region
+operations that use them directly) which still refer to the original lowered
+global operation. This is done via <code class="docutils literal notranslate"><span class="pre">handleDeclareTargetMapVar</span></code> which is invoked
+as the final function and alteration to the lowered <code class="docutils literal notranslate"><span class="pre">target</span></code> region, it’s only
+invoked for device as it’s only required in the case where we have emitted the
+“ref” pointer , and it effectively replaces all uses of the originally lowered
+global symbol, with our new global ref pointer’s symbol. Currently we do not
+remove or delete the old symbol, this is due to the fact that the same symbol
+can be utilised across multiple target regions, if we remove it, we risk
+breaking lowerings of target regions that will be processed at a later time.
+To appropriately delete these no longer necessary symbols we would need a
+deferred removal process at the end of the module, which is currently not in
+place. It may be possible to store this information in the OMPIRBuilder and
+then perform this cleanup process on finalization, but this is open for
+discussion and implementation still.</p>
+</section>
+<section id="current-support">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Current Support</a><a class="headerlink" href="#current-support" title="Link to this heading">¶</a></h2>
+<p>For the moment, <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> should work for:</p>
+<ul class="simple">
+<li><p>Marking functions/subroutines and function/subroutine interfaces for
+generation on host, device or both.</p></li>
+<li><p>Implicit function/subroutine capture for calls emitted in a <code class="docutils literal notranslate"><span class="pre">target</span></code> region
+or explicitly marked <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code> function/subroutine. Note: Calls made
+via arguments passed to other functions must still be themselves marked
+<code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>, e.g. passing a <code class="docutils literal notranslate"><span class="pre">C</span></code> function pointer and invoking it, then
+the interface and the <code class="docutils literal notranslate"><span class="pre">C</span></code> function in the other module must be marked
+<code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>, with the same type of marking as indicated by the
+specification.</p></li>
+<li><p>Marking global variables with <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>’s <code class="docutils literal notranslate"><span class="pre">link</span></code> clause and mapping
+the data to the device data environment utilising <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>. This may
+not work for all types yet, but for scalars and arrays of scalars, it
+should.</p></li>
+</ul>
+<p>Doesn’t work for, or needs further testing for:</p>
+<ul class="simple">
+<li><p>Marking the following types with <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span> <span class="pre">link</span></code> (needs further
+testing):</p>
+<ul>
+<li><p>Descriptor based types, e.g. pointers/allocatables.</p></li>
+<li><p>Derived types.</p></li>
+<li><p>Members of derived types (use-case needs legality checking with OpenMP
+specification).</p></li>
+</ul>
+</li>
+<li><p>Marking global variables with <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">target</span></code>’s <code class="docutils literal notranslate"><span class="pre">to</span></code> clause. A lot of the
+lowering should exist, but it needs further testing and likely some further
+changes to fully function.</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMP-4.5-grammar.html">OpenMP 4.5 Grammar</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OpenMP-descriptor-management.html">Fortran descriptor type mapping for OpenMP offload</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Aug 26, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

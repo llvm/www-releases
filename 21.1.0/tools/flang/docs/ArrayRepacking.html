@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Assumed-shape arrays repacking &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1d8edcb3"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Assumed-Rank Objects" href="AssumedRank.html" />
+    <link rel="prev" title="Array Composition" href="ArrayComposition.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Assumed-shape arrays repacking</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ArrayComposition.html">Array Composition</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AssumedRank.html">Assumed-Rank Objects</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/ArrayRepacking.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="assumed-shape-arrays-repacking">
+<h1>Assumed-shape arrays repacking<a class="headerlink" href="#assumed-shape-arrays-repacking" title="Link to this heading">¶</a></h1>
+<p>Fortran 90 introduced dummy arguments to be declared as assumed-shape arrays, which allowed to pass non-contiguous arrays to subprograms. In some cases, accessing non-contiguous arrays may result in poor program performance, and paying an overhead of copying a non-contiguous array into a contiguous memory (packing) before processing it may result in better performance. This document describes Flang compiler and runtime support for packing/unpacking of non-contiguous arrays.</p>
+<section id="a-problem-case">
+<h2>A problem case<a class="headerlink" href="#a-problem-case" title="Link to this heading">¶</a></h2>
+<p><a class="reference internal" href="#example-1">Example #1</a> provides a way to compare performance of a repetitive access of a large array when the array is contiguous and non-contiguous. The <code class="docutils literal notranslate"><span class="pre">test</span></code> function remains the same in both cases to make sure that any difference in the code generation does not affect performance, and only the array layout in memory matters.</p>
+<p>The example might be compiled using any Fortran 90 compiler, e.g. <code class="docutils literal notranslate"><span class="pre">gfortran</span> <span class="pre">-cpp</span> <span class="pre">example1.f90</span> <span class="pre">-O2</span> <span class="pre">&lt;additional-options&gt;</span></code>. The table below contains performance information for different compilations and targets:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>additional-options</p></th>
+<th class="head"><p>AMD EPYC 9684X, GNU Fortran 13.2.0</p></th>
+<th class="head"><p>Arm Neoverse V2, GNU Fortran 11.4.0</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">none</span></code></p></td>
+<td><p>20495466758      L1-dcache-loads<br/>            31403868      L1-dcache-prefetches<br/>     10116173649      L1-dcache-load-misses<br/>119,167,236,596      cycles</p></td>
+<td><p>20030549910      L1-dcache-loads<br/>   10233598442      L1-dcache-load-misses<br/>     1098681496      LLC-load-misses<br/>43,426,056,799      cycles</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">-DREPACKING</span></code></p></td>
+<td><p>20245847735      L1-dcache-loads<br/>         583614040      L1-dcache-prefetches<br/>         644552282      L1-dcache-load-misses<br/>  10,837,843,298      cycles</p></td>
+<td><p>20023110457      L1-dcache-loads<br/>              294393      L1-dcache-load-misses<br/>              321878      LLC-load-misses<br/>10,065,421,618      cycles</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code></p></td>
+<td><p>20248624699      L1-dcache-loads<br/>         584325700      L1-dcache-prefetches<br/>         644353154      L1-dcache-load-misses<br/>  10,850,830,504      cycles</p></td>
+<td><p>20023117997      L1-dcache-loads<br/>              275169      L1-dcache-load-misses<br/>              323902      LLC-load-misses<br/>10,066,689,166      cycles</p></td>
+</tr>
+</tbody>
+</table>
+<p>The default version is much slower than the version with manual array repacking and <a class="reference external" href="https://gcc.gnu.org/onlinedocs/gfortran/Code-Gen-Options.html#index-frepack-arrays">-frepack-arrays</a> due to the L1 data cache misses even considering the extra overhead required to pack/unpack the non-contiguous array.</p>
+<p>This artificial example was inspired by the innermost hot loop from <code class="docutils literal notranslate"><span class="pre">fourir</span></code> subroutine of <a class="reference external" href="https://fortran.uk/fortran-compiler-comparisons/the-polyhedron-solutions-benchmark-suite/">Polyhedron/capacita</a> benchmark, which speeds up about 1.8x with GNU Fortran compiler’s <code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code> option on AMD EPYC 9684X and 1.3x - on Arm Neoverse V2.</p>
+<p>Having these results it seems reasonable to provide support for arrays repacking in Flang compiler, which may reduce the amount of effort to rewrite existing Fortran programs for better data cache utilization.</p>
+</section>
+<section id="implementations-in-other-compilers">
+<h2>Implementations in other compilers<a class="headerlink" href="#implementations-in-other-compilers" title="Link to this heading">¶</a></h2>
+<section id="gnu-fortran-compiler">
+<h3>GNU Fortran compiler<a class="headerlink" href="#gnu-fortran-compiler" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code> option of GNU Fortran compiler let’s the compiler generate special subprogram prologue/epilogue code that performs automatic packing/unpacking of the assumed-shape dummy arrays. With some implementation limitations, the following happens for any such dummy array:</p>
+<p><strong>In subprogram prologue:</strong> iff the array is not contiguous in any dimension, it is copied into a newly allocated contiguous chunk of memory, and the following subprogram code operates on the temporary. This is a <code class="docutils literal notranslate"><span class="pre">pack</span></code> action consisting of the allocation and copy-in.</p>
+<p><strong>In subprogram epilogue:</strong> iff the array is not contiguous in any dimension, values from the temporary array are copied over to the original array and the temporary array is deallocated. This is <code class="docutils literal notranslate"><span class="pre">unpack</span></code> action consisting of the copy-out and deallocation. It makes sure any updates of the array done by the subprogram are propagated to the caller side.</p>
+<section id="facts-and-guesses-about-the-implementation">
+<h4>Facts and guesses about the implementation<a class="headerlink" href="#facts-and-guesses-about-the-implementation" title="Link to this heading">¶</a></h4>
+<p>The dynamic checks for contiguity and the array copy code is located completely in the <a class="reference external" href="https://github.com/gcc-mirror/gcc/blob/3e08a4ecea27c54fda90e8f58641b1986ad957e1/libgfortran/generated/in_pack_r8.c#L35">runtime</a>, so the compiler inserts unconditional calls in the subprogram prologue/epilogue.</p>
+<p>It looks like <code class="docutils literal notranslate"><span class="pre">gfortran</span></code> ignores <code class="docutils literal notranslate"><span class="pre">intent(out)/intent(in)</span></code> which could have helped to avoid some of the <code class="docutils literal notranslate"><span class="pre">pack/unpack</span></code> overhead.</p>
+<p>It looks like the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> actions are inserted early in the compilation pipeline, and these extra calls affect behavior of the later optimization passes. For example, <code class="docutils literal notranslate"><span class="pre">Polyhedron/fatigue2</span></code> slows down by about 2x with <code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code>: this slowdown is not caused by the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> overhead, but is a consequence of worse function inlining decisions made after the calls insertion. The benchmarks becomes even faster than the original version with <code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code> and proper <code class="docutils literal notranslate"><span class="pre">-finline-limit=</span></code> settings, but it does not look like the benchmark contains code that would benefit from the array repacking.</p>
+<p>It does not look like <code class="docutils literal notranslate"><span class="pre">gfortran</span></code> is able to eliminate the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code after the function inlining, if the actual argument is statically known to be contiguous. So the overhead from the dynamic contiguity checks is inevitable when <code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code> is specified.</p>
+<p>It does not look like <code class="docutils literal notranslate"><span class="pre">gfortran</span></code> tries to optimize the insertion of <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code. For example, if a dummy array is only used under a condition within the subprogram, the repacking code might be inserted under the same condition to minimize the overhead on the unconditional path through the subprogram.</p>
+</section>
+</section>
+<section id="nvidia-hpc-fortran-compiler">
+<h3>NVIDIA HPC Fortran compiler<a class="headerlink" href="#nvidia-hpc-fortran-compiler" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">nvfortran</span></code> compiler performs array repacking by default, and has few option to control this behavior (only <a class="reference external" href="https://docs.nvidia.com/hpc-sdk/compilers/hpc-compilers-ref-guide/index.html#command-line-options-reference">-M[no]target_temps</a>). The compiler inserts <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code around the calls of subprograms that have assumed-shape dummy array arguments (a procedure having an assumed-shape dummy argument must have an explicit interface due to F2018 15.4.2.2, 1, (3), (b)):</p>
+<p><strong>Before the call:</strong> iff the array is not contiguous in the innermost dimension, it is copied into a newly allocated contiguous chunk of memory, and the temporary array is passed to the callee.</p>
+<p><strong>After the call:</strong> iff the array is not contiguous in the innermost dimension, values from the temporary array are copied to the original array and the temporary array is deallocated.</p>
+<section id="id1">
+<h4>Facts and guesses about the implementation<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">pack</span></code> code is only generated if the actual argument may be non-contiguous in the innermost dimension, as determined statically, i.e. the compiler does not generate any dynamic contiguity checks. For example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">interface</span>
+<span class="k">  subroutine </span><span class="n">test1</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">test1</span>
+<span class="w">  </span><span class="k">subroutine </span><span class="n">test2</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:,:)</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">test2</span>
+<span class="k">end interface</span>
+<span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="n">m1</span><span class="p">,</span><span class="n">m2</span><span class="p">),</span><span class="w"> </span><span class="n">y</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="n">m2</span><span class="p">)</span>
+<span class="k">call </span><span class="n">test1</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:))</span><span class="w"> </span><span class="c">! case 1</span>
+<span class="k">call </span><span class="n">test1</span><span class="p">(</span><span class="n">y</span><span class="p">(</span><span class="mi">1</span><span class="p">,:))</span><span class="w"> </span><span class="c">! case 2</span>
+<span class="k">call </span><span class="n">test2</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">,:))</span><span class="w"> </span><span class="c">! case 3</span>
+<span class="k">call </span><span class="n">test2</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">:</span><span class="mi">1</span><span class="p">,:))</span><span class="w"> </span><span class="c">! case 4</span>
+</pre></div>
+</div>
+<p>In case 1, the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code is generated without dynamically checking if <code class="docutils literal notranslate"><span class="pre">m1</span> <span class="pre">==</span> <span class="pre">1</span></code> (in which case the actual argument is actually contiguous).</p>
+<p>In case 2, the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code is also generated, which is a room for improvement.</p>
+<p>In case 3 and 4, the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code is not generated, because the actual argument is contiguous in the innermost dimension. There seems to be room for improvement in case 4, where it might be beneficial to repack the array in case <code class="docutils literal notranslate"><span class="pre">m1</span></code> is big enough to prevent the data cache utilization (depending on the actual processing of the array in <code class="docutils literal notranslate"><span class="pre">test2</span></code>, of course).</p>
+<p><code class="docutils literal notranslate"><span class="pre">nvfortran</span></code> does optimize out the <code class="docutils literal notranslate"><span class="pre">unpack</span></code> copy-out code in case the dummy argument is declared <code class="docutils literal notranslate"><span class="pre">intent(in)</span></code>, but it does not optimize the <code class="docutils literal notranslate"><span class="pre">pack</span></code> copy-in in case it is declared <code class="docutils literal notranslate"><span class="pre">intent(out)</span></code>.</p>
+<p>It looks like <code class="docutils literal notranslate"><span class="pre">nvfortran</span></code> is not able to optimize the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> code after the function inlining (<code class="docutils literal notranslate"><span class="pre">-Minline=reshape</span></code>), even if the inline code makes it obvious that only a single element of the array is being accessed and there is no reason to copy-in/out the whole array.</p>
+<p><code class="docutils literal notranslate"><span class="pre">nvfortran</span></code>’s implementation guarantees that an assumed-shape dummy array is contiguous in the innermost dimension, so when such a dummy is passed to a callee as an actual argument associated with the callee’s assumed-shape dummy array, there is no need to <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> it again around the callee’s call site.</p>
+</section>
+</section>
+</section>
+<section id="known-limitations-of-the-array-repacking">
+<h2>Known limitations of the array repacking<a class="headerlink" href="#known-limitations-of-the-array-repacking" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">gfortran</span></code> documentation, expectedly, warns that the array repacking <code class="docutils literal notranslate"><span class="pre">can</span> <span class="pre">introduce</span> <span class="pre">significant</span> <span class="pre">overhead</span> <span class="pre">to</span> <span class="pre">the</span> <span class="pre">function</span> <span class="pre">call,</span> <span class="pre">especially</span> <span class="pre">when</span> <span class="pre">the</span> <span class="pre">passed</span> <span class="pre">data</span> <span class="pre">is</span> <span class="pre">noncontiguous</span></code>. A compiler has to try to minimize the overhead of the copy-in/out actions whenever possible, but it may not be always possible to guess correctly when the repacking is profitable. So the <code class="docutils literal notranslate"><span class="pre">gfortran</span></code>’s approach of giving the users control over the repacking seems reasonable. A compiler may decide to enable array repacking by default or under some optimization levels, but the correctness issues described below has to be taken into account as well as performance and usability (i.e. the need to specify a compiler option to enable/disable array repacking).</p>
+<p>**Difference between performance of nvfortran and gfortran **</p>
+<p>Array repacking creates a complete copy of an array section and let’s the program code work on the temporary copy, then reflecting the updates back through another copy. If the original program intends to let different threads to work on different parts of the same array section, then the copy-in/out actions introduce a data race that has not existed in the original program. <a class="reference internal" href="#example-2">Example #2</a> produces inconsistent results when being compiled with either <code class="docutils literal notranslate"><span class="pre">nvfortran</span> <span class="pre">-mp</span></code> or <code class="docutils literal notranslate"><span class="pre">gfortran</span> <span class="pre">-fopenmp</span> <span class="pre">-frepack-arrays</span></code> and run with multiple threads. Note that the <code class="docutils literal notranslate"><span class="pre">repacking</span></code> subroutine and its call site might be written such that they are located in separate modules that do not have to be compiled with <code class="docutils literal notranslate"><span class="pre">-mp/-fopenmp</span></code>, so a compiler has no clue whether array repacking is safe. Even if explicitly instructed via <code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code>, the compiler cannot avoid false-positive warnings about unsafety of array repacking, because it cannot know whether a function might be called in a multithreaded context (e.g. when <code class="docutils literal notranslate"><span class="pre">-mp/-fopenmp</span></code> is not specified).</p>
+<p>The array copies may also become a problem for OpenACC/OpenMP target data environment management. For example:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">test</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">  </span><span class="c">!$acc serial present(x)</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="c">!$acc end serial</span>
+<span class="k">end subroutine </span><span class="n">test</span>
+<span class="k">subroutine </span><span class="n">caller</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">n</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="c">!$acc enter data create(x)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">test</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:))</span>
+<span class="k">end subroutine </span><span class="n">caller</span>
+</pre></div>
+</div>
+<p>The whole array <code class="docutils literal notranslate"><span class="pre">x</span></code> is expected to be present in the device data environment after the <code class="docutils literal notranslate"><span class="pre">enter</span> <span class="pre">data</span></code> construct, but the actual array being “seen” at the <code class="docutils literal notranslate"><span class="pre">serial</span></code> construct is a temporary copy of the array section, which has no corresponding memory on the device.</p>
+<p>A compiler could generate code that dynamically detect both of these situations, i.e. whether the point of repacking is happening in a multithreaded context or whether the array to be repacked has associated bookkeeping in the device data environment, and do not create copies. Such checks would introduce dependencies on the parallelization/offload runtime libraries, which are not linked unless compiler is instructed to do so via <code class="docutils literal notranslate"><span class="pre">-acc/-fopenacc/-mp/-fopenmp/etc.</span></code></p>
+<p>So it does not seem practical/reasonable to enable the array repacking by default in a compiler that must produce correct code for all standard conformant programs. It is still beneficial to let users request array repacking, given that its behavior is properly documented and all the warning signs are in place.</p>
+</section>
+<section id="flang-feature-requirements">
+<h2>Flang feature requirements<a class="headerlink" href="#flang-feature-requirements" title="Link to this heading">¶</a></h2>
+<section id="correctness">
+<h3>Correctness<a class="headerlink" href="#correctness" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Support repacking of assumed-shape array dummy arguments or actual array arguments associated with such dummy arguments of any data types.</p></li>
+<li><p>When array repacking is enabled, Flang should strive to provide correct program behavior when OpenACC/OpenMP features are explicitly enabled during the compilation.</p>
+<ul class="simple">
+<li><p>It is unclear if the compiler/runtime can always prevent the array repacking to produce incorrect code. Thus, the implementation should do its best to prevent incorrect behavior or diagnose the incorrect behavior in runtime as soon as possible.</p></li>
+<li><p>To stress again, such implementation can only be enabled when users enable OpenACC/OpenMP explicitly during the compilation, so that the compiler can rely on the appropriate OpenACC/OpenMP runtime libraries to be linked into the resulting module.</p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="performance">
+<h3>Performance<a class="headerlink" href="#performance" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Minimize the overhead of array repacking, e.g. avoid copy-in/out whenever possible, execute copy-in/out only on the execution paths where the array is accessed.</p></li>
+<li><p>Provide different modes of repacking depending on the “contiguity” meaning, i.e. one - array is contiguous in the innermost dimension, two - array is contiguous in all dimensions.</p></li>
+<li><p>Avoid generating repacking code, when the “contiguity” can be statically proven (including after optimization passes like constant propagation, function inlining, etc.).</p></li>
+<li><p>Use a set of heuristics to avoid generating repacking code based on the array usage pattern, e.g. if an array is proven not to be used in an array expression or a loop, etc.</p></li>
+<li><p>Use a set of heuristics to avoid repacking actions dynamically, e.g. based on the array size, element size, byte stride(s) of the [innermost] dimension(s), etc.</p></li>
+<li><p>Minimize the impact of the IR changes, introduced by repacking, on the later optimization passes.</p></li>
+</ol>
+</section>
+<section id="usability">
+<h3>Usability<a class="headerlink" href="#usability" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Provide command line options to enable/disable array repacking, e.g. <code class="docutils literal notranslate"><span class="pre">-f[no-]repack-arrays</span></code> for <code class="docutils literal notranslate"><span class="pre">gfortran</span></code> cli compatibility.</p></li>
+<li><p>Provide command line options to instruct the compiler which performance heuristics to use with the default picked based on benchmarking.</p></li>
+<li><p>Provide consistent behavior of the temporary arrays with relation to <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code> (that forces all temporary arrays to be allocated on the stack).</p></li>
+<li><p>Produce correct debug information to substitute the original array with the copy array when accessing values in the debugger.</p></li>
+<li><p>Document potential correctness issues that array repacking may cause in multithreaded/offload execution.</p></li>
+<li><p>Document the expected changes of the programs behavior, such as applying <code class="docutils literal notranslate"><span class="pre">LOC</span></code> and <code class="docutils literal notranslate"><span class="pre">IS_CONTIGUOUS</span></code> intrinsic functions to the repacked arrays (one cannot expect the same results as if these intrinsics were applied to the original arrays).</p></li>
+</ol>
+</section>
+</section>
+<section id="proposed-design">
+<h2>Proposed design<a class="headerlink" href="#proposed-design" title="Link to this heading">¶</a></h2>
+<section id="overview">
+<h3>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h3>
+<p>Controlled by cli options, Lowering will generate a <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> operation in a subprogram’s prologue for each assumed-shape dummy array argument (including <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code>). For each <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> it will also generate <code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code> in the subprogram’s epilogue. These new operations will represent the complete effects of <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> actions, such as temp-allocation/copy-in/copy-out/temp-deallocation. While it is possible to represent the needed actions using existing FIR/HLFIR operations, it is worth keeping them more specific and compact for easier manipulation in the passes related to optimizing the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> actions.</p>
+<p>The new operations will hold all the information that customizes further handling of the <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> actions, such as:</p>
+<ul class="simple">
+<li><p>Optional array of attributes supporting an interface to generate a predicate that says if the repacking is safe in the current context.</p></li>
+<li><p>The contiguity mode: <code class="docutils literal notranslate"><span class="pre">innermost</span></code> vs <code class="docutils literal notranslate"><span class="pre">whole</span></code>.</p></li>
+<li><p>Attributes selecting the heuristics (both compiler and runtime ones) that may be applied to avoid <code class="docutils literal notranslate"><span class="pre">pack</span></code>/<code class="docutils literal notranslate"><span class="pre">unpack</span></code> actions.</p></li>
+<li><p>Other attributes, like <code class="docutils literal notranslate"><span class="pre">stack</span></code> vs <code class="docutils literal notranslate"><span class="pre">heap</span></code> to manage the temporary allocation according to <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code>, etc.</p></li>
+</ul>
+<p>Lowering will not try to optimize the insertion of new operations, except for obvious cases like <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code> dummy arguments or arrays of elements bigger than the element size threshold. Further optimization passes will be responsible for optimizing the operations away or moving them around to satisfy the performance requirements.</p>
+<p>The following FIR passes should be implemented:</p>
+<ul class="simple">
+<li><p>Deletion of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>/<code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code> that are statically proven to take a contiguous input array.</p></li>
+<li><p>Deletion/merging of cascaded <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> operations.</p></li>
+<li><p>Deletion of the new operations that are statically proven not to meet the array usage patterns that are considered to benefit from the array repacking.</p></li>
+<li><p>Deletion of the new operations that are statically proven not to meet the dynamic conditions for repacking (such as the array size).</p></li>
+<li><p>Repositioning of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>/<code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code> to execution paths where the array is actually accessed.</p></li>
+<li><p>A pass converting the operations to the existing FIR operations and/or Fortran runtime calls.</p></li>
+</ul>
+</section>
+<section id="new-operations-to-represent-pack-unpack">
+<h3>New operations to represent pack/unpack<a class="headerlink" href="#new-operations-to-represent-pack-unpack" title="Link to this heading">¶</a></h3>
+<section id="fir-pack-array-operation">
+<h4>fir.pack_array operation<a class="headerlink" href="#fir-pack-array-operation" title="Link to this heading">¶</a></h4>
+<p>The operation has the following syntax:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%new_var = fir.pack_array %var
+    [stack ]
+    [innermost ]
+    [no_copy ]
+    [heuristics([none|loop-only]) ]
+    [constraints([max-size = &lt;int&gt;, ][max-element-size = &lt;int&gt;, ]
+    			 [min-stride = &lt;int&gt;]) ]
+    [typeparams %p1, ... ]
+    [&lt;[acc.temp_copy_is_safe][omp.temp_copy_is_safe]&gt;]
+    : !fir.box/class&lt;!fir.array&lt;...&gt;&gt;
+</pre></div>
+</div>
+<p>The operation creates a new <code class="docutils literal notranslate"><span class="pre">!fir.box/class&lt;!fir.array&lt;&gt;&gt;</span></code> value to represent either the original <code class="docutils literal notranslate"><span class="pre">%var</span></code> or a newly allocated temporary array, maybe identical to <code class="docutils literal notranslate"><span class="pre">%var</span></code> by value.</p>
+<p>Arguments:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">stack</span></code> - indicates if <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code> is in effect for compiling this function.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">innermost</span></code> - tells that the repacking has to be done iff the array is not contiguous in the innermost dimension. This also describes what type of contiguity can be expected from <code class="docutils literal notranslate"><span class="pre">%new_var</span></code>, i.e. <code class="docutils literal notranslate"><span class="pre">innermost</span></code> means that the resulting array is definitely contiguous in the innermost dimension, but may be non-contiguous in other dimensions (unless additional analysis proves otherwise). For 1-D arrays, <code class="docutils literal notranslate"><span class="pre">innermost</span></code> attribute is not valid.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">no_copy</span></code> - indicates that, in case a temporary array is created, <code class="docutils literal notranslate"><span class="pre">%var</span></code> to <code class="docutils literal notranslate"><span class="pre">%new_var</span></code> copy is not required (<code class="docutils literal notranslate"><span class="pre">intent(out)</span></code> dummy argument case).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">heuristics</span></code></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">loop-only</span></code> - <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> can be optimized away, if the array is not used in a loop.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">none</span></code> - <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> cannot be optimized based on the array usage pattern.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">constraints</span></code></p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">max-size</span></code> - constant integer attribute specifying the maximum byte size of an array that is eligible for repacking.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max-element-size</span></code> - constant integer attribute specifying the maximum byte element-size of an array that is eligible for repacking.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">min-stride</span></code> - constant integer attribute specifying the minimum byte stride of the innermost dimension of an array that is eligible for repacking.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">typeparams</span></code> - type parameters of the element type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">is-safe</span></code>: a list of attributes implementing <code class="docutils literal notranslate"><span class="pre">fir::SafeTempArrayCopyAttrInterface</span></code> attribute interface for generating a boolean value indicating whether using a temporary copy instead of the original array is safe in the current context.</p></li>
+</ul>
+<p>Memory effects are conservative, assuming that an allocation and copy may happen:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MemAlloc</span></code> effect on either <code class="docutils literal notranslate"><span class="pre">AutomaticAllocationScopeResource</span></code> or <code class="docutils literal notranslate"><span class="pre">DefaultResource</span></code> depending on <code class="docutils literal notranslate"><span class="pre">stack</span></code> attribute.</p>
+<ul>
+<li><p>The memory allocation effect is especially important for operations with <code class="docutils literal notranslate"><span class="pre">stack</span></code> attribute so that <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> operations are not reordered inconsistently with their corresponding <code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code> operations. This may cause issues with later lowering of this operations into <code class="docutils literal notranslate"><span class="pre">stacksave/stackrestore</span></code> pairs.</p></li>
+</ul>
+</li>
+<li><p>If there is no <code class="docutils literal notranslate"><span class="pre">no_copy</span></code>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">MemRead</span></code> effect on unknown value to indicate potential read from the original array. This effect prevents hoisting a <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> above any write to the original array.</p>
+<ul>
+<li><p>[TBD] we can relax that by having an additional argument taking <code class="docutils literal notranslate"><span class="pre">fir.box_addr</span> <span class="pre">%var</span></code> value, though, this adds some redundancy to the argument list.</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>Alias analysis:</p>
+<ul class="simple">
+<li><p>For the purpose of alias analysis <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> should be considered a pass-through operation, meaning that when FIR alias analysis is looking for the source of a pointer, emboxed in the result box of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>, the search is continued through the operation’s argument box def-use.</p></li>
+</ul>
+</section>
+<section id="fir-unpack-array-operation">
+<h4>fir.unpack_array operation<a class="headerlink" href="#fir-unpack-array-operation" title="Link to this heading">¶</a></h4>
+<p>The operation has the following syntax:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>fir.unpack_array %new_var to %var [stack ] [no_copy ] : !fir.box/class&lt;!fir.array&lt;...&gt;&gt;
+</pre></div>
+</div>
+<p>The operation is either a no-op or deallocates the temporary array, and maybe copies the temporary array into the original array.</p>
+<p>Arguments:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">%new_var</span></code> is a value produced by <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>. In general, <code class="docutils literal notranslate"><span class="pre">%new_var</span></code> may become a block argument, and getting the other properties from the producer may not be possible. So some arguments are duplicated on <code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">stack</span></code> - indicates if <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code> is in effect for compiling this function.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">no_copy</span></code> - indicates that, in case a temporary array is created, <code class="docutils literal notranslate"><span class="pre">%new_var</span></code> to <code class="docutils literal notranslate"><span class="pre">%var</span></code> copy is not required (<code class="docutils literal notranslate"><span class="pre">intent(in)</span></code> dummy argument case).</p></li>
+</ul>
+<p>Memory effects are conservative, assuming that a copy and deallocation may happen:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MemFree</span></code> effect on either <code class="docutils literal notranslate"><span class="pre">AutomaticAllocationScopeResource</span></code> or <code class="docutils literal notranslate"><span class="pre">DefaultResource</span></code> depending on <code class="docutils literal notranslate"><span class="pre">stack</span></code> attribute.</p></li>
+<li><p>If there is no <code class="docutils literal notranslate"><span class="pre">no_copy</span></code>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">MemWrite</span></code> effect on unknown value to indicate potential write into the original array. This effect should prevent hoisting any reads/writes of the original array above a <code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code>, since those hoisted reads/writes may address the original array memory that has not been updated from the temporary copy yet.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+</section>
+<section id="new-attribute-interface">
+<h3>New attribute interface<a class="headerlink" href="#new-attribute-interface" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">fir::SafeTempArrayCopyAttrInterface</span></code> attribute interface provides means to generate programming model specific predicates saying whether repacking is safe or not at the point where it needs to be done. For example the OpenMP MLIR dialect may provide an attribute implementing this interface to generate a runtime check at the point of packing array <code class="docutils literal notranslate"><span class="pre">x</span></code> inside subroutine <code class="docutils literal notranslate"><span class="pre">repacking</span></code>. A conservative implementation might look like this:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="n">repacking_is_safe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">omp_get_num_team</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">omp_get_num_threads</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The attribute interface will be used during lowering of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> to generate the predicate and make the packing conditional and safe. This will allow applying repacking correctly in programs compiled with <code class="docutils literal notranslate"><span class="pre">-fopenmp</span></code>, and get the benefits of repacking in the serial parts of those programs.</p>
+<p>Similarly, the OpenACC MLIR dialect may provide such an attribute to check if a device copy has been created for an array that is about to be packed, and prevent the repacking for cases like this:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">10</span><span class="p">)</span>
+<span class="w">  </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="w">  </span><span class="c">!$acc enter data copyin(x)</span>
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span>
+<span class="w">     </span><span class="k">call </span><span class="n">repacking</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="n">i</span><span class="p">,:))</span>
+<span class="w">  </span><span class="k">end do</span>
+<span class="w">  </span><span class="c">!$acc exit data copyout(x)</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">repacking</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">    </span><span class="c">!$acc parallel loop present(x)</span>
+<span class="w">    </span><span class="k">do </span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="mi">10</span>
+<span class="w">       </span><span class="n">x</span><span class="p">(</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1.0</span>
+<span class="w">    </span><span class="k">end do</span>
+<span class="k">  end subroutine </span><span class="n">repacking</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+<p>Note that it may not be possible to detect all the cases where repacking breaks the original OpenACC/OpenMP program behavior. In the following case, it is unclear how to synchronize the repacking in both routines (especially, when the OpenACC directives are not lexically visible at the point of repacking):</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">10</span><span class="p">)</span>
+<span class="w">  </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="w">  </span><span class="k">call </span><span class="n">repacking_in</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:))</span>
+<span class="w">  </span><span class="k">call </span><span class="n">repacking_out</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:))</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">repacking_in</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">    </span><span class="c">!$acc enter data copyin(x)</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">repacking_in</span>
+<span class="w">  </span><span class="k">subroutine </span><span class="n">repacking_out</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">    </span><span class="c">!$acc exit data copyout(x)</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">repacking_out</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+<p>So the most conservative implementation of the predicate generator may be to always produce <code class="docutils literal notranslate"><span class="pre">false</span></code> value. Flang lowering may attach any number of such attributes to <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> depending on the compilation context and options.</p>
+<p><code class="docutils literal notranslate"><span class="pre">fir::SafeTempArrayCopyAttrInterface</span></code> is defined in <code class="docutils literal notranslate"><span class="pre">flang/include/flang/Optimizer/Dialect/SafeTempArrayCopyAttrInterface.td</span></code>. The OpenACC-specific implementation is defined in <code class="docutils literal notranslate"><span class="pre">lib/Optimizer/OpenACC/FIROpenACCAttributes.cpp</span></code>. The OpenMP-specific implementation is defined in <code class="docutils literal notranslate"><span class="pre">lib/Optimizer/OpenMP/Support/FIROpenMPAttributes.cpp</span></code></p>
+<section id="alternatives-additions-to-the-attribute-interface">
+<h4>Alternatives/additions to the attribute interface<a class="headerlink" href="#alternatives-additions-to-the-attribute-interface" title="Link to this heading">¶</a></h4>
+<p>The following ideas were expressed during the review, and they are worth considering.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>For OpenACC/OpenMP runtime to be able to detect/handle the presence of the original array and the temporary copy in the device data environment, descriptor flags/properties might be used to mark the copy’s descriptor as such and provide a link to the original array (or its descriptor). It may be problematic to maintain such flags/properties, in general, because of the repacking that may happen, especially, in C code, where the flags/properties might be dropped. Moreover, a copy array might be repacked into another copy array multiple times, so a descriptor might need to keep a chain of associated arrays and it will have to be maintained as well.<br>An alternative to tracking the original-copy “association” might be compiler generated code notifying the OpenACC/OpenMP offload runtime about the copy being created/deleted for the original array, so that the offload runtime can disallow repacking or report an error when the repacking is definitely causing the program to behave incorrectly. The compiler may report the “association” to the runtime through callbacks provided by <code class="docutils literal notranslate"><span class="pre">fir::SafeTempArrayCopyAttrInterface</span></code> attribute interface, and this will require proper bookkeeping in the runtime specific to the array repacking.</p></td>
+</tr>
+<tr class="row-odd"><td><p>There may be some uses for an API allowing to statically determine whether a given descriptor (SSA value) represent the repacked copy of the original array. For example, it may be in the form of an API in the OpenACC <code class="docutils literal notranslate"><span class="pre">MappableType</span></code> interface. This can be done with some limitations for the values produced by <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> that are dynamic (i.e. the copy is created conditionally based on the runtime checks).</p></td>
+</tr>
+<tr class="row-even"><td><p>The compiler can also try to statically determine the conditions where the array repacking might be unsafe, e.g. a presence of memory barriers or operations carrying implicit memory barriers, presence of atomic operations between the <code class="docutils literal notranslate"><span class="pre">pack/unpack</span></code> operations may indicate non-trivial handling of the array memory. Such checks may result in the removal of <code class="docutils literal notranslate"><span class="pre">pack/unpack</span></code> operations, and they can probably be done in a mandatory pass (not an optimization pass). At the same time, the result of the checks may depend on other optimization passes (e.g. inlining), so the behavior may be inconsistent between different optimization levels.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="lowering-fortran-to-fir">
+<h3>Lowering Fortran to FIR<a class="headerlink" href="#lowering-fortran-to-fir" title="Link to this heading">¶</a></h3>
+<p>Fortran code:</p>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">test</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">2</span><span class="p">:)</span>
+<span class="k">end subroutine </span><span class="n">test</span>
+</pre></div>
+</div>
+<p>HLFIR/FIR produced by Lowering:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  func.func @_QPtest(%arg0: !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt; {fir.bindc_name = &quot;x&quot;}, %arg1: !fir.ref&lt;i32&gt; {fir.bindc_name = &quot;n&quot;}) {
+    %0 = fir.dummy_scope : !fir.dscope
+    %1:2 = hlfir.declare %arg1 dummy_scope %0 {uniq_name = &quot;_QFtestEn&quot;} : (!fir.ref&lt;i32&gt;, !fir.dscope) -&gt; (!fir.ref&lt;i32&gt;, !fir.ref&lt;i32&gt;)
+    %2 = fir.load %1#0 : !fir.ref&lt;i32&gt;
+    %c0_i32 = arith.constant 0 : i32
+    %3 = arith.cmpi sgt, %2, %c0_i32 : i32
+    %4 = arith.select %3, %2, %c0_i32 : i32
+    %c2_i64 = arith.constant 2 : i64
+    %5 = fir.convert %c2_i64 : (i64) -&gt; index
+    %6 = fir.shift %5 : (index) -&gt; !fir.shift&lt;1&gt;
+    %repacked = fir.pack_array %arg0 typeparams %4 : !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;
+    %7:2 = hlfir.declare %repacked(%6) typeparams %4 dummy_scope %0 {uniq_name = &quot;_QFtestEx&quot;} : (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, !fir.shift&lt;1&gt;, i32, !fir.dscope) -&gt; (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;)
+    fir.unpack_array %repacked to %arg0 : !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;
+    return
+  }
+</pre></div>
+</div>
+<section id="restrictions">
+<h4>Restrictions:<a class="headerlink" href="#restrictions" title="Link to this heading">¶</a></h4>
+<p>It is unsafe to create temporaries of assumed-shape dummy arrays that have <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> attribute, because they can be accessed during the invocation of the subprograms not using direct reference of the dummy argument. Lowering must never produce the new operations for such dummy arguments. [TBD] a user option might be provided to override the default safe behavior.</p>
+<p>The copy creation is also restricted for <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> and <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> arguments. Such dummy arguments might be changed during the execution of their subprogram in an unpredictable manner, so creating a copy for them might be incorrect (Fortran 2023, Note 5 of section 15.5.2.5).</p>
+<p>It does not make sense to generate the new operations for <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code> arguments and for arguments with statically known element size that exceeds the <code class="docutils literal notranslate"><span class="pre">max-element-size</span></code> threshold.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>’s copy-in action cannot be skipped for <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> dummy argument of a derived type that requires finalization on entry to the subprogram, as long as the finalization subroutines may access the value of the dummy argument. In this case <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> operation cannot have <code class="docutils literal notranslate"><span class="pre">no_copy</span></code> attribute, so that it creates a contiguous temporary matching the value of the original array, and then the temporary is finalized before execution of the subprogram’s body begins.</p>
+</section>
+<section id="optional-behavior">
+<h4>Optional behavior<a class="headerlink" href="#optional-behavior" title="Link to this heading">¶</a></h4>
+<p>In case of the <code class="docutils literal notranslate"><span class="pre">whole</span></code> contiguity mode or with 1-D array, Flang can propagate this information to <code class="docutils literal notranslate"><span class="pre">hlfir.declare</span></code> - this may improve optimizations down the road. This can be done iff the repacking has no dynamic constraints and/or heuristics. For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    %c0 = arith.constant 0 : index
+    %6:3 = fir.box_dims %arg0, %c0 : (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, index) -&gt; (index, index, index)
+    %c2_i64 = arith.constant 2 : i64
+    %7 = fir.convert %c2_i64 : (i64) -&gt; index
+    %8 = fir.shape_shift %7, %6#1 : (index, index) -&gt; !fir.shapeshift&lt;1&gt;
+    %repacked = fir.pack_array %arg0 typeparams %5 : !fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;
+    %9 = fir.box_addr %repacked : (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;) -&gt; !fir.ref&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;
+    %10:2 = hlfir.declare %9(%8) typeparams %5 dummy_scope %0 {fortran_attrs = #fir.var_attrs&lt;contiguous&gt;, uniq_name = &quot;_QFtestEx&quot;} : (!fir.ref&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, !fir.shapeshift&lt;1&gt;, i32, !fir.dscope) -&gt; (!fir.box&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;, !fir.ref&lt;!fir.array&lt;?x!fir.char&lt;1,?&gt;&gt;&gt;)
+</pre></div>
+</div>
+<p>This may complicate future <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> optimization passes, but it is worth considering.</p>
+</section>
+</section>
+<section id="lowering-new-operations">
+<h3>Lowering new operations<a class="headerlink" href="#lowering-new-operations" title="Link to this heading">¶</a></h3>
+<p>Lowering of the new operations (after all the optimizations) might be done in a FIR-to-FIR conversion pass.</p>
+<p><code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> lowering might be done in the following steps:</p>
+<ul class="simple">
+<li><p>If there are dynamic constraints, generate a boolean <code class="docutils literal notranslate"><span class="pre">p1</span></code> that is set to true if repacking has to be done (depending on the constraints values and the original array descriptor). The IR might be cleaner if we generate a Fortran runtime call here.</p></li>
+<li><p>If there are attributes implementing <code class="docutils literal notranslate"><span class="pre">fir::SafeTempArrayCopyAttrInterface</span></code> attribute interface, then use the interface method to generate boolean predicates for each such attribute: <code class="docutils literal notranslate"><span class="pre">p2</span></code>, …, <code class="docutils literal notranslate"><span class="pre">pn</span></code>.</p>
+<ul>
+<li><p>[TBD] it seems that the runtime checks for the target offload programs will require a pure <code class="docutils literal notranslate"><span class="pre">PointerLike</span></code> value for the array start and the total byte size of the array (e.g. as <code class="docutils literal notranslate"><span class="pre">index</span></code> value).</p></li>
+</ul>
+</li>
+<li><p>Compute <code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">=</span> <span class="pre">p1</span> <span class="pre">&amp;&amp;</span> <span class="pre">p2</span> <span class="pre">&amp;&amp;</span> <span class="pre">...</span> <span class="pre">&amp;&amp;</span> <span class="pre">pn</span></code>.</p></li>
+<li><p>Compute the total size of the temporary <code class="docutils literal notranslate"><span class="pre">required_size</span></code> (in elements).</p></li>
+<li><p>Compute the total size of the allocation <code class="docutils literal notranslate"><span class="pre">allocation_size</span> <span class="pre">=</span> <span class="pre">p</span> <span class="pre">?</span> <span class="pre">required_size</span> <span class="pre">:</span> <span class="pre">0</span></code>.</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">stack</span></code> is present, then allocate memory on the stack <code class="docutils literal notranslate"><span class="pre">%space</span> <span class="pre">=</span> <span class="pre">fir.alloca</span> <span class="pre">&lt;element-type&gt;,</span> <span class="pre">%allocation_size</span></code>, otherwise, <code class="docutils literal notranslate"><span class="pre">%space</span> <span class="pre">=</span> <span class="pre">fir.allocmem</span> <span class="pre">!fir.array&lt;?x&lt;element-type&gt;&gt;,</span> <span class="pre">%allocation_size</span></code>.</p></li>
+<li><p>Embox <code class="docutils literal notranslate"><span class="pre">%space</span></code> into a temporary descriptor <code class="docutils literal notranslate"><span class="pre">%new_box</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">no_copy</span></code>:</p>
+<ul>
+<li><p>If present, then <code class="docutils literal notranslate"><span class="pre">%new_box</span></code> is a new result of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>.</p></li>
+<li><p>If not present, then call Fortran runtime to do the copy into a pre-allocated temporary. Some part of the existing <code class="docutils literal notranslate"><span class="pre">PACK</span></code> runtime may be reused, but the intention is to have a shallow copy vs the deep copy implemented by <code class="docutils literal notranslate"><span class="pre">PACK</span></code>. The runtime call modifies <code class="docutils literal notranslate"><span class="pre">%new_box</span></code> and it becomes a new result of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code>.</p></li>
+<li><p>For <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code> absent argument, the result of the operation is the original absent box.</p></li>
+</ul>
+</li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code> lowering:</p>
+<ul>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">no_copy</span></code> is not present, then call Fortran runtime to do the the copy into the original array. The copy must be made iff <code class="docutils literal notranslate"><span class="pre">fir.box_addr</span> <span class="pre">%var</span> <span class="pre">!=</span> <span class="pre">fir.box_addr</span> <span class="pre">%new_var</span></code>.</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">stack</span></code> is not present, generate:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="n">new_addr</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">box_addr</span> <span class="o">%</span><span class="n">new_var</span>
+<span class="o">%</span><span class="n">orig_addr</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">box_addr</span> <span class="o">%</span><span class="n">orig_addr</span>
+<span class="o">%</span><span class="n">cmp</span> <span class="o">=</span> <span class="n">arith</span><span class="o">.</span><span class="n">cmp</span> <span class="n">neq</span><span class="p">,</span> <span class="o">%</span><span class="n">new_addr</span><span class="p">,</span> <span class="o">%</span><span class="n">orig_addr</span>
+<span class="n">fir</span><span class="o">.</span><span class="k">if</span> <span class="o">%</span><span class="n">cmp</span> <span class="p">{</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">freemem</span> <span class="o">%</span><span class="n">new_addr</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Alternatively, we can let the Fortran runtime do the heap deallocation.</p>
+</li>
+</ul>
+</section>
+<section id="runtime">
+<h3>Runtime<a class="headerlink" href="#runtime" title="Link to this heading">¶</a></h3>
+<p>The goal of packing a non-contiguous array into a contiguous temporary is to allow data cache efficient accesses to the elements of the array. With this in mind, the copy of elements of derived types may be done without following the regular Fortran assign semantics for the allocatable components that may imply memory allocations and the data copies for those components. Making just a shallow copy of the original array can therefore be faster than the corresponding deep copy using Fortran <code class="docutils literal notranslate"><span class="pre">Assign</span></code> runtime.</p>
+<p>The following API is proposed in flang-rt:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">RTDECL</span><span class="p">(</span><span class="n">ShallowCopyDirect</span><span class="p">)(</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="n">result</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="n">source</span><span class="p">,</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">sourceFile</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">line</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>It copies values from <code class="docutils literal notranslate"><span class="pre">source</span></code> array into the pre-allocated <code class="docutils literal notranslate"><span class="pre">result</span></code> array. The semantics is different from the <code class="docutils literal notranslate"><span class="pre">Assign</span></code> runtime for derived types, because it does not perform the recursive assign actions for the components of derived types. For example, ALLOCATABLE component descriptors are copied without creating a new allocation and copying the data (essentially, they are treated as POINTER components).</p>
+<p>The arrays must be conforming, i.e. they must have:</p>
+<ul class="simple">
+<li><p>Same rank.</p></li>
+<li><p>Same extents.</p></li>
+<li><p>Same size and type of elements (including the type parameters).</p></li>
+</ul>
+</section>
+<section id="optimization-passes">
+<h3>Optimization passes<a class="headerlink" href="#optimization-passes" title="Link to this heading">¶</a></h3>
+<p>[TBD] describe in more details optimization passes listed in <a class="reference internal" href="#overview">Overview</a>. Define their place in the pipeline (e.g. with relation to FIR inlining).</p>
+<section id="loop-versioning">
+<h4>Loop versioning<a class="headerlink" href="#loop-versioning" title="Link to this heading">¶</a></h4>
+<p>There is an existing optimization pass (controlled via <code class="docutils literal notranslate"><span class="pre">-f[no-]version-loops-for-stride</span></code>) that creates specialized versions of the loop nests which process assumed-shape dummy arrays. The pass adds a dynamic check for the array(s) contiguity (in the innermost dimension) and exposes the contiguity by rewriting the array(s) accesses via raw pointer references. This transformation may enable more unit-stride vectorization. The pass is beneficial only if the actual array argument is contiguous in the innermost dimension.</p>
+<p>The array repacking is targeting better data cache utilization, and is not intended to enable more unit-strided vectorization for the assumed-shape arrays. At the same time, combining array repacking with the loop versioning may provide better performance for programs where the actual array arguments are non-contiguous, but then their repacked copies can be accessed using unit strides.</p>
+<p>It is suggested that the LoopVersioning pass is run before the lowering of <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> and <code class="docutils literal notranslate"><span class="pre">fir.unpack_array</span></code> operations, and recognizes <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> on the path from <code class="docutils literal notranslate"><span class="pre">fir.declare</span></code> to the function entry block argument. The pass generates the dynamic contiguity checks, and multiversions the loops. In case the repacking actually happens, the most optimal versions of the loops are executed.</p>
+<p>In cases where <code class="docutils literal notranslate"><span class="pre">fir.pack_array</span></code> is statically known to produce a copy that is contiguous in the innermost dimension, the loop versioning pass can skip the generation of the dynamic checks.</p>
+</section>
+</section>
+<section id="driver-user-options">
+<h3>Driver: user options<a class="headerlink" href="#driver-user-options" title="Link to this heading">¶</a></h3>
+<p>The following user options are proposed:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays</span></code> - the option forces Flang to repack a non-contiguous assumed-shape dummy array into a temporary contiguous memory, which may result in faster accesses of the array. The compiler will insert special code in subprogram prologue to allocate a temporary array and copy the original array into the temporary; in subprogram epilogue, it will insert a copy from the temporary array into the original array and deallocate the temporary. The overhead of the allocation/deallocation and the copies may be significant depending on the array size. The compiler will try to optimize the unnecessary/unprofitable repacking.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-fstack-repack-arrays</span></code> - attempt allocating the temporary arrays in stack memory. By default, they are allocated in heap memory (note that <code class="docutils literal notranslate"><span class="pre">-fstack-arrays</span></code> does not affect the allocation of the temporaries created for the arrays repacking).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays-opts=[none|loop-only]</span></code> - the option enables optimizations that may eliminate the array repacking code depending on the array usage pattern:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">none</span></code> - no optimizations.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">loop-only</span></code> - the array repacking code will be removed in any subprogram where the array is not used inside a loop or an array expression.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays-contiguity=[whole|innermost]</span></code>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">whole</span></code> - the option will repack arrays that are non-contiguous in any dimension (default).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">innermost</span></code> - the option will repack arrays that are non-contiguous in the innermost dimension.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays-max-size=&lt;int&gt;</span></code> - arrays bigger than the specified size will not be repacked.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays-max-element-size=&lt;int&gt;</span></code> - arrays with elements bigger than the specified size will not be repacked.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-frepack-arrays-min-stride=&lt;int&gt;</span></code> - arrays with the byte stride of the innermost dimension less than the specified value will not be repacked (e.g. it may not be profitable to repack arrays with the stride in the innermost dimension that is less than the data cache line size).</p></li>
+<li><p>[TBD] defaults for <code class="docutils literal notranslate"><span class="pre">-frepack-arrays-max-size</span></code>, <code class="docutils literal notranslate"><span class="pre">-frepack-arrays-max-element-size</span></code> and <code class="docutils literal notranslate"><span class="pre">-frepack-arrays-min-stride</span></code> will be defined based on benchmark tuning and might be target specific.</p></li>
+</ul>
+</section>
+</section>
+<section id="examples">
+<h2>Examples<a class="headerlink" href="#examples" title="Link to this heading">¶</a></h2>
+<section id="example-1">
+<h3>Example #1<a class="headerlink" href="#example-1" title="Link to this heading">¶</a></h3>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">test</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">n</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="n">m1</span><span class="p">,</span><span class="n">m2</span><span class="p">,</span><span class="n">m3</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">  </span><span class="kt">integer </span><span class="n">n</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="n">repeat_max</span>
+<span class="w">  </span><span class="kt">integer </span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">idx1</span><span class="p">,</span><span class="n">idx2</span><span class="p">,</span><span class="n">idx3</span>
+<span class="w">  </span><span class="k">do </span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="nb">repeat</span>
+<span class="nb">     </span><span class="n">idx1</span><span class="o">=</span><span class="p">(</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">m1</span><span class="o">+</span><span class="mi">0</span><span class="w"> </span><span class="c">! always 0</span>
+<span class="w">     </span><span class="n">idx2</span><span class="o">=</span><span class="p">(</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">m2</span><span class="o">+</span><span class="n">n</span><span class="o">/</span><span class="mi">3</span><span class="w"> </span><span class="c">! always n/3</span>
+<span class="w">     </span><span class="n">idx3</span><span class="o">=</span><span class="p">(</span><span class="n">j</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">m3</span><span class="o">+</span><span class="mi">2</span><span class="o">*</span><span class="n">n</span><span class="o">/</span><span class="mi">3</span><span class="w"> </span><span class="c">! always 2*n/3</span>
+<span class="w">     </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">n</span><span class="o">/</span><span class="mi">3</span>
+<span class="w">        </span><span class="n">x</span><span class="p">(</span><span class="n">idx1</span><span class="o">+</span><span class="n">i</span><span class="p">)</span><span class="o">=</span><span class="n">x</span><span class="p">(</span><span class="n">idx1</span><span class="o">+</span><span class="n">i</span><span class="p">)</span><span class="o">+</span><span class="mf">1.0</span>
+<span class="w">        </span><span class="n">x</span><span class="p">(</span><span class="n">idx2</span><span class="o">+</span><span class="n">i</span><span class="p">)</span><span class="o">=</span><span class="n">x</span><span class="p">(</span><span class="n">idx2</span><span class="o">+</span><span class="n">i</span><span class="p">)</span><span class="o">+</span><span class="mf">1.0</span>
+<span class="w">        </span><span class="n">x</span><span class="p">(</span><span class="n">idx3</span><span class="o">+</span><span class="n">i</span><span class="p">)</span><span class="o">=</span><span class="n">x</span><span class="p">(</span><span class="n">idx3</span><span class="o">+</span><span class="n">i</span><span class="p">)</span><span class="o">+</span><span class="mf">1.0</span>
+<span class="w">     </span><span class="k">end do</span>
+<span class="k">  end do</span>
+<span class="k">end subroutine </span><span class="n">test</span>
+
+<span class="k">subroutine </span><span class="n">wrapper</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">     subroutine </span><span class="n">test</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">n</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="n">m1</span><span class="p">,</span><span class="n">m2</span><span class="p">,</span><span class="n">m3</span><span class="p">)</span>
+<span class="w">       </span><span class="kt">real </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">       </span><span class="kt">integer </span><span class="n">n</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="n">m1</span><span class="p">,</span><span class="n">m2</span><span class="p">,</span><span class="n">m3</span>
+<span class="w">     </span><span class="k">end subroutine </span><span class="n">test</span>
+<span class="w">  </span><span class="k">end interface</span>
+<span class="k">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">parameter</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="nb">repeat</span><span class="o">=</span><span class="mi">1000000</span>
+<span class="w">  </span><span class="kt">integer </span><span class="n">n</span>
+<span class="w">  </span><span class="kt">real </span><span class="n">x</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="cp">#if REPACKING</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">tmp</span><span class="p">(:)</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">tmp</span><span class="p">(</span><span class="n">SIZE</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">1</span><span class="p">)))</span>
+<span class="w">  </span><span class="n">tmp</span><span class="p">(:)</span><span class="o">=</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">test</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span><span class="n">n</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="nb">repeat</span><span class="p">)</span>
+<span class="cp">#else</span>
+<span class="w">  </span><span class="k">call </span><span class="n">test</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:),</span><span class="n">n</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="nb">repeat</span><span class="p">,</span><span class="nb">repeat</span><span class="p">)</span>
+<span class="cp">#endif</span>
+<span class="cp">#if REPACKING</span>
+<span class="w">  </span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:)</span><span class="o">=</span><span class="n">tmp</span><span class="p">(:)</span>
+<span class="w">  </span><span class="k">deallocate</span><span class="p">(</span><span class="n">tmp</span><span class="p">)</span>
+<span class="cp">#endif</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="s1">&#39;X: &#39;</span><span class="p">,</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="kd">::</span><span class="n">n</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
+<span class="k">end subroutine </span><span class="n">wrapper</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">     subroutine </span><span class="n">wrapper</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="w">       </span><span class="kt">integer </span><span class="n">n</span>
+<span class="w">       </span><span class="kt">real </span><span class="n">x</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="w">     </span><span class="k">end subroutine </span><span class="n">wrapper</span>
+<span class="w">  </span><span class="k">end interface</span>
+<span class="k">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">parameter</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">n</span><span class="o">=</span><span class="mi">10000</span>
+<span class="w">  </span><span class="kt">real </span><span class="n">x</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="n">x</span><span class="o">=</span><span class="mf">0.0</span>
+<span class="w">  </span><span class="k">call </span><span class="n">wrapper</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+</section>
+<section id="example-2">
+<h3>Example #2<a class="headerlink" href="#example-2" title="Link to this heading">¶</a></h3>
+<div class="highlight-Fortran notranslate"><div class="highlight"><pre><span></span><span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">use </span><span class="n">omp_lib</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">10</span><span class="p">)</span>
+<span class="w">  </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:)</span>
+<span class="w">  </span><span class="c">!$omp parallel do num_threads(10) shared(x)</span>
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="mi">10</span>
+<span class="w">     </span><span class="k">call </span><span class="n">repacking</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:),</span><span class="w"> </span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end do</span>
+<span class="w">  </span><span class="c">!$omp end parallel do</span>
+<span class="w">  </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">,:)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">repacking</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="c">!</span>
+<span class="w">    </span><span class="n">x</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1.0</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">repacking</span>
+<span class="k">end program </span><span class="n">main</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ArrayComposition.html">Array Composition</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AssumedRank.html">Assumed-Rank Objects</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Aug 26, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

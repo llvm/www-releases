@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Clang Offload Bundler &#8212; Clang 21.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=c54a4614"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clang Offload Packager" href="ClangOffloadPackager.html" />
+    <link rel="prev" title="Clang nvlink Wrapper" href="ClangNVLinkWrapper.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 21.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Clang Offload Bundler</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangNVLinkWrapper.html">Clang nvlink Wrapper</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ClangOffloadPackager.html">Clang Offload Packager</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="clang-offload-bundler">
+<h1>Clang Offload Bundler<a class="headerlink" href="#clang-offload-bundler" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id3">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id4">Usage</a></p></li>
+<li><p><a class="reference internal" href="#supported-file-formats" id="id5">Supported File Formats</a></p></li>
+<li><p><a class="reference internal" href="#bundled-text-file-layout" id="id6">Bundled Text File Layout</a></p></li>
+<li><p><a class="reference internal" href="#bundled-binary-file-layout" id="id7">Bundled Binary File Layout</a></p></li>
+<li><p><a class="reference internal" href="#bundle-entry-id" id="id8">Bundle Entry ID</a></p>
+<ul>
+<li><p><a class="reference internal" href="#bundled-code-object-composition" id="id9">Bundled Code Object Composition</a></p></li>
+<li><p><a class="reference internal" href="#compatibility-rules-for-bundle-entry-id" id="id10">Compatibility Rules for Bundle Entry ID</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#target-id" id="id11">Target ID</a></p>
+<ul>
+<li><p><a class="reference internal" href="#compatibility-rules-for-target-id" id="id12">Compatibility Rules for Target ID</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#target-specific-information" id="id13">Target Specific information</a></p></li>
+<li><p><a class="reference internal" href="#archive-unbundling" id="id14">Archive Unbundling</a></p>
+<ul>
+<li><p><a class="reference internal" href="#creating-a-heterogeneous-device-archive" id="id15">Creating a Heterogeneous Device Archive</a></p></li>
+<li><p><a class="reference internal" href="#extracting-a-device-specific-archive" id="id16">Extracting a Device Specific Archive</a></p></li>
+<li><p><a class="reference internal" href="#id2" id="id17">Usage</a></p></li>
+<li><p><a class="reference internal" href="#additional-options-while-archive-unbundling" id="id18">Additional Options while Archive Unbundling</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#compression-and-decompression" id="id19">Compression and Decompression</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<span id="id1"></span><h2><a class="toc-backref" href="#id3" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>For heterogeneous single source programming languages, use one or more
+<code class="docutils literal notranslate"><span class="pre">--offload-arch=&lt;target-id&gt;</span></code> Clang options to specify the target IDs of the
+code to generate for the offload code regions.</p>
+<p>The tool chain may perform multiple compilations of a translation unit to
+produce separate code objects for the host and potentially multiple offloaded
+devices. The <code class="docutils literal notranslate"><span class="pre">clang-offload-bundler</span></code> tool may be used as part of the tool
+chain to combine these multiple code objects into a single bundled code object.</p>
+<p>The tool chain may use a bundled code object as an intermediate step so that
+each tool chain step consumes and produces a single file as in traditional
+non-heterogeneous tool chains. The bundled code object contains the code objects
+for the host and all the offload devices.</p>
+<p>A bundled code object may also be used to bundle just the offloaded code
+objects, and embedded as data into the host code object. The host compilation
+includes an <code class="docutils literal notranslate"><span class="pre">init</span></code> function that will use the runtime corresponding to the
+offload kind (see <a class="reference internal" href="#clang-offload-kind-table"><span class="std std-ref">Bundled Code Object Offload Kind</span></a>) to load the offload code
+objects appropriate to the devices present when the host program is executed.</p>
+<p><strong class="program">clang-offload-bundler</strong> is located in
+<cite>clang/tools/clang-offload-bundler</cite>.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>clang-offload-bundler<span class="w"> </span>-help
+<span class="go">OVERVIEW: A tool to bundle several input files of the specified type &lt;type&gt;</span>
+<span class="go">referring to the same source file but different targets into a single</span>
+<span class="go">one. The resulting file can also be unbundled into different files by</span>
+<span class="go">this tool if -unbundle is provided.</span>
+
+<span class="go">USAGE: clang-offload-bundler [options]</span>
+
+<span class="go">OPTIONS:</span>
+
+<span class="go">Generic Options:</span>
+
+<span class="go">  --help                  - Display available options (--help-hidden for more)</span>
+<span class="go">  --help-list             - Display list of available options (--help-list-hidden for more)</span>
+<span class="go">  --version               - Display the version of this program</span>
+
+<span class="go">clang-offload-bundler options:</span>
+
+<span class="go">  --###                   - Print any external commands that are to be executed instead of actually executing them - for testing purposes.</span>
+<span class="go">  --allow-missing-bundles - Create empty files if bundles are missing when unbundling.</span>
+<span class="go">  --bundle-align=&lt;uint&gt;   - Alignment of bundle for binary files</span>
+<span class="go">  --check-input-archive   - Check if input heterogeneous archive is valid in terms of TargetID rules.</span>
+<span class="go">  --inputs=&lt;string&gt;       - [&lt;input file&gt;,...]</span>
+<span class="go">  --list                  - List bundle IDs in the bundled file.</span>
+<span class="go">  --outputs=&lt;string&gt;      - [&lt;output file&gt;,...]</span>
+<span class="go">  --targets=&lt;string&gt;      - [&lt;offload kind&gt;-&lt;target triple&gt;,...]</span>
+<span class="go">  --type=&lt;string&gt;         - Type of the files to be bundled/unbundled.</span>
+<span class="go">                            Current supported types are:</span>
+<span class="go">                              i   - cpp-output</span>
+<span class="go">                              ii  - c++-cpp-output</span>
+<span class="go">                              cui - cuda/hip-output</span>
+<span class="go">                              d   - dependency</span>
+<span class="go">                              ll  - llvm</span>
+<span class="go">                              bc  - llvm-bc</span>
+<span class="go">                              s   - assembler</span>
+<span class="go">                              o   - object</span>
+<span class="go">                              a   - archive of bundled files</span>
+<span class="go">                              gch - precompiled-header</span>
+<span class="go">                              ast - clang AST file</span>
+<span class="go">  --unbundle              - Unbundle bundled file into several output files.</span>
+</pre></div>
+</div>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>This tool can be used as follows for bundling:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">clang</span><span class="o">-</span><span class="n">offload</span><span class="o">-</span><span class="n">bundler</span> <span class="o">-</span><span class="n">targets</span><span class="o">=</span><span class="n">triple1</span><span class="p">,</span><span class="n">triple2</span> <span class="o">-</span><span class="nb">type</span><span class="o">=</span><span class="n">ii</span> <span class="o">-</span><span class="n">inputs</span><span class="o">=</span><span class="n">a</span><span class="o">.</span><span class="n">triple1</span><span class="o">.</span><span class="n">ii</span><span class="p">,</span><span class="n">a</span><span class="o">.</span><span class="n">triple2</span><span class="o">.</span><span class="n">ii</span> <span class="o">-</span><span class="n">outputs</span><span class="o">=</span><span class="n">a</span><span class="o">.</span><span class="n">ii</span>
+</pre></div>
+</div>
+<p>or, it can be used as follows for unbundling:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">clang</span><span class="o">-</span><span class="n">offload</span><span class="o">-</span><span class="n">bundler</span> <span class="o">-</span><span class="n">targets</span><span class="o">=</span><span class="n">triple1</span><span class="p">,</span><span class="n">triple2</span> <span class="o">-</span><span class="nb">type</span><span class="o">=</span><span class="n">ii</span> <span class="o">-</span><span class="n">outputs</span><span class="o">=</span><span class="n">a</span><span class="o">.</span><span class="n">triple1</span><span class="o">.</span><span class="n">ii</span><span class="p">,</span><span class="n">a</span><span class="o">.</span><span class="n">triple2</span><span class="o">.</span><span class="n">ii</span> <span class="o">-</span><span class="n">inputs</span><span class="o">=</span><span class="n">a</span><span class="o">.</span><span class="n">ii</span> <span class="o">-</span><span class="n">unbundle</span>
+</pre></div>
+</div>
+</section>
+<section id="supported-file-formats">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Supported File Formats</a><a class="headerlink" href="#supported-file-formats" title="Link to this heading">¶</a></h2>
+<p>Multiple text and binary file formats are supported for bundling/unbundling. See
+<a class="reference internal" href="#supported-file-formats-table"><span class="std std-ref">Supported File Formats</span></a> for a list of currently supported input
+formats. Use the <code class="docutils literal notranslate"><span class="pre">File</span> <span class="pre">Type</span></code> column to determine the value to pass to the
+<code class="docutils literal notranslate"><span class="pre">--type</span></code> option based on the type of input files while bundling/unbundling.</p>
+<blockquote>
+<div><table class="docutils align-default" id="supported-file-formats-table">
+<caption><span class="caption-text">Supported File Formats</span><a class="headerlink" href="#supported-file-formats-table" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>File Format</p></th>
+<th class="head"><p>File Type</p></th>
+<th class="head"><p>Text/Binary</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>CPP output</p></td>
+<td><p>i</p></td>
+<td><p>Text</p></td>
+</tr>
+<tr class="row-odd"><td><p>C++ CPP output</p></td>
+<td><p>ii</p></td>
+<td><p>Text</p></td>
+</tr>
+<tr class="row-even"><td><p>CUDA/HIP output</p></td>
+<td><p>cui</p></td>
+<td><p>Text</p></td>
+</tr>
+<tr class="row-odd"><td><p>Dependency</p></td>
+<td><p>d</p></td>
+<td><p>Text</p></td>
+</tr>
+<tr class="row-even"><td><p>LLVM</p></td>
+<td><p>ll</p></td>
+<td><p>Text</p></td>
+</tr>
+<tr class="row-odd"><td><p>LLVM Bitcode</p></td>
+<td><p>bc</p></td>
+<td><p>Binary</p></td>
+</tr>
+<tr class="row-even"><td><p>Assembler</p></td>
+<td><p>s</p></td>
+<td><p>Text</p></td>
+</tr>
+<tr class="row-odd"><td><p>Object</p></td>
+<td><p>o</p></td>
+<td><p>Binary</p></td>
+</tr>
+<tr class="row-even"><td><p>Archive of bundled files</p></td>
+<td><p>a</p></td>
+<td><p>Binary</p></td>
+</tr>
+<tr class="row-odd"><td><p>Precompiled header</p></td>
+<td><p>gch</p></td>
+<td><p>Binary</p></td>
+</tr>
+<tr class="row-even"><td><p>Clang AST file</p></td>
+<td><p>ast</p></td>
+<td><p>Binary</p></td>
+</tr>
+</tbody>
+</table>
+</div></blockquote>
+</section>
+<section id="bundled-text-file-layout">
+<span id="clang-bundled-code-object-layout-text"></span><h2><a class="toc-backref" href="#id6" role="doc-backlink">Bundled Text File Layout</a><a class="headerlink" href="#bundled-text-file-layout" title="Link to this heading">¶</a></h2>
+<p>The text file formats are concatenated with comments that have a magic string
+and bundle entry ID in between. The BNF syntax to represent a code object
+bundle file is:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">&lt;</span><span class="n">file</span><span class="o">&gt;</span>    <span class="p">:</span><span class="o">:==</span> <span class="o">&lt;</span><span class="n">bundle</span><span class="o">&gt;</span> <span class="o">|</span> <span class="o">&lt;</span><span class="n">bundle</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">file</span><span class="o">&gt;</span>
+<span class="o">&lt;</span><span class="n">bundle</span><span class="o">&gt;</span>  <span class="p">:</span><span class="o">:==</span> <span class="o">&lt;</span><span class="n">comment</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">start</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">bundle_id</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">eol</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">bundle</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">eol</span><span class="o">&gt;</span>
+               <span class="o">&lt;</span><span class="n">comment</span><span class="o">&gt;</span> <span class="n">end</span> <span class="o">&lt;</span><span class="n">bundle_id</span><span class="o">&gt;</span> <span class="o">&lt;</span><span class="n">eol</span><span class="o">&gt;</span>
+<span class="o">&lt;</span><span class="n">start</span><span class="o">&gt;</span>   <span class="p">:</span><span class="o">:==</span> <span class="n">OFFLOAD_BUNDLER_MAGIC_STR__START__</span>
+<span class="o">&lt;</span><span class="n">end</span><span class="o">&gt;</span>     <span class="p">:</span><span class="o">:==</span> <span class="n">OFFLOAD_BUNDLER_MAGIC_STR__END__</span>
+</pre></div>
+</div>
+<dl class="simple">
+<dt><strong>comment</strong></dt><dd><p>The symbol used for starting single-line comment in the file type of
+constituting bundles. E.g. it is “;” for ll <code class="docutils literal notranslate"><span class="pre">File</span> <span class="pre">Type</span></code> and “#” for “s”
+<code class="docutils literal notranslate"><span class="pre">File</span> <span class="pre">Type</span></code>.</p>
+</dd>
+<dt><strong>bundle_id</strong></dt><dd><p>The <a class="reference internal" href="#clang-bundle-entry-id"><span class="std std-ref">Bundle Entry ID</span></a> for the enclosing bundle.</p>
+</dd>
+<dt><strong>eol</strong></dt><dd><p>The end of line character.</p>
+</dd>
+<dt><strong>bundle</strong></dt><dd><p>The code object stored in one of the supported text file formats.</p>
+</dd>
+<dt><strong>OFFLOAD_BUNDLER_MAGIC_STR__</strong></dt><dd><p>Magic string that marks the existence of offloading data i.e.
+“__CLANG_OFFLOAD_BUNDLE__”.</p>
+</dd>
+</dl>
+</section>
+<section id="bundled-binary-file-layout">
+<span id="clang-bundled-code-object-layout"></span><h2><a class="toc-backref" href="#id7" role="doc-backlink">Bundled Binary File Layout</a><a class="headerlink" href="#bundled-binary-file-layout" title="Link to this heading">¶</a></h2>
+<p>The layout of a bundled code object is defined by the following table:</p>
+<blockquote>
+<div><table class="docutils align-default" id="bundled-code-object-layout-table">
+<caption><span class="caption-text">Bundled Code Object Layout</span><a class="headerlink" href="#bundled-code-object-layout-table" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Size in Bytes</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Magic String</p></td>
+<td><p>string</p></td>
+<td><p>24</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">__CLANG_OFFLOAD_BUNDLE__</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Number Of Bundle Entries</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td><p>Number of bundle entries.</p></td>
+</tr>
+<tr class="row-even"><td><p>1st Bundle Entry Code Object Offset</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td><p>Byte offset from beginning of
+bundled code object to 1st code
+object.</p></td>
+</tr>
+<tr class="row-odd"><td><p>1st Bundle Entry Code Object Size</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td><p>Byte size of 1st code object.</p></td>
+</tr>
+<tr class="row-even"><td><p>1st Bundle Entry ID Length</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td><p>Character length of bundle
+entry ID of 1st code object.</p></td>
+</tr>
+<tr class="row-odd"><td><p>1st Bundle Entry ID</p></td>
+<td><p>string</p></td>
+<td><p>1st Bundle Entry
+ID Length</p></td>
+<td><p>Bundle entry ID of 1st code
+object. This is not NUL
+terminated. See
+<a class="reference internal" href="#clang-bundle-entry-id"><span class="std std-ref">Bundle Entry ID</span></a>.</p></td>
+</tr>
+<tr class="row-even"><td><p>...</p></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>Nth Bundle Entry Code Object Offset</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>Nth Bundle Entry Code Object Size</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>Nth Bundle Entry ID Length</p></td>
+<td><p>integer</p></td>
+<td><p>8</p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>Nth Bundle Entry ID</p></td>
+<td><p>string</p></td>
+<td><p>1st Bundle Entry
+ID Length</p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>1st Bundle Entry Code Object</p></td>
+<td><p>bytes</p></td>
+<td><p>1st Bundle Entry
+Code Object Size</p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>...</p></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>Nth Bundle Entry Code Object</p></td>
+<td><p>bytes</p></td>
+<td><p>Nth Bundle Entry
+Code Object Size</p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div></blockquote>
+</section>
+<section id="bundle-entry-id">
+<span id="clang-bundle-entry-id"></span><h2><a class="toc-backref" href="#id8" role="doc-backlink">Bundle Entry ID</a><a class="headerlink" href="#bundle-entry-id" title="Link to this heading">¶</a></h2>
+<p>Each entry in a bundled code object (see <a class="reference internal" href="#clang-bundled-code-object-layout-text"><span class="std std-ref">Bundled Text File Layout</span></a>
+and <a class="reference internal" href="#clang-bundled-code-object-layout"><span class="std std-ref">Bundled Binary File Layout</span></a>) has a bundle entry ID that indicates
+the kind of the entry’s code object and the runtime that manages it.</p>
+<p>Bundle entry ID syntax is defined by the following BNF syntax:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">&lt;</span><span class="n">bundle</span><span class="o">-</span><span class="n">entry</span><span class="o">-</span><span class="nb">id</span><span class="o">&gt;</span> <span class="p">:</span><span class="o">:==</span> <span class="o">&lt;</span><span class="n">offload</span><span class="o">-</span><span class="n">kind</span><span class="o">&gt;</span> <span class="s2">&quot;-&quot;</span> <span class="o">&lt;</span><span class="n">target</span><span class="o">-</span><span class="n">triple</span><span class="o">&gt;</span> <span class="p">[</span> <span class="s2">&quot;-&quot;</span> <span class="o">&lt;</span><span class="n">target</span><span class="o">-</span><span class="nb">id</span><span class="o">&gt;</span> <span class="p">]</span>
+</pre></div>
+</div>
+<p>Where:</p>
+<dl>
+<dt><strong>offload-kind</strong></dt><dd><p>The runtime responsible for managing the bundled entry code object. See
+<a class="reference internal" href="#clang-offload-kind-table"><span class="std std-ref">Bundled Code Object Offload Kind</span></a>.</p>
+<table class="docutils align-default" id="clang-offload-kind-table">
+<caption><span class="caption-text">Bundled Code Object Offload Kind</span><a class="headerlink" href="#clang-offload-kind-table" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Offload Kind</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>host</p></td>
+<td><p>Host code object. <code class="docutils literal notranslate"><span class="pre">clang-offload-bundler</span></code> always includes
+this entry as the first bundled code object entry. For an
+embedded bundled code object this entry is not used by the
+runtime and so is generally an empty code object.</p></td>
+</tr>
+<tr class="row-odd"><td><p>hip</p></td>
+<td><p>Offload code object for the HIP language. Used for all
+HIP language offload code objects when the
+<code class="docutils literal notranslate"><span class="pre">clang-offload-bundler</span></code> is used to bundle code objects as
+intermediate steps of the tool chain. Also used for AMD GPU
+code objects before ABI version V4 when the
+<code class="docutils literal notranslate"><span class="pre">clang-offload-bundler</span></code> is used to create a <em>fat binary</em>
+to be loaded by the HIP runtime. The fat binary can be
+loaded directly from a file, or be embedded in the host code
+object as a data section with the name <code class="docutils literal notranslate"><span class="pre">.hip_fatbin</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>hipv4</p></td>
+<td><p>Offload code object for the HIP language. Used for AMD GPU
+code objects with at least ABI version V4 and above when the
+<code class="docutils literal notranslate"><span class="pre">clang-offload-bundler</span></code> is used to create a <em>fat binary</em>
+to be loaded by the HIP runtime. The fat binary can be
+loaded directly from a file, or be embedded in the host code
+object as a data section with the name <code class="docutils literal notranslate"><span class="pre">.hip_fatbin</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>openmp</p></td>
+<td><p>Offload code object for the OpenMP language extension.</p></td>
+</tr>
+</tbody>
+</table>
+</dd>
+</dl>
+<p>Note: The distinction between the <cite>hip</cite> and <cite>hipv4</cite> offload kinds is historically based.
+Originally, these designations might have indicated different versions of the
+code object ABI. However, as the system has evolved, the ABI version is now embedded
+directly within the code object itself, making these historical distinctions irrelevant
+during the unbundling process. Consequently, <cite>hip</cite> and <cite>hipv4</cite> are treated as compatible
+in current implementations, facilitating interchangeable handling of code objects
+without differentiation based on offload kind.</p>
+<dl>
+<dt><strong>target-triple</strong></dt><dd><p>The target triple of the code object. See <a class="reference external" href="https://clang.llvm.org/docs/CrossCompilation.html#target-triple">Target Triple</a>.</p>
+<p>LLVM target triples can be with or without the optional environment field:</p>
+<p><code class="docutils literal notranslate"><span class="pre">&lt;arch&gt;&lt;sub&gt;-&lt;vendor&gt;-&lt;sys&gt;</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">&lt;arch&gt;&lt;sub&gt;-&lt;vendor&gt;-&lt;sys&gt;-&lt;env&gt;</span></code></p>
+<p>However, in order to standardize outputs for tools that consume bitcode bundles
+and to parse target ID containing dashes, the bundler only accepts target
+triples in the 4-field format:</p>
+<p><code class="docutils literal notranslate"><span class="pre">&lt;arch&gt;&lt;sub&gt;-&lt;vendor&gt;-&lt;sys&gt;-&lt;env&gt;</span></code></p>
+</dd>
+<dt><strong>target-id</strong></dt><dd><p>The canonical target ID of the code object. Present only if the target
+supports a target ID. See <a class="reference internal" href="#clang-target-id"><span class="std std-ref">Target ID</span></a>.</p>
+</dd>
+</dl>
+<section id="bundled-code-object-composition">
+<span id="code-object-composition"></span><h3><a class="toc-backref" href="#id9" role="doc-backlink">Bundled Code Object Composition</a><a class="headerlink" href="#bundled-code-object-composition" title="Link to this heading">¶</a></h3>
+<blockquote>
+<div><ul class="simple">
+<li><p>Each entry of a bundled code object must have a different bundle entry ID.</p></li>
+<li><p>There can be multiple entries for the same processor provided they differ
+in target feature settings.</p></li>
+<li><p>If there is an entry with a target feature specified as <em>Any</em>, then all
+entries must specify that target feature as <em>Any</em> for the same processor.</p></li>
+</ul>
+</div></blockquote>
+<p>There may be additional target specific restrictions.</p>
+</section>
+<section id="compatibility-rules-for-bundle-entry-id">
+<span id="compatibility-bundle-entry-id"></span><h3><a class="toc-backref" href="#id10" role="doc-backlink">Compatibility Rules for Bundle Entry ID</a><a class="headerlink" href="#compatibility-rules-for-bundle-entry-id" title="Link to this heading">¶</a></h3>
+<blockquote>
+<div><p>A code object, specified using its Bundle Entry ID, can be loaded and
+executed on a target processor, if:</p>
+<ul class="simple">
+<li><p>Their offload kinds are the same or comptible.</p></li>
+<li><p>Their target triples are compatible.</p></li>
+<li><p>Their Target IDs are compatible as defined in <a class="reference internal" href="#compatibility-target-id"><span class="std std-ref">Compatibility Rules for Target ID</span></a>.</p></li>
+</ul>
+</div></blockquote>
+</section>
+</section>
+<section id="target-id">
+<span id="clang-target-id"></span><h2><a class="toc-backref" href="#id11" role="doc-backlink">Target ID</a><a class="headerlink" href="#target-id" title="Link to this heading">¶</a></h2>
+<p>A target ID is used to indicate the processor and optionally its configuration,
+expressed by a set of target features, that affect ISA generation. It is target
+specific if a target ID is supported, or if the target triple alone is
+sufficient to specify the ISA generation.</p>
+<p>It is used with the <code class="docutils literal notranslate"><span class="pre">-mcpu=&lt;target-id&gt;</span></code> and <code class="docutils literal notranslate"><span class="pre">--offload-arch=&lt;target-id&gt;</span></code>
+Clang compilation options to specify the kind of code to generate.</p>
+<p>It is also used as part of the bundle entry ID to identify the code object. See
+<a class="reference internal" href="#clang-bundle-entry-id"><span class="std std-ref">Bundle Entry ID</span></a>.</p>
+<p>Target ID syntax is defined by the following BNF syntax:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">&lt;</span><span class="n">target</span><span class="o">-</span><span class="nb">id</span><span class="o">&gt;</span> <span class="p">:</span><span class="o">:==</span> <span class="o">&lt;</span><span class="n">processor</span><span class="o">&gt;</span> <span class="p">(</span> <span class="s2">&quot;:&quot;</span> <span class="o">&lt;</span><span class="n">target</span><span class="o">-</span><span class="n">feature</span><span class="o">&gt;</span> <span class="p">(</span> <span class="s2">&quot;+&quot;</span> <span class="o">|</span> <span class="s2">&quot;-&quot;</span> <span class="p">)</span> <span class="p">)</span><span class="o">*</span>
+</pre></div>
+</div>
+<p>Where:</p>
+<dl>
+<dt><strong>processor</strong></dt><dd><p>Is a the target specific processor or any alternative processor name.</p>
+</dd>
+<dt><strong>target-feature</strong></dt><dd><p>Is a target feature name that is supported by the processor. Each target
+feature must appear at most once in a target ID and can have one of three
+values:</p>
+<dl class="simple">
+<dt><em>Any</em></dt><dd><p>Specified by omitting the target feature from the target ID.
+A code object compiled with a target ID specifying the default
+value of a target feature can be loaded and executed on a processor
+configured with the target feature on or off.</p>
+</dd>
+<dt><em>On</em></dt><dd><p>Specified by <code class="docutils literal notranslate"><span class="pre">+</span></code>, indicating the target feature is enabled. A code
+object compiled with a target ID specifying a target feature on
+can only be loaded on a processor configured with the target feature on.</p>
+</dd>
+<dt><em>Off</em></dt><dd><p>specified by <code class="docutils literal notranslate"><span class="pre">-</span></code>, indicating the target feature is disabled. A code
+object compiled with a target ID specifying a target feature off
+can only be loaded on a processor configured with the target feature off.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<section id="compatibility-rules-for-target-id">
+<span id="compatibility-target-id"></span><h3><a class="toc-backref" href="#id12" role="doc-backlink">Compatibility Rules for Target ID</a><a class="headerlink" href="#compatibility-rules-for-target-id" title="Link to this heading">¶</a></h3>
+<blockquote>
+<div><p>A code object compiled for a Target ID is considered compatible for a
+target, if:</p>
+<ul class="simple">
+<li><p>Their processor is same.</p></li>
+<li><p>Their feature set is compatible as defined above.</p></li>
+</ul>
+</div></blockquote>
+<p>There are two forms of target ID:</p>
+<dl class="simple">
+<dt><em>Non-Canonical Form</em></dt><dd><p>The non-canonical form is used as the input to user commands to allow the user
+greater convenience. It allows both the primary and alternative processor name
+to be used and the target features may be specified in any order.</p>
+</dd>
+<dt><em>Canonical Form</em></dt><dd><p>The canonical form is used for all generated output to allow greater
+convenience for tools that consume the information. It is also used for
+internal passing of information between tools. Only the primary and not
+alternative processor name is used and the target features are specified in
+alphabetic order. Command line tools convert non-canonical form to canonical
+form.</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="target-specific-information">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Target Specific information</a><a class="headerlink" href="#target-specific-information" title="Link to this heading">¶</a></h2>
+<p>Target specific information is available for the following:</p>
+<dl class="simple">
+<dt><em>AMD GPU</em></dt><dd><p>AMD GPU supports target ID and target features. See <a class="reference external" href="https://llvm.org/docs/AMDGPUUsage.html">User Guide for AMDGPU Backend</a> which defines the <a class="reference external" href="https://llvm.org/docs/AMDGPUUsage.html#amdgpu-processors">processors</a> and <a class="reference external" href="https://llvm.org/docs/AMDGPUUsage.html#amdgpu-target-features">target
+features</a>
+supported.</p>
+</dd>
+</dl>
+<p>Most other targets do not support target IDs.</p>
+</section>
+<section id="archive-unbundling">
+<h2><a class="toc-backref" href="#id14" role="doc-backlink">Archive Unbundling</a><a class="headerlink" href="#archive-unbundling" title="Link to this heading">¶</a></h2>
+<p>Unbundling of a heterogeneous device archive (HDA) is done to create device specific
+archives. HDA is in a format compatible with GNU <code class="docutils literal notranslate"><span class="pre">ar</span></code> utility and contains a
+collection of bundled device binaries where each bundle file will contain
+device binaries for a host and one or more targets. The output device-specific
+archive is in a format compatible with GNU <code class="docutils literal notranslate"><span class="pre">ar</span></code> utility and contains a
+collection of device binaries for a specific target.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Heterogeneous</span> <span class="n">Device</span> <span class="n">Archive</span><span class="p">,</span> <span class="n">HDA</span> <span class="o">=</span> <span class="p">{</span><span class="n">F1</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="n">F2</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">FN</span><span class="o">.</span><span class="n">Y</span><span class="p">}</span>
+<span class="n">where</span><span class="p">,</span> <span class="n">Fi</span> <span class="o">=</span> <span class="n">Bundle</span><span class="p">{</span><span class="n">Host</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="p">,</span> <span class="n">T1</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="p">,</span> <span class="n">T2</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span>
+                   <span class="n">Tm</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="p">},</span>
+       <span class="n">Ti</span> <span class="o">=</span> <span class="p">{</span><span class="n">Target</span> <span class="n">i</span><span class="p">,</span> <span class="n">qualified</span> <span class="n">using</span> <span class="n">Bundle</span> <span class="n">Entry</span> <span class="n">ID</span><span class="p">},</span>
+       <span class="n">X</span><span class="o">/</span><span class="n">Y</span> <span class="o">=</span> \<span class="o">*.</span><span class="n">bc</span> <span class="k">for</span> <span class="n">AMDGPU</span> <span class="ow">and</span> \<span class="o">*.</span><span class="n">cubin</span> <span class="k">for</span> <span class="n">NVPTX</span>
+
+<span class="n">Device</span> <span class="n">Specific</span> <span class="n">Archive</span><span class="p">,</span> <span class="n">DSA</span><span class="p">(</span><span class="n">Tk</span><span class="p">)</span> <span class="o">=</span> <span class="p">{</span><span class="n">F1</span><span class="o">-</span><span class="n">Tk</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="n">F2</span><span class="o">-</span><span class="n">Tk</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="o">.</span><span class="n">X</span><span class="p">,</span> <span class="o">...</span>
+                                    <span class="n">FN</span><span class="o">-</span><span class="n">Tk</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="o">.</span><span class="n">Y</span><span class="p">}</span>
+<span class="n">where</span><span class="p">,</span> <span class="n">Fi</span><span class="o">-</span><span class="n">Tj</span><span class="o">-</span><span class="n">DeviceBinary</span><span class="o">.</span><span class="n">X</span> <span class="n">represents</span> <span class="n">device</span> <span class="n">binary</span> <span class="n">of</span> <span class="n">i</span><span class="o">-</span><span class="n">th</span> <span class="n">bundled</span> <span class="n">device</span>
+<span class="n">binary</span> <span class="n">file</span> <span class="k">for</span> <span class="n">target</span> <span class="n">Tj</span><span class="o">.</span>
+</pre></div>
+</div>
+<p>The clang-offload-bundler extracts compatible device binaries for a given target
+from the bundled device binaries in a heterogeneous device archive and creates
+a target-specific device archive without bundling.</p>
+<p>The clang-offload-bundler determines whether a device binary is compatible
+with a target by comparing bundle IDs. Two bundle IDs are considered
+compatible if:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Their offload kinds are the same</p></li>
+<li><p>Their target triples are the same</p></li>
+<li><p>Their Target IDs are the same</p></li>
+</ul>
+</div></blockquote>
+<section id="creating-a-heterogeneous-device-archive">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Creating a Heterogeneous Device Archive</a><a class="headerlink" href="#creating-a-heterogeneous-device-archive" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Compile source file(s) to generate object file(s)</p></li>
+</ol>
+<blockquote>
+<div><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">clang</span> <span class="o">-</span><span class="n">O2</span> <span class="o">-</span><span class="n">fopenmp</span> <span class="o">-</span><span class="n">fopenmp</span><span class="o">-</span><span class="n">targets</span><span class="o">=</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span><span class="p">,</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span><span class="p">,</span>\
+   <span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span><span class="p">,</span> <span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">gfx906</span><span class="p">:</span><span class="n">sramecc</span><span class="o">-</span><span class="p">:</span><span class="n">xnack</span><span class="o">+</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">gfx906</span><span class="p">:</span><span class="n">sramecc</span><span class="o">+</span><span class="p">:</span><span class="n">xnack</span><span class="o">+</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">sm_70</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">sm_80</span> \
+  <span class="o">-</span><span class="n">c</span> <span class="n">func_1</span><span class="o">.</span><span class="n">c</span> <span class="o">-</span><span class="n">o</span> <span class="n">func_1</span><span class="o">.</span><span class="n">o</span>
+
+<span class="n">clang</span> <span class="o">-</span><span class="n">O2</span> <span class="o">-</span><span class="n">fopenmp</span> <span class="o">-</span><span class="n">fopenmp</span><span class="o">-</span><span class="n">targets</span><span class="o">=</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span><span class="p">,</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span><span class="p">,</span>
+  <span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span><span class="p">,</span> <span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">gfx906</span><span class="p">:</span><span class="n">sramecc</span><span class="o">-</span><span class="p">:</span><span class="n">xnack</span><span class="o">+</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amd</span><span class="o">-</span><span class="n">amdhsa</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">gfx906</span><span class="p">:</span><span class="n">sramecc</span><span class="o">+</span><span class="p">:</span><span class="n">xnack</span><span class="o">+</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">sm_70</span> \
+  <span class="o">-</span><span class="n">Xopenmp</span><span class="o">-</span><span class="n">target</span><span class="o">=</span><span class="n">nvptx64</span><span class="o">-</span><span class="n">nvidia</span><span class="o">-</span><span class="n">cuda</span> <span class="o">-</span><span class="n">march</span><span class="o">=</span><span class="n">sm_80</span> \
+  <span class="o">-</span><span class="n">c</span> <span class="n">func_2</span><span class="o">.</span><span class="n">c</span> <span class="o">-</span><span class="n">o</span> <span class="n">func_2</span><span class="o">.</span><span class="n">o</span>
+</pre></div>
+</div>
+</div></blockquote>
+<ol class="arabic simple" start="2">
+<li><p>Create a heterogeneous device archive by combining all the object file(s)</p></li>
+</ol>
+<blockquote>
+<div><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">llvm</span><span class="o">-</span><span class="n">ar</span> <span class="n">cr</span> <span class="n">libFatArchive</span><span class="o">.</span><span class="n">a</span> <span class="n">func_1</span><span class="o">.</span><span class="n">o</span> <span class="n">func_2</span><span class="o">.</span><span class="n">o</span>
+</pre></div>
+</div>
+</div></blockquote>
+</section>
+<section id="extracting-a-device-specific-archive">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Extracting a Device Specific Archive</a><a class="headerlink" href="#extracting-a-device-specific-archive" title="Link to this heading">¶</a></h3>
+<p>UnbundleArchive takes a heterogeneous device archive file (“.a”) as input
+containing bundled device binary files, and a list of offload targets (not
+host), and extracts the device binaries into a new archive file for each
+offload target. Each resulting archive file contains all device binaries
+compatible with that particular offload target. Compatibility between a
+device binary in HDA and a target is based on the compatibility between their
+bundle entry IDs as defined in <a class="reference internal" href="#compatibility-bundle-entry-id"><span class="std std-ref">Compatibility Rules for Bundle Entry ID</span></a>.</p>
+<p>Following cases may arise during compatibility testing:</p>
+<ul class="simple">
+<li><p>A binary is compatible with one or more targets: Insert the binary into the
+device-specific archive of each compatible target.</p></li>
+<li><p>A binary is not compatible with any target: Skip the binary.</p></li>
+<li><p>One or more binaries are compatible with a target: Insert all binaries into
+the device-specific archive of the target. The insertion need not be ordered.</p></li>
+<li><p>No binary is compatible with a target: If <code class="docutils literal notranslate"><span class="pre">allow-missing-bundles</span></code> option is
+present then create an empty archive for the target. Otherwise, produce an
+error without creating an archive.</p></li>
+</ul>
+<p>The created archive file does not contain an index of the symbols and device
+binary files are named as &lt;&lt;Parent Bundle Name&gt;-&lt;DeviceBinary’s TargetID&gt;&gt;,
+with ‘:’ replaced with ‘_’.</p>
+</section>
+<section id="id2">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Usage</a><a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">clang</span><span class="o">-</span><span class="n">offload</span><span class="o">-</span><span class="n">bundler</span> <span class="o">--</span><span class="n">unbundle</span> <span class="o">--</span><span class="n">inputs</span><span class="o">=</span><span class="n">libFatArchive</span><span class="o">.</span><span class="n">a</span> <span class="o">-</span><span class="nb">type</span><span class="o">=</span><span class="n">a</span> \
+ <span class="o">-</span><span class="n">targets</span><span class="o">=</span><span class="n">openmp</span><span class="o">-</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amdhsa</span><span class="o">-</span><span class="n">gfx906</span><span class="p">:</span><span class="n">sramecc</span><span class="o">+</span><span class="p">:</span><span class="n">xnack</span><span class="o">+</span><span class="p">,</span> \
+          <span class="n">openmp</span><span class="o">-</span><span class="n">amdgcn</span><span class="o">-</span><span class="n">amdhsa</span><span class="o">-</span><span class="n">gfx908</span><span class="p">:</span><span class="n">sramecc</span><span class="o">-</span><span class="p">:</span><span class="n">xnack</span><span class="o">+</span>  \
+ <span class="o">-</span><span class="n">outputs</span><span class="o">=</span><span class="n">devicelib</span><span class="o">-</span><span class="n">gfx906</span><span class="o">.</span><span class="n">a</span><span class="p">,</span><span class="n">deviceLib</span><span class="o">-</span><span class="n">gfx908</span><span class="o">.</span><span class="n">a</span>
+</pre></div>
+</div>
+</section>
+<section id="additional-options-while-archive-unbundling">
+<span id="additional-options-archive-unbundling"></span><h3><a class="toc-backref" href="#id18" role="doc-backlink">Additional Options while Archive Unbundling</a><a class="headerlink" href="#additional-options-while-archive-unbundling" title="Link to this heading">¶</a></h3>
+<dl class="simple">
+<dt><strong>-allow-missing-bundles</strong></dt><dd><p>Create an empty archive file if no compatible device binary is found.</p>
+</dd>
+<dt><strong>-check-input-archive</strong></dt><dd><p>Check if input heterogeneous device archive follows rules for composition
+as defined in <a class="reference internal" href="#code-object-composition"><span class="std std-ref">Bundled Code Object Composition</span></a> before creating device-specific
+archive(s).</p>
+</dd>
+<dt><strong>-debug-only=CodeObjectCompatibility</strong></dt><dd><p>Verbose printing of matched/unmatched comparisons between bundle entry id of
+a device binary from HDA and bundle entry ID of a given target processor
+(see <a class="reference internal" href="#compatibility-bundle-entry-id"><span class="std std-ref">Compatibility Rules for Bundle Entry ID</span></a>).</p>
+</dd>
+</dl>
+</section>
+</section>
+<section id="compression-and-decompression">
+<h2><a class="toc-backref" href="#id19" role="doc-backlink">Compression and Decompression</a><a class="headerlink" href="#compression-and-decompression" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">clang-offload-bundler</span></code> provides features to compress and decompress the full
+bundle, leveraging inherent redundancies within the bundle entries. Use the
+<cite>-compress</cite> command-line option to enable this compression capability.</p>
+<p>The compressed offload bundle begins with a header followed by the compressed binary data:</p>
+<ul>
+<li><dl class="simple">
+<dt><strong>Magic Number (4 bytes)</strong>:</dt><dd><p>This is a unique identifier to distinguish compressed offload bundles. The value is the string ‘CCOB’ (Compressed Clang Offload Bundle).</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt><strong>Version Number (16-bit unsigned int)</strong>:</dt><dd><p>This denotes the version of the compressed offload bundle format. The current version is <cite>2</cite>.</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt><strong>Compression Method (16-bit unsigned int)</strong>:</dt><dd><p>This field indicates the compression method used. The value corresponds to either <cite>zlib</cite> or <cite>zstd</cite>, represented as a 16-bit unsigned integer cast from the LLVM compression enumeration.</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt><strong>Total File Size (32-bit unsigned int)</strong>:</dt><dd><p>This is the total size (in bytes) of the file, including the header. Available in version 2 and above.</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt><strong>Uncompressed Binary Size (32-bit unsigned int)</strong>:</dt><dd><p>This is the size (in bytes) of the binary data before it was compressed.</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt><strong>Hash (64-bit unsigned int)</strong>:</dt><dd><p>This is a 64-bit truncated MD5 hash of the uncompressed binary data. It serves for verification and caching purposes.</p>
+</dd>
+</dl>
+</li>
+<li><dl>
+<dt><strong>Compressed Data</strong>:</dt><dd><p>The actual compressed binary data follows the header. Its size can be inferred from the total size of the file minus the header size.</p>
+<p>&gt; <strong>Note</strong>: Version 3 of the format is under development. It uses 64-bit fields for Total File Size and Uncompressed Binary Size to support files larger than 4GB. To experiment with version 3, set the environment variable <cite>COMPRESSED_BUNDLE_FORMAT_VERSION=3</cite>. This support is experimental and not recommended for production use.</p>
+</dd>
+</dl>
+</li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangNVLinkWrapper.html">Clang nvlink Wrapper</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ClangOffloadPackager.html">Clang Offload Packager</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

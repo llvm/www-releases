@@ -1,0 +1,760 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Machine Learning - Guided Optimization (MLGO) &#8212; LLVM 21.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=c54a4614"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Scudo Hardened Allocator" href="ScudoHardenedAllocator.html" />
+    <link rel="prev" title="Pointer Authentication" href="PointerAuth.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="ScudoHardenedAllocator.html" title="Scudo Hardened Allocator"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="PointerAuth.html" title="Pointer Authentication"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" accesskey="U">Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Machine Learning - Guided Optimization (MLGO)</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/MLGO.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="machine-learning-guided-optimization-mlgo">
+<h1><a class="toc-backref" href="#id5" role="doc-backlink">Machine Learning - Guided Optimization (MLGO)</a><a class="headerlink" href="#machine-learning-guided-optimization-mlgo" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>MLGO refers to integrating ML techniques (primarily) to replace heuristics within
+LLVM with machine learned models.</p>
+<p>Currently the following heuristics feature such integration:</p>
+<ul class="simple">
+<li><p>Inlining for size</p></li>
+<li><p>Register allocation (LLVM greedy eviction heuristic) for performance</p></li>
+</ul>
+<p>This document is an outline of the tooling and APIs facilitating MLGO.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The tools for orchestrating ML training are not part of LLVM, as they are
+dependency-heavy - both on the ML infrastructure choice, as well as choices of
+distributed computing. For the training scenario, LLVM only contains facilities
+enabling it, such as corpus extraction, training data extraction, and evaluation
+of models during training.</p>
+</div>
+<nav class="contents" id="contents">
+<p class="topic-title">Contents</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#machine-learning-guided-optimization-mlgo" id="id5">Machine Learning - Guided Optimization (MLGO)</a></p>
+<ul>
+<li><p><a class="reference internal" href="#introduction" id="id6">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#corpus-tooling" id="id7">Corpus Tooling</a></p>
+<ul>
+<li><p><a class="reference internal" href="#synopsis" id="id8">Synopsis</a></p></li>
+<li><p><a class="reference internal" href="#options" id="id9">Options</a></p></li>
+<li><p><a class="reference internal" href="#example-cmake" id="id10">Example: CMake</a></p></li>
+<li><p><a class="reference internal" href="#example-bazel-aquery" id="id11">Example: Bazel Aquery</a></p></li>
+<li><p><a class="reference internal" href="#id1" id="id12">Synopsis</a></p></li>
+<li><p><a class="reference internal" href="#id2" id="id13">Options</a></p></li>
+<li><p><a class="reference internal" href="#id3" id="id14">Synopsis</a></p></li>
+<li><p><a class="reference internal" href="#id4" id="id15">Options</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#interacting-with-ml-models" id="id16">Interacting with ML models</a></p>
+<ul>
+<li><p><a class="reference internal" href="#tensorspec" id="id17">TensorSpec</a></p></li>
+<li><p><a class="reference internal" href="#mlmodelrunner" id="id18">MLModelRunner</a></p>
+<ul>
+<li><p><a class="reference internal" href="#implementers" id="id19">Implementers</a></p></li>
+<li><p><a class="reference internal" href="#users" id="id20">Users</a></p></li>
+<li><p><a class="reference internal" href="#versioning" id="id21">Versioning</a></p></li>
+<li><p><a class="reference internal" href="#mlmodelrunner-implementations" id="id22"><code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code> implementations</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#logging-facility" id="id23">Logging Facility</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#ir2vec-embeddings" id="id24">IR2Vec Embeddings</a></p>
+<ul>
+<li><p><a class="reference internal" href="#using-ir2vec" id="id25">Using IR2Vec</a></p></li>
+<li><p><a class="reference internal" href="#further-details" id="id26">Further Details</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#building-with-ml-support" id="id27">Building with ML support</a></p>
+<ul>
+<li><p><a class="reference internal" href="#embed-pre-trained-models-aka-release-mode" id="id28">Embed pre-trained models (aka “release” mode)</a></p></li>
+<li><p><a class="reference internal" href="#using-tflite-aka-development-mode" id="id29">Using TFLite (aka “development” mode)</a></p></li>
+<li><p><a class="reference internal" href="#interactive-mode-for-training-research" id="id30">Interactive Mode (for training / research)</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+</section>
+<section id="corpus-tooling">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Corpus Tooling</a><a class="headerlink" href="#corpus-tooling" title="Link to this heading">¶</a></h2>
+<p>Within the LLVM monorepo, there is the <code class="docutils literal notranslate"><span class="pre">mlgo-utils</span></code> python packages that
+lives at <code class="docutils literal notranslate"><span class="pre">llvm/utils/mlgo-utils</span></code>. This package primarily contains tooling
+for working with corpora, or collections of LLVM bitcode. We use these corpora
+to train and evaluate ML models. Corpora consist of a description in JSON
+format at <code class="docutils literal notranslate"><span class="pre">corpus_description.json</span></code> in the root of the corpus, and then
+a bitcode file and command line flags file for each extracted module. The
+corpus structure is designed to contain sufficient information to fully
+compile the bitcode to bit-identical object files.</p>
+<section id="synopsis">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Synopsis</a><a class="headerlink" href="#synopsis" title="Link to this heading">¶</a></h3>
+<p>Extracts a corpus from some form of a structured compilation database. This
+tool supports a variety of different scenarios and input types.</p>
+</section>
+<section id="options">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Options</a><a class="headerlink" href="#options" title="Link to this heading">¶</a></h3>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-input">
+<span class="sig-name descname"><span class="pre">--input</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-input" title="Link to this definition">¶</a></dt>
+<dd><p>The path to the input. This should be a path to a supported structured
+compilation database. Currently only <code class="docutils literal notranslate"><span class="pre">compile_commands.json</span></code> files, linker
+parameter files, a directory containing object files (for the local
+ThinLTO case only), or a JSON file containing a bazel aquery result are
+supported.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-input_type">
+<span class="sig-name descname"><span class="pre">--input_type</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-input_type" title="Link to this definition">¶</a></dt>
+<dd><p>The type of input that has been passed to the <code class="docutils literal notranslate"><span class="pre">--input</span></code> flag.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-output_dir">
+<span class="sig-name descname"><span class="pre">--output_dir</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-output_dir" title="Link to this definition">¶</a></dt>
+<dd><p>The output directory to place the corpus in.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-num_workers">
+<span class="sig-name descname"><span class="pre">--num_workers</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-num_workers" title="Link to this definition">¶</a></dt>
+<dd><p>The number of workers to use for extracting bitcode into the corpus. This
+defaults to the number of hardware threads available on the host system.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-llvm_objcopy_path">
+<span class="sig-name descname"><span class="pre">--llvm_objcopy_path</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-llvm_objcopy_path" title="Link to this definition">¶</a></dt>
+<dd><p>The path to the llvm-objcopy binary to use when extracting bitcode.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-obj_base_dir">
+<span class="sig-name descname"><span class="pre">--obj_base_dir</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-obj_base_dir" title="Link to this definition">¶</a></dt>
+<dd><p>The base directory for object files. Bitcode files that get extracted into
+the corpus will be placed into the output directory based on where their
+source object files are placed relative to this path.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-cmd_filter">
+<span class="sig-name descname"><span class="pre">--cmd_filter</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-cmd_filter" title="Link to this definition">¶</a></dt>
+<dd><p>Allows filtering of modules by command line. If set, only modules that much
+the filter will be extracted into the corpus. Regular expressions are
+supported in some instances.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-thinlto_build">
+<span class="sig-name descname"><span class="pre">--thinlto_build</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-thinlto_build" title="Link to this definition">¶</a></dt>
+<dd><p>If the build was performed with ThinLTO, this should be set to either
+<code class="docutils literal notranslate"><span class="pre">distributed</span></code> or <code class="docutils literal notranslate"><span class="pre">local</span></code> depending upon how the build was performed.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-cmd_section_name">
+<span class="sig-name descname"><span class="pre">--cmd_section_name</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-cmd_section_name" title="Link to this definition">¶</a></dt>
+<dd><p>This flag allows specifying the command line section name. This is needed
+on non-ELF platforms where the section name might differ.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extract_ir.py-bitcode_section_name">
+<span class="sig-name descname"><span class="pre">--bitcode_section_name</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-extract_ir.py-bitcode_section_name" title="Link to this definition">¶</a></dt>
+<dd><p>This flag allows specifying the bitcode section name. This is needed on
+non-ELF platforms where the section name might differ.</p>
+</dd></dl>
+
+</section>
+<section id="example-cmake">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Example: CMake</a><a class="headerlink" href="#example-cmake" title="Link to this heading">¶</a></h3>
+<p>CMake can output a <code class="docutils literal notranslate"><span class="pre">compilation_commands.json</span></code> compilation database if the
+<code class="docutils literal notranslate"><span class="pre">CMAKE_EXPORT_COMPILE_COMMANDS</span></code> switch is turned on at compile time. It is
+also necessary to enable bitcode embedding (done by passing
+<code class="docutils literal notranslate"><span class="pre">-Xclang</span> <span class="pre">-fembed-bitcode=all</span></code> to all C/C++ compilation actions in the
+non-ThinLTO case). For example, to extract a corpus from clang, you would
+run the following commands (assuming that the system C/C++ compiler is clang):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-GNinja<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_EXPORT_COMPILE_COMMANDS<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_C_FLAGS<span class="o">=</span><span class="s2">&quot;-Xclang -fembed-bitcode=all&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_CXX_FLAGS<span class="o">=</span><span class="s2">&quot;-Xclang -fembed-bitcode-all&quot;</span>
+<span class="w">  </span>../llvm
+ninja
+</pre></div>
+</div>
+<dl class="simple">
+<dt>After running CMake and building the project, there should be a</dt><dd><p><code class="docutils literal notranslate"><span class="pre">compilation_commands.json</span></code> file within the build directory. You can then
+run the following command to create a corpus:</p>
+</dd>
+</dl>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>./extract_ir.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input<span class="o">=</span>./build/compile_commands.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input_type<span class="o">=</span>json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output_dir<span class="o">=</span>./corpus
+</pre></div>
+</div>
+<p>After running the above command, there should be a full
+corpus of bitcode within the <code class="docutils literal notranslate"><span class="pre">./corpus</span></code> directory.</p>
+</section>
+<section id="example-bazel-aquery">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Example: Bazel Aquery</a><a class="headerlink" href="#example-bazel-aquery" title="Link to this heading">¶</a></h3>
+<p>This tool also supports extracting bitcode from bazel in multiple ways
+depending upon the exact configuration. For ThinLTO, a linker parameters file
+is preferred. For the non-ThinLTO case, the script will accept the output of
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">aquery</span></code> which it will use to find all the object files that are linked
+into a specific target and then extract bitcode from them. First, you need
+to generate the aquery output:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>aquery<span class="w"> </span>--output<span class="o">=</span>jsonproto<span class="w"> </span>//path/to:target<span class="w"> </span>&gt;<span class="w"> </span>/path/to/aquery.json
+</pre></div>
+</div>
+<p>Afterwards, assuming that the build is already complete, you can run this
+script to create a corpus:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>./extract_ir.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input<span class="o">=</span>/path/to/aquery.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input_type<span class="o">=</span>bazel_aqeury<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output_dir<span class="o">=</span>./corpus<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--obj_base_dir<span class="o">=</span>./bazel-bin
+</pre></div>
+</div>
+<p>This will again leave a corpus that contains all the bitcode files. This mode
+does not capture all object files in the build however, only the ones that
+are involved in the link for the binary passed to the <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">aquery</span></code>
+invocation.</p>
+</section>
+<section id="id1">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Synopsis</a><a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<p>Creates a corpus from a collection of bitcode files.</p>
+</section>
+<section id="id2">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Options</a><a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-make_corpus.py-input_dir">
+<span class="sig-name descname"><span class="pre">--input_dir</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-make_corpus.py-input_dir" title="Link to this definition">¶</a></dt>
+<dd><p>The input directory to search for bitcode files in.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-make_corpus.py-output_dir">
+<span class="sig-name descname"><span class="pre">--output_dir</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-make_corpus.py-output_dir" title="Link to this definition">¶</a></dt>
+<dd><p>The output directory to place the constructed corpus in.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-make_corpus.py-default_args">
+<span class="sig-name descname"><span class="pre">--default_args</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-make_corpus.py-default_args" title="Link to this definition">¶</a></dt>
+<dd><p>A list of space separated flags that are put into the corpus description.
+These are used by some tooling when compiling the modules within the corpus.</p>
+</dd></dl>
+
+</section>
+<section id="id3">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Synopsis</a><a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<p>Combines two training corpora that share the same parent folder by generating
+a new <code class="docutils literal notranslate"><span class="pre">corpus_description.json</span></code> that contains all the modules in both corpora.</p>
+</section>
+<section id="id4">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Options</a><a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-combine_training_corpus.py-root_dir">
+<span class="sig-name descname"><span class="pre">--root_dir</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-combine_training_corpus.py-root_dir" title="Link to this definition">¶</a></dt>
+<dd><p>The root directory that contains subfolders consisting of the corpora that
+should be combined.</p>
+</dd></dl>
+
+</section>
+</section>
+<section id="interacting-with-ml-models">
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Interacting with ML models</a><a class="headerlink" href="#interacting-with-ml-models" title="Link to this heading">¶</a></h2>
+<p>We interact with ML models in 2 primary scenarios: one is to train such a model.
+The other, inference, is to use a model during compilation, to make optimization
+decisions.</p>
+<p>For a specific optimization problem - i.e. inlining, or regalloc eviction - we
+first separate correctness - preserving decisions from optimization decisions.
+For example, not inlining functions marked “no inline” is an example of the
+former. Same is not evicting an unevictable live range. An example of the latter
+is deciding to inline a function that will bloat the caller size, just because
+we have reason to believe that later, the effect will be some constant
+propagation that will actually reduce the size (or dynamic instruction count).</p>
+<p>ML models can be understood as functions. Their inputs are tensors - buffers of
+scalars. The output (in our case, singular) is a scalar. For example, for
+inlining, the inputs are properties of the caller, callee, and the callsite
+being analyzed for inlining. The output is a boolean.</p>
+<p>Inputs and outputs are named, have a scalar type (e.g. int32_t) and a shape
+(e.g. 3x4). These are the elements that we use to bind to a ML model.</p>
+<p>In both training and inference, we want to expose to ML (training algorithms or
+trained model, respectively) the features we want to make optimization
+decisions on. In that regard, the interface from the compiler side to the ML
+side is the same: pass features, and get a decision. It’s essentially a function
+call, where the parameters and result are bound by name and are described by
+name, scalar type, and shape tuples.</p>
+<p>The main types in LLVM are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code> - an abstraction for the decision making mechanism</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> which describes a tensor.</p></li>
+</ul>
+<section id="tensorspec">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">TensorSpec</a><a class="headerlink" href="#tensorspec" title="Link to this heading">¶</a></h3>
+<p>See <code class="docutils literal notranslate"><span class="pre">llvm/Analysis/TensorSpec.h</span></code>. This is a simple data bag, identifying a
+tensor by name (a string), scalar type, and shape (a vector of ints). The scalar
+type can only be int (8, 16, 32, or 64), signed or unsigned; float; or double.</p>
+</section>
+<section id="mlmodelrunner">
+<h3><a class="toc-backref" href="#id18" role="doc-backlink">MLModelRunner</a><a class="headerlink" href="#mlmodelrunner" title="Link to this heading">¶</a></h3>
+<p>See <code class="docutils literal notranslate"><span class="pre">llvm/Analysis/MLModelRunner.h</span></code>. The abstraction has a pure virtual,
+<code class="docutils literal notranslate"><span class="pre">evaluateUntyped</span></code>, but the contract with implementers is a bit more involved:</p>
+<section id="implementers">
+<h4><a class="toc-backref" href="#id19" role="doc-backlink">Implementers</a><a class="headerlink" href="#implementers" title="Link to this heading">¶</a></h4>
+<p>At construction, the implementer is expected to receive a list of <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code>
+for input features and the <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> of the output (e.g.
+<code class="docutils literal notranslate"><span class="pre">std::vector&lt;TensorSpec&gt;</span></code>). The list type is not contractual, but it must be
+a 0-based indexing array-like container. Given a <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> at index “I” in
+the input list, that has a name “N”, shape “D1 x D2x … Dn”, and scalar type
+“T”, the implementer must:</p>
+<ul class="simple">
+<li><p>set up a contiguous buffer sized <code class="docutils literal notranslate"><span class="pre">sizeof(T)</span> <span class="pre">*</span> <span class="pre">D1</span> <span class="pre">*</span> <span class="pre">D2</span> <span class="pre">*</span> <span class="pre">...</span> <span class="pre">*</span> <span class="pre">Dn</span></code>. This
+buffer’s lifetime must be the same as the lifetime of the implementer object.</p></li>
+<li><p>call <code class="docutils literal notranslate"><span class="pre">MLModelRunner::setUpBufferForTensor</span></code> passing I, the <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code>,
+and the buffer above.</p></li>
+</ul>
+<p>Internally, the expectation is that the implementer uses the name (and maybe
+shape) of a <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> for binding (e.g. lookup in an underlying ML model).</p>
+<p><code class="docutils literal notranslate"><span class="pre">MLModelRunner::setUpBufferForTensor</span></code> stores each buffer at the corresponding
+index (i.e. its position in the list used at construction). The expectation is
+that the user will use that position when calling <code class="docutils literal notranslate"><span class="pre">MLModelRunner::getTensor</span></code>
+to retrieve the underlying buffer (more on that in a bit).</p>
+<p>The implementation of <code class="docutils literal notranslate"><span class="pre">evaluateUntyped</span></code> is expected to use the value in the
+buffers described above, carry out whatever computation (e.g. evaluate a ML
+model) and then place the outcome in an output buffer which will be returned to
+the caller. Importantly, <code class="docutils literal notranslate"><span class="pre">evaluateUntyped</span></code> must not reset the input buffers.
+This is because during training we may want to log the features and decisions,
+and since the data is already buffered, there’s no reason to force backing it
+up elsewhere.</p>
+</section>
+<section id="users">
+<h4><a class="toc-backref" href="#id20" role="doc-backlink">Users</a><a class="headerlink" href="#users" title="Link to this heading">¶</a></h4>
+<p>The users must pass the input <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> list at the construction of a
+specific <code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code> object. After that, users can be agnostic of the
+specific implementation, and would typically follow the following workflow:</p>
+<ul class="simple">
+<li><p>call <code class="docutils literal notranslate"><span class="pre">getTensor</span></code> or <code class="docutils literal notranslate"><span class="pre">getTensorUntyped</span></code>, for each input tensor, identified
+by its index (i.e. the index of the corresponding <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> in the list
+used at construction).</p></li>
+<li><p>populate the tensor buffer of each input tensor with values. Users can take
+advantage of the stability of the tensor buffers like set only once those that
+don’t change, or cache the buffer address</p></li>
+<li><p>call <code class="docutils literal notranslate"><span class="pre">evaluate</span></code> and use its result.</p></li>
+</ul>
+</section>
+<section id="versioning">
+<h4><a class="toc-backref" href="#id21" role="doc-backlink">Versioning</a><a class="headerlink" href="#versioning" title="Link to this heading">¶</a></h4>
+<p>We support a model “knowing” less inputs than the compiler. This is supported by
+<code class="docutils literal notranslate"><span class="pre">MLModelRunner::setUpBufferForTensor</span></code>. If a <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> requested by the
+compiler is not supported by the underlying model, the <code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code>
+implementer must still call <code class="docutils literal notranslate"><span class="pre">setUpBufferForTensor</span></code> with a <code class="docutils literal notranslate"><span class="pre">nullptr</span></code> value
+for the buffer. In turn, <code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code> will allocate an appropriately - sized
+buffer and track its lifetime. The user can safely populate that buffer. Since
+the rest of the inputs are still provided, this allows an evolution model where
+we first add features to the compiler and continue using older models without
+regressing. Then, the new compiler can be used to train new models. Deprecating
+features in the compiler involves, then, training first a model without those
+features.</p>
+</section>
+<section id="mlmodelrunner-implementations">
+<h4><a class="toc-backref" href="#id22" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code> implementations</a><a class="headerlink" href="#mlmodelrunner-implementations" title="Link to this heading">¶</a></h4>
+<p>We currently feature 4 implementations:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ModelUnderTrainingRunner</span></code>. This requires the compiler be built with TFLite
+support. It allows loading a TFLite model dynamically and is primarily
+intended for training scenarios, but it can be used relatively easily in
+production build environments, as it does not change how the compiler operates
+(why this remark is necessary will become clear in a few paragraphs)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ReleaseModeModelRunner</span></code>. This is intended for inference scenarios. This
+uses the rules defined in <code class="docutils literal notranslate"><span class="pre">llvm/cmake/modules/TensorFlowCompile.cmake</span></code> to
+convert, at the time the compiler is built, TensorFlow Saved Models into a
+header (.h) and native object (.o). The latter is a CPU-based implementation of
+the neural network, together with its weights (essentially, loops performing
+matrix multiplications)</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>we are actively working on replacing this with an EmitC implementation
+requiring no out of tree build-time dependencies.</p>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">InteractiveModelRunner</span></code>. This is intended for training scenarios where the
+training algorithm drives compilation. This model runner has no special
+dependencies, and relies on I/O pipes to communicate with a separate process,
+presumably a python training algorithm. We do not envision using this in a
+production environment.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NoInferenceModelRunner</span></code>. This serves as a store for feature values, and its
+<code class="docutils literal notranslate"><span class="pre">evaluate</span></code> should never be called. It’s used for training scenarios, when we
+want to capture the behavior of the default (non-ML) heuristic.</p></li>
+</ul>
+<p>Note that training leaves it to the training infrastructure to handle
+distributed computing. The assumed architecture has python processes
+communicating remotely between themselves, but managing local communication with
+clang.</p>
+</section>
+</section>
+<section id="logging-facility">
+<h3><a class="toc-backref" href="#id23" role="doc-backlink">Logging Facility</a><a class="headerlink" href="#logging-facility" title="Link to this heading">¶</a></h3>
+<p>When training models, we need to expose the features we will want to use during
+inference, as well as outcomes, to guide reward-based learning techniques. This
+can happen in 2 forms:</p>
+<ul class="simple">
+<li><p>when running the compiler on some input, as a capture of the features and
+actions taken by some policy or a model currently being used.
+For example, see <code class="docutils literal notranslate"><span class="pre">DevelopmentModeInlineAdvisor</span></code> or <code class="docutils literal notranslate"><span class="pre">DevelopmentModeEvictAdvisor</span></code>
+in <code class="docutils literal notranslate"><span class="pre">MLRegallocEvictAdvisor.cpp</span></code>. In more detail, in the former case, if
+<code class="docutils literal notranslate"><span class="pre">-training-log</span></code> is specified, the features and actions (inline/no inline)
+from each inlining decision are saved to the specified file. Since
+<code class="docutils literal notranslate"><span class="pre">MLModelRunner</span></code> implementations hold on to feature values (they don’t get
+cleared by <code class="docutils literal notranslate"><span class="pre">evaluate</span></code>), logging is easily supported by just looping over the
+model runner’s features and passing the tensor buffers to the logger. Note how
+we use the <code class="docutils literal notranslate"><span class="pre">NoInferenceModelRunner</span></code> to capture the features observed when
+using the default policy.</p></li>
+<li><p>as a serialization mechanism for the <code class="docutils literal notranslate"><span class="pre">InteractiveModelRunner</span></code>. Here, we need
+to pass the observed features over IPC (a file descriptor, likely a named
+pipe).</p></li>
+</ul>
+<p>Both cases require serializing the same kind of data and we support both with
+<code class="docutils literal notranslate"><span class="pre">Analysis/Utils/TrainingLogger</span></code>.</p>
+<p>The goal of the logger design was avoiding any new dependency, and optimizing
+for the tensor scenario - i.e. exchanging potentially large buffers of fixed
+size, containing scalars. We explicitly assume the reader of the format has the
+same endianness as the compiler host, and we further expect the reader and the
+compiler run on the same host. This is because we expect the training scenarios
+have a (typically python) process managing the compiler process, and we leave to
+the training side to handle remoting.</p>
+<p>The logger produces the following sequence:</p>
+<ul>
+<li><p>a header describing the structure of the log. This is a one-line textual JSON
+dictionary with the following elements:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">features</span></code>: a list of JSON-serialized <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> values. The position
+in the list matters, as it will be the order in which values will be
+subsequently recorded. If we are just logging (i.e. not using the
+<code class="docutils literal notranslate"><span class="pre">InteractiveModelRunner</span></code>), the last feature should be that of the action
+(e.g. “inline/no inline”, or “index of evicted live range”)</p></li>
+<li><p>(optional) <code class="docutils literal notranslate"><span class="pre">score</span></code>: a <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> describing a value we will include to
+help formulate a reward. This could be a size estimate or a latency estimate.</p></li>
+<li><p>(optional) <code class="docutils literal notranslate"><span class="pre">advice</span></code>: a <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> describing the action. This is used
+for the <code class="docutils literal notranslate"><span class="pre">InteractiveModelRunner</span></code>, in which case it shouldn’t be in the
+<code class="docutils literal notranslate"><span class="pre">features</span></code> list.</p></li>
+</ul>
+</li>
+<li><p>a sequence of <code class="docutils literal notranslate"><span class="pre">contexts</span></code>. Contexts are independent traces of the optimization
+problem. For module passes, there is only one context, for function passes,
+there is a context per function. The start of a context is marked with a
+one-line JSON dictionary of the form <code class="docutils literal notranslate"><span class="pre">{&quot;context&quot;:</span> <span class="pre">&lt;context</span> <span class="pre">name,</span> <span class="pre">a</span> <span class="pre">string&gt;}</span></code></p>
+<p>Each context has a sequence of:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">observations</span></code>. An observation is:</p>
+<ul>
+<li><p>one-line JSON <code class="docutils literal notranslate"><span class="pre">{&quot;observation&quot;:</span> <span class="pre">&lt;observation</span> <span class="pre">number.</span> <span class="pre">0-indexed&gt;}</span></code></p></li>
+<li><p>a binary dump of the tensor buffers, in the order in which they were
+specified in the header.</p></li>
+<li><p>a new line character</p></li>
+<li><p>if <code class="docutils literal notranslate"><span class="pre">score</span></code> was specified in the header:</p>
+<ul>
+<li><p>a one-line JSON object <code class="docutils literal notranslate"><span class="pre">{&quot;outcome&quot;:</span> <span class="pre">&lt;value&gt;}</span></code>, where the <code class="docutils literal notranslate"><span class="pre">value</span></code>
+conforms to the <code class="docutils literal notranslate"><span class="pre">TensorSpec</span></code> in defined for the <code class="docutils literal notranslate"><span class="pre">score</span></code> in the header.</p></li>
+<li><p>the outcome value, as a binary dump</p></li>
+<li><p>a new line character.</p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>The format uses a mix of textual JSON (for headers) and binary dumps (for tensors)
+because the headers are not expected to dominate the payload - the tensor values
+are. We wanted to avoid overburdening the log reader - likely python - from
+additional dependencies; and the one-line JSON makes it rudimentarily possible
+to inspect a log without additional tooling.</p>
+<p>A python utility for reading logs, used for tests, is available at
+<code class="docutils literal notranslate"><span class="pre">Analysis/models/log_reader.py</span></code>. A utility showcasing the <code class="docutils literal notranslate"><span class="pre">InteractiveModelRunner</span></code>,
+which uses this reader as well, is at <code class="docutils literal notranslate"><span class="pre">Analysis/models/interactive_host.py</span></code>.
+The latter is also used in tests.</p>
+<p>There is no C++ implementation of a log reader. We do not have a scenario
+motivating one.</p>
+</section>
+</section>
+<section id="ir2vec-embeddings">
+<h2><a class="toc-backref" href="#id24" role="doc-backlink">IR2Vec Embeddings</a><a class="headerlink" href="#ir2vec-embeddings" title="Link to this heading">¶</a></h2>
+<p>IR2Vec is a program embedding approach designed specifically for LLVM IR. It
+is implemented as a function analysis pass in LLVM. The IR2Vec embeddings
+capture syntactic, semantic, and structural properties of the IR through
+learned representations. These representations are obtained as a JSON
+vocabulary that maps the entities of the IR (opcodes, types, operands) to
+n-dimensional floating point vectors (embeddings).</p>
+<p>With IR2Vec, representation at different granularities of IR, such as
+instructions, functions, and basic blocks, can be obtained. Representations
+of loops and regions can be derived from these representations, which can be
+useful in different scenarios. The representations can be useful for various
+downstream tasks, including ML-guided compiler optimizations.</p>
+<dl>
+<dt>The core components are:</dt><dd><ul>
+<li><p><strong>Vocabulary</strong>: A mapping from IR entities (opcodes, types, etc.) to their
+vector representations. This is managed by <code class="docutils literal notranslate"><span class="pre">IR2VecVocabAnalysis</span></code>. The
+vocabulary (.json file) contains three sections – Opcodes, Types, and
+Arguments, each containing the representations of the corresponding
+entities.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>It is mandatory to have these three sections present in the vocabulary file
+for it to be valid; order in which they appear does not matter.</p>
+</div>
+</li>
+<li><p><strong>Embedder</strong>: A class (<code class="docutils literal notranslate"><span class="pre">ir2vec::Embedder</span></code>) that uses the vocabulary to
+compute embeddings for instructions, basic blocks, and functions.</p></li>
+</ul>
+</dd>
+</dl>
+<section id="using-ir2vec">
+<h3><a class="toc-backref" href="#id25" role="doc-backlink">Using IR2Vec</a><a class="headerlink" href="#using-ir2vec" title="Link to this heading">¶</a></h3>
+<p>For generating embeddings, first the vocabulary should be obtained. Then, the
+embeddings can be computed and accessed via an <code class="docutils literal notranslate"><span class="pre">ir2vec::Embedder</span></code> instance.</p>
+<ol class="arabic">
+<li><p><strong>Get the Vocabulary</strong>:
+In a ModulePass, get the vocabulary analysis result:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">VocabRes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MAM</span><span class="p">.</span><span class="n">getResult</span><span class="o">&lt;</span><span class="n">IR2VecVocabAnalysis</span><span class="o">&gt;</span><span class="p">(</span><span class="n">M</span><span class="p">);</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">VocabRes</span><span class="p">.</span><span class="n">isValid</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// Handle error: vocabulary is not available or invalid</span>
+<span class="w">  </span><span class="k">return</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="k">const</span><span class="w"> </span><span class="n">ir2vec</span><span class="o">::</span><span class="n">Vocab</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Vocabulary</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">VocabRes</span><span class="p">.</span><span class="n">getVocabulary</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>Note that <code class="docutils literal notranslate"><span class="pre">IR2VecVocabAnalysis</span></code> pass is immutable.</p>
+</li>
+<li><p><strong>Create Embedder instance</strong>:
+With the vocabulary, create an embedder for a specific function:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Assuming F is an llvm::Function&amp;</span>
+<span class="c1">// For example, using IR2VecKind::Symbolic:</span>
+<span class="n">std</span><span class="o">::</span><span class="n">unique_ptr</span><span class="o">&lt;</span><span class="n">ir2vec</span><span class="o">::</span><span class="n">Embedder</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Emb</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">ir2vec</span><span class="o">::</span><span class="n">Embedder</span><span class="o">::</span><span class="n">create</span><span class="p">(</span><span class="n">IR2VecKind</span><span class="o">::</span><span class="n">Symbolic</span><span class="p">,</span><span class="w"> </span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="n">Vocabulary</span><span class="p">);</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>Compute and Access Embeddings</strong>:
+Call <code class="docutils literal notranslate"><span class="pre">getFunctionVector()</span></code> to get the embedding for the function.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">const</span><span class="w"> </span><span class="n">ir2vec</span><span class="o">::</span><span class="n">Embedding</span><span class="w"> </span><span class="o">&amp;</span><span class="n">FuncVector</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Emb</span><span class="o">-&gt;</span><span class="n">getFunctionVector</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>Currently, <code class="docutils literal notranslate"><span class="pre">Embedder</span></code> can generate embeddings at three levels: Instructions,
+Basic Blocks, and Functions. Appropriate getters are provided to access the
+embeddings at these levels.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The validity of <code class="docutils literal notranslate"><span class="pre">Embedder</span></code> instance (and the embeddings it generates) is
+tied to the function it is associated with remains unchanged. If the function
+is modified, the embeddings may become stale and should be recomputed accordingly.</p>
+</div>
+</li>
+<li><p><strong>Working with Embeddings:</strong>
+Embeddings are represented as <code class="docutils literal notranslate"><span class="pre">std::vector&lt;double&gt;</span></code>. These
+vectors as features for machine learning models, compute similarity scores
+between different code snippets, or perform other analyses as needed.</p></li>
+</ol>
+</section>
+<section id="further-details">
+<h3><a class="toc-backref" href="#id26" role="doc-backlink">Further Details</a><a class="headerlink" href="#further-details" title="Link to this heading">¶</a></h3>
+<p>For more detailed information about the IR2Vec algorithm, its parameters, and
+advanced usage, please refer to the original paper:
+<a class="reference external" href="https://doi.org/10.1145/3418463">IR2Vec: LLVM IR Based Scalable Program Embeddings</a>.
+The LLVM source code for <code class="docutils literal notranslate"><span class="pre">IR2Vec</span></code> can also be explored to understand the
+implementation details.</p>
+</section>
+</section>
+<section id="building-with-ml-support">
+<h2><a class="toc-backref" href="#id27" role="doc-backlink">Building with ML support</a><a class="headerlink" href="#building-with-ml-support" title="Link to this heading">¶</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For up to date information on custom builds, see the <code class="docutils literal notranslate"><span class="pre">ml-*</span></code>
+<a class="reference external" href="http://lab.llvm.org">build bots</a>. They are set up using
+<a class="reference external" href="https://github.com/google/ml-compiler-opt/blob/main/buildbot/buildbot_init.sh">like this</a>.</p>
+</div>
+<section id="embed-pre-trained-models-aka-release-mode">
+<h3><a class="toc-backref" href="#id28" role="doc-backlink">Embed pre-trained models (aka “release” mode)</a><a class="headerlink" href="#embed-pre-trained-models-aka-release-mode" title="Link to this heading">¶</a></h3>
+<p>This supports the <code class="docutils literal notranslate"><span class="pre">ReleaseModeModelRunner</span></code> model runners.</p>
+<p>You need a tensorflow pip package for the AOT (ahead-of-time) Saved Model compiler
+and a thin wrapper for the native function generated by it. We currently support
+TF 2.15. We recommend using a python virtual env (in which case, remember to
+pass <code class="docutils literal notranslate"><span class="pre">-DPython3_ROOT_DIR</span></code> to <code class="docutils literal notranslate"><span class="pre">cmake</span></code>).</p>
+<p>Once you install the pip package, find where it was installed:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">TF_PIP=$(sudo -u buildbot python3 -c &quot;import tensorflow as tf; import os; print(os.path.dirname(tf.__file__))&quot;)``</span>
+</pre></div>
+</div>
+<p>Then build LLVM:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">cmake -DTENSORFLOW_AOT_PATH=$TF_PIP \</span>
+<span class="go">  -DLLVM_INLINER_MODEL_PATH=&lt;path to inliner saved model dir&gt; \</span>
+<span class="go">  -DLLVM_RAEVICT_MODEL_PATH=&lt;path to regalloc eviction saved model dir&gt; \</span>
+<span class="go">  &lt;...other options...&gt;</span>
+</pre></div>
+</div>
+<p>The example shows the flags for both inlining and regalloc, but either may be
+omitted.</p>
+<p>You can also specify a URL for the path, and it is also possible to pre-compile
+the header and object and then just point to the precompiled artifacts. See for
+example <code class="docutils literal notranslate"><span class="pre">LLVM_OVERRIDE_MODEL_HEADER_INLINERSIZEMODEL</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>We are transitioning away from the AOT compiler shipping with the
+tensorflow package, and to a EmitC, in-tree solution, so these details will
+change soon.</p>
+</div>
+</section>
+<section id="using-tflite-aka-development-mode">
+<h3><a class="toc-backref" href="#id29" role="doc-backlink">Using TFLite (aka “development” mode)</a><a class="headerlink" href="#using-tflite-aka-development-mode" title="Link to this heading">¶</a></h3>
+<p>This supports the <code class="docutils literal notranslate"><span class="pre">ModelUnderTrainingRunner</span></code> model runners.</p>
+<p>Build the TFLite package using <a class="reference external" href="https://raw.githubusercontent.com/google/ml-compiler-opt/refs/heads/main/buildbot/build_tflite.sh">this script</a>.
+Then, assuming you ran that script in <code class="docutils literal notranslate"><span class="pre">/tmp/tflitebuild</span></code>, just pass
+<code class="docutils literal notranslate"><span class="pre">-C</span> <span class="pre">/tmp/tflitebuild/tflite.cmake</span></code> to the <code class="docutils literal notranslate"><span class="pre">cmake</span></code> for LLVM.</p>
+</section>
+<section id="interactive-mode-for-training-research">
+<h3><a class="toc-backref" href="#id30" role="doc-backlink">Interactive Mode (for training / research)</a><a class="headerlink" href="#interactive-mode-for-training-research" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">InteractiveModelRunner</span></code> is available with no extra dependencies. For the
+optimizations that are currently MLGO-enabled, it may be used as follows:</p>
+<ul class="simple">
+<li><p>for inlining: <code class="docutils literal notranslate"><span class="pre">-mllvm</span> <span class="pre">-enable-ml-inliner=release</span> <span class="pre">-mllvm</span> <span class="pre">-inliner-interactive-channel-base=&lt;name&gt;</span></code></p></li>
+<li><p>for regalloc eviction: <code class="docutils literal notranslate"><span class="pre">-mllvm</span> <span class="pre">-regalloc-evict-advisor=release</span> <span class="pre">-mllvm</span> <span class="pre">-regalloc-evict-interactive-channel-base=&lt;name&gt;</span></code></p></li>
+</ul>
+<p>where the <code class="docutils literal notranslate"><span class="pre">name</span></code> is a path fragment. We will expect to find 2 files,
+<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.in</span></code> (readable, data incoming from the managing process) and
+<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.out</span></code> (writable, the model runner sends data to the managing process)</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="ScudoHardenedAllocator.html" title="Scudo Hardened Allocator"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="PointerAuth.html" title="Pointer Authentication"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" >Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Machine Learning - Guided Optimization (MLGO)</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-08-26.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

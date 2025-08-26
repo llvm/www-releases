@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debugging C++ Coroutines &#8212; Clang 21.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=c54a4614"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="AMDGPU Support" href="AMDGPUSupport.html" />
+    <link rel="prev" title="API Notes: Annotations Without Modifying Headers" href="APINotes.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 21.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Debugging C++ Coroutines</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="APINotes.html">API Notes: Annotations Without Modifying Headers</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AMDGPUSupport.html">AMDGPU Support</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="debugging-c-coroutines">
+<h1>Debugging C++ Coroutines<a class="headerlink" href="#debugging-c-coroutines" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#debugging-generators" id="id2">Debugging generators</a></p>
+<ul>
+<li><p><a class="reference internal" href="#breakpoints-inside-the-generators" id="id3">Breakpoints inside the generators</a></p></li>
+<li><p><a class="reference internal" href="#inspecting-variables-in-a-coroutine" id="id4">Inspecting variables in a coroutine</a></p></li>
+<li><p><a class="reference internal" href="#stepping-out-of-a-coroutine" id="id5">Stepping out of a coroutine</a></p></li>
+<li><p><a class="reference internal" href="#stepping-into-a-coroutine" id="id6">Stepping into a coroutine</a></p></li>
+<li><p><a class="reference internal" href="#inspecting-a-suspended-coroutine" id="id7">Inspecting a suspended coroutine</a></p></li>
+<li><p><a class="reference internal" href="#tracking-the-exact-suspension-point" id="id8">Tracking the exact suspension point</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#async-stack-traces" id="id9">Async stack traces</a></p>
+<ul>
+<li><p><a class="reference internal" href="#stack-traces-of-in-flight-coroutines" id="id10">Stack traces of in-flight coroutines</a></p></li>
+<li><p><a class="reference internal" href="#stack-traces-of-suspended-coroutines" id="id11">Stack traces of suspended coroutines</a></p></li>
+<li><p><a class="reference internal" href="#keeping-track-of-all-existing-coroutines" id="id12">Keeping track of all existing coroutines</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#known-issues-workarounds-for-older-lldb-versions" id="id13">Known issues &amp; workarounds for older LLDB versions</a></p></li>
+<li><p><a class="reference internal" href="#toolchain-implementation-details" id="id14">Toolchain Implementation Details</a></p>
+<ul>
+<li><p><a class="reference internal" href="#ramp-resume-and-destroy-functions" id="id15">Ramp, resume and destroy functions</a></p></li>
+<li><p><a class="reference internal" href="#artificial-promise-and-coro-frame-variables" id="id16">Artificial <code class="docutils literal notranslate"><span class="pre">__promise</span></code> and <code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> variables</a></p></li>
+<li><p><a class="reference internal" href="#the-abi-of-a-coroutine" id="id17">The ABI of a coroutine</a></p></li>
+<li><p><a class="reference internal" href="#implementation-in-clang-llvm" id="id18">Implementation in clang / LLVM</a></p></li>
+<li><p><a class="reference internal" href="#devirtualization-of-coroutine-handles" id="id19">Devirtualization of coroutine handles</a></p></li>
+<li><p><a class="reference internal" href="#interpreting-the-coroutine-frame-in-optimized-builds" id="id20">Interpreting the coroutine frame in optimized builds</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#resources" id="id21">Resources</a></p>
+<ul>
+<li><p><a class="reference internal" href="#lldb-debugger-script" id="id22">LLDB Debugger Script</a></p></li>
+<li><p><a class="reference internal" href="#gdb-debugger-script" id="id23">GDB Debugger Script</a></p></li>
+<li><p><a class="reference internal" href="#further-reading" id="id24">Further Reading</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Coroutines in C++ were introduced in C++20, and the user experience for
+debugging them can still be challenging. This document guides you how to most
+efficiently debug coroutines and how to navigate existing shortcomings in
+debuggers and compilers.</p>
+<p>Coroutines are generally used either as generators or for asynchronous
+programming. In this document, we will discuss both use cases. Even if you are
+using coroutines for asynchronous programming, you should still read the
+generators section, as it will introduce foundational debugging techniques also
+applicable to the debugging of asynchronous programs.</p>
+<p>Both compilers (clang, gcc, …) and debuggers (lldb, gdb, …) are
+still improving their support for coroutines. As such, we recommend using the
+latest available version of your toolchain.</p>
+<p>This document focuses on clang and lldb. The screenshots show
+<a class="reference external" href="https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.lldb-dap">lldb-dap</a>
+in combination with VS Code. The same techniques can also be used in other
+IDEs.</p>
+<p>Debugging clang-compiled binaries with gdb is possible, but requires more
+scripting. This guide comes with a basic GDB script for coroutine debugging.</p>
+<p>This guide will first showcase the more polished, bleeding-edge experience, but
+will also show you how to debug coroutines with older toolchains. In general,
+the older your toolchain, the deeper you will have to dive into the
+implementation details of coroutines (such as their ABI). The further down in
+this document you go, the more low-level, technical the content will become. If
+you are on an up-to-date toolchain, you will hopefully be able to stop reading
+earlier.</p>
+</section>
+<section id="debugging-generators">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Debugging generators</a><a class="headerlink" href="#debugging-generators" title="Link to this heading">¶</a></h2>
+<p>One of the two major use cases for coroutines in C++ are generators, i.e.,
+functions which can produce values via <code class="docutils literal notranslate"><span class="pre">co_yield</span></code>. Values are produced
+lazily, on-demand. For this purpose, every time a new value is requested, the
+coroutine gets resumed. As soon as it reaches a <code class="docutils literal notranslate"><span class="pre">co_yield</span></code> and thereby
+returns the requested value, the coroutine is suspended again.</p>
+<p>This logic is encapsulated in a <code class="docutils literal notranslate"><span class="pre">generator</span></code> type similar to this one:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// generator.hpp</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;coroutine&gt;</span>
+
+<span class="c1">// `generator` is a stripped down, minimal generator type.</span>
+<span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">generator</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">T</span><span class="w"> </span><span class="n">current_value</span><span class="p">{};</span>
+
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">get_return_object</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">initial_suspend</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">final_suspend</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">return_void</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="n">unhandled_exception</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">__builtin_unreachable</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">yield_value</span><span class="p">(</span><span class="n">T</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">current_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">;</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">};</span>
+
+<span class="w">  </span><span class="n">generator</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">h</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">hdl</span><span class="p">(</span><span class="n">h</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">hdl</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="o">~</span><span class="n">generator</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">hdl</span><span class="p">.</span><span class="n">destroy</span><span class="p">();</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">generator</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="k">operator</span><span class="o">++</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">hdl</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="k">this</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="c1">// resume the coroutine</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="k">operator</span><span class="o">*</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">hdl</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">current_value</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">hdl</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>We can then use this <code class="docutils literal notranslate"><span class="pre">generator</span></code> class to print the Fibonacci sequence:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;generator.hpp&quot;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
+
+<span class="n">generator</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">fibonacci</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">co_yield</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">prev</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_yield</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">current</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">next</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">current</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">prev</span><span class="p">;</span>
+<span class="w">    </span><span class="k">co_yield</span><span class="w"> </span><span class="n">next</span><span class="p">;</span>
+<span class="w">    </span><span class="n">prev</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">current</span><span class="p">;</span>
+<span class="w">    </span><span class="n">current</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">next</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">print10Elements</span><span class="p">(</span><span class="n">generator</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">gen</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">cerr</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="o">*</span><span class="n">gen</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">    </span><span class="o">++</span><span class="n">gen</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cerr</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Fibonacci sequence - here we go</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">generator</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">fib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fibonacci</span><span class="p">();</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="o">++</span><span class="n">fib</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">print10Elements</span><span class="p">(</span><span class="n">fib</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>To compile this code, use <code class="docutils literal notranslate"><span class="pre">clang++</span> <span class="pre">--std=c++23</span> <span class="pre">generator-example.cpp</span> <span class="pre">-g</span></code>.</p>
+<section id="breakpoints-inside-the-generators">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Breakpoints inside the generators</a><a class="headerlink" href="#breakpoints-inside-the-generators" title="Link to this heading">¶</a></h3>
+<p>We can set breakpoints inside coroutines just as we set them in regular
+functions. For VS Code, that means clicking next the line number in the editor.
+In the <code class="docutils literal notranslate"><span class="pre">lldb</span></code> CLI or in <code class="docutils literal notranslate"><span class="pre">gdb</span></code>, you can use <code class="docutils literal notranslate"><span class="pre">b</span></code> to set a breakpoint.</p>
+</section>
+<section id="inspecting-variables-in-a-coroutine">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Inspecting variables in a coroutine</a><a class="headerlink" href="#inspecting-variables-in-a-coroutine" title="Link to this heading">¶</a></h3>
+<p>If you hit a breakpoint inside the <code class="docutils literal notranslate"><span class="pre">fibonacci</span></code> function, you should be able
+to inspect all local variables (<code class="docutils literal notranslate"><span class="pre">prev</span></code>, <code class="docutils literal notranslate"><span class="pre">current</span></code>, <code class="docutils literal notranslate"><span class="pre">next</span></code>) just like in
+a regular function.</p>
+<img alt="_images/coro-generator-variables.png" src="_images/coro-generator-variables.png" />
+<p>Note the two additional variables <code class="docutils literal notranslate"><span class="pre">__promise</span></code> and <code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code>. Those
+show the internal state of the coroutine. They are not relevant for our
+generator example, but will be relevant for asynchronous programming described
+in the next section.</p>
+</section>
+<section id="stepping-out-of-a-coroutine">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Stepping out of a coroutine</a><a class="headerlink" href="#stepping-out-of-a-coroutine" title="Link to this heading">¶</a></h3>
+<p>When single-stepping, you will notice that the debugger will leave the
+<code class="docutils literal notranslate"><span class="pre">fibonacci</span></code> function as soon as you hit a <code class="docutils literal notranslate"><span class="pre">co_yield</span></code> statement. You might
+find yourself inside some standard library code. After stepping out of the
+library code, you will be back in the <code class="docutils literal notranslate"><span class="pre">main</span></code> function.</p>
+</section>
+<section id="stepping-into-a-coroutine">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Stepping into a coroutine</a><a class="headerlink" href="#stepping-into-a-coroutine" title="Link to this heading">¶</a></h3>
+<p>If you stop at <code class="docutils literal notranslate"><span class="pre">++fib</span></code> and try to step into the generator, you will first
+find yourself inside <code class="docutils literal notranslate"><span class="pre">operator++</span></code>. Stepping into the <code class="docutils literal notranslate"><span class="pre">handle.resume()</span></code> will
+not work by default.</p>
+<p>This is because lldb does not step into functions from the standard library by
+default. To make this work, you first need to run <code class="docutils literal notranslate"><span class="pre">settings</span> <span class="pre">set</span>
+<span class="pre">target.process.thread.step-avoid-regexp</span> <span class="pre">&quot;&quot;</span></code>. You can do so from the “Debug
+Console” towards the bottom of the screen. With that setting change, you can
+step through <code class="docutils literal notranslate"><span class="pre">coroutine_handle::resume</span></code> and into your generator.</p>
+<p>You might find yourself at the top of the coroutine at first, instead of at
+your previous suspension point. In that case, single-step and you will arrive
+at the previously suspended <code class="docutils literal notranslate"><span class="pre">co_yield</span></code> statement.</p>
+</section>
+<section id="inspecting-a-suspended-coroutine">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Inspecting a suspended coroutine</a><a class="headerlink" href="#inspecting-a-suspended-coroutine" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">print10Elements</span></code> function receives an opaque <code class="docutils literal notranslate"><span class="pre">generator</span></code> type. Let’s
+assume we are suspended at the <code class="docutils literal notranslate"><span class="pre">++gen;</span></code> line, and want to inspect the
+generator and its internal state.</p>
+<p>To do so, we can simply look into the <code class="docutils literal notranslate"><span class="pre">gen.hdl</span></code> variable. LLDB comes with a
+pretty printer for <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code> which will show us the internal
+state of the coroutine. For GDB, you will have to use the <code class="docutils literal notranslate"><span class="pre">show-coro-frame</span></code>
+command provided by the <a class="reference internal" href="#gdb-script"><span class="std std-ref">GDB Debugger Script</span></a>.</p>
+<img alt="_images/coro-generator-suspended.png" src="_images/coro-generator-suspended.png" />
+<p>We can see two function pointers <code class="docutils literal notranslate"><span class="pre">resume</span></code> and <code class="docutils literal notranslate"><span class="pre">destroy</span></code>. These pointers
+point to the resume / destroy functions. By inspecting those function pointers,
+we can see that our <code class="docutils literal notranslate"><span class="pre">generator</span></code> is actually backed by our <code class="docutils literal notranslate"><span class="pre">fibonacci</span></code>
+coroutine. When using VS Code + lldb-dap, you can Cmd+Click on the function
+address (<code class="docutils literal notranslate"><span class="pre">0x555...</span></code> in the screenshot) to directly jump to the function
+definition backing your coroutine handle.</p>
+<p>Next, we see the <code class="docutils literal notranslate"><span class="pre">promise</span></code>. In our case, this reveals the current value of
+our generator.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">coro_frame</span></code> member represents the internal state of the coroutine. It
+contains our internal coroutine state <code class="docutils literal notranslate"><span class="pre">prev</span></code>, <code class="docutils literal notranslate"><span class="pre">current</span></code>, <code class="docutils literal notranslate"><span class="pre">next</span></code>.
+Furthermore, it contains many internal, compiler-specific members, which are
+named based on their type. These represent temporary values which the compiler
+decided to spill across suspension points, but which were not declared in our
+original source code and hence have no proper user-provided name.</p>
+</section>
+<section id="tracking-the-exact-suspension-point">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Tracking the exact suspension point</a><a class="headerlink" href="#tracking-the-exact-suspension-point" title="Link to this heading">¶</a></h3>
+<p>Among the compiler-generated members, the <code class="docutils literal notranslate"><span class="pre">__coro_index</span></code> is particularly
+important. This member identifies the suspension point at which the coroutine
+is currently suspended.</p>
+<p>However, it is non-trivial to map this number back to a source code location.
+The compiler emits debug info labels for the suspension points. This allows us
+to map the suspension point index back to a source code location. In gdb, we
+can use the <code class="docutils literal notranslate"><span class="pre">info</span> <span class="pre">line</span></code> command to get the source code location of the
+suspension point.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">(</span><span class="n">gdb</span><span class="p">)</span> <span class="n">info</span> <span class="n">line</span> <span class="o">-</span><span class="n">function</span> <span class="n">coro_task</span> <span class="o">-</span><span class="n">label</span> <span class="n">__coro_resume_2</span>
+<span class="n">Line</span> <span class="mi">45</span> <span class="n">of</span> <span class="s2">&quot;llvm-example.cpp&quot;</span> <span class="n">starts</span> <span class="n">at</span> <span class="n">address</span> <span class="mh">0x1b1b</span> <span class="o">&lt;</span><span class="n">_ZL9coro_taski</span><span class="o">.</span><span class="n">resume</span><span class="o">+</span><span class="mi">555</span><span class="o">&gt;</span> <span class="ow">and</span> <span class="n">ends</span> <span class="n">at</span> <span class="mh">0x1b46</span> <span class="o">&lt;</span><span class="n">_ZL9coro_taski</span><span class="o">.</span><span class="n">resume</span><span class="o">+</span><span class="mi">598</span><span class="o">&gt;.</span>
+<span class="n">Line</span> <span class="mi">45</span> <span class="n">of</span> <span class="s2">&quot;llvm-example.cpp&quot;</span> <span class="n">starts</span> <span class="n">at</span> <span class="n">address</span> <span class="mh">0x201b</span> <span class="o">&lt;</span><span class="n">_ZL9coro_taski</span><span class="o">.</span><span class="n">destroy</span><span class="o">+</span><span class="mi">555</span><span class="o">&gt;</span> <span class="ow">and</span> <span class="n">ends</span> <span class="n">at</span> <span class="mh">0x2046</span> <span class="o">&lt;</span><span class="n">_ZL9coro_taski</span><span class="o">.</span><span class="n">destroy</span><span class="o">+</span><span class="mi">598</span><span class="o">&gt;.</span>
+<span class="n">Line</span> <span class="mi">45</span> <span class="n">of</span> <span class="s2">&quot;llvm-example.cpp&quot;</span> <span class="n">starts</span> <span class="n">at</span> <span class="n">address</span> <span class="mh">0x253b</span> <span class="o">&lt;</span><span class="n">_ZL9coro_taski</span><span class="o">.</span><span class="n">cleanup</span><span class="o">+</span><span class="mi">555</span><span class="o">&gt;</span> <span class="ow">and</span> <span class="n">ends</span> <span class="n">at</span> <span class="mh">0x2566</span> <span class="o">&lt;</span><span class="n">_ZL9coro_taski</span><span class="o">.</span><span class="n">cleanup</span><span class="o">+</span><span class="mi">598</span><span class="o">&gt;.</span>
+</pre></div>
+</div>
+<p>LLDB does not support looking up labels. Furthermore, those labels are only emitted
+starting with clang 21.0.</p>
+<p>For simple cases, you might still be able to guess the suspension point correctly.
+Alternatively, you might also want to modify your coroutine library to store
+the line number of the current suspension point in the promise:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// For all promise_types we need a new `_coro_return_address` variable:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">_coro_return_address</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="c1">// For all the awaiter types we need:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">awaiter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Promise</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">noinline</span><span class="p">))</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">Promise</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="p">...</span>
+<span class="w">        </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">_coro_return_address</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__builtin_return_address</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>This stores the return address of <code class="docutils literal notranslate"><span class="pre">await_suspend</span></code> within the promise.
+Thereby, we can read it back from the promise of a suspended coroutine, and map
+it to an exact source code location. For a complete example, see the <code class="docutils literal notranslate"><span class="pre">task</span></code>
+type used below for asynchronous programming.</p>
+<p>Alternatively, we can modify the C++ code to store the line number in the
+promise type. We can use a <code class="docutils literal notranslate"><span class="pre">std::source_location</span></code> to get the line number of
+the await and store it inside the <code class="docutils literal notranslate"><span class="pre">promise_type</span></code>. In the debugger, we can
+then read the line number from the promise of the suspended coroutine.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// For all the awaiter types we need:</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">awaiter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">Promise</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">Promise</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">,</span>
+<span class="w">                     </span><span class="n">std</span><span class="o">::</span><span class="n">source_location</span><span class="w"> </span><span class="n">sl</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">source_location</span><span class="o">::</span><span class="n">current</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="p">...</span>
+<span class="w">        </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">line_number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sl</span><span class="p">.</span><span class="n">line</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>The downside of both approaches is that they come at the price of additional
+runtime cost. In particular the second approach increases binary size, since it
+requires additional <code class="docutils literal notranslate"><span class="pre">std::source_location</span></code> objects, and those source
+locations are not stripped by split-dwarf. Whether the first approach is worth
+the additional runtime cost is a trade-off you need to make yourself.</p>
+</section>
+</section>
+<section id="async-stack-traces">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Async stack traces</a><a class="headerlink" href="#async-stack-traces" title="Link to this heading">¶</a></h2>
+<p>Besides generators, the second common use case for coroutines in C++ is
+asynchronous programming, usually involving libraries such as stdexec, folly,
+cppcoro, boost::asio, or similar libraries. Some of those libraries already
+provide custom debugging support, so in addition to this guide, you might want
+to check out their documentation.</p>
+<p>When using coroutines for asynchronous programming, your library usually
+provides you some <code class="docutils literal notranslate"><span class="pre">task</span></code> type. This type usually looks similar to this:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// async-task-library.hpp</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;coroutine&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;utility&gt;</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">task</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">task</span><span class="w"> </span><span class="nf">get_return_object</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">initial_suspend</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">suspend_always</span><span class="p">{};</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="n">unhandled_exception</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">final_suspend</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">struct</span><span class="w"> </span><span class="nc">FinalSuspend</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">continuation</span><span class="p">;</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">await_ready</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">        </span><span class="k">auto</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">return</span><span class="w"> </span><span class="n">continuation</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="kt">void</span><span class="w"> </span><span class="n">await_resume</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">      </span><span class="p">};</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">FinalSuspend</span><span class="p">{</span><span class="n">continuation</span><span class="p">};</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="n">return_value</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">res</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">res</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">continuation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">noop_coroutine</span><span class="p">();</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="cp">#ifndef NDEBUG</span>
+<span class="w">    </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">_coro_suspension_point_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">;</span>
+<span class="w">    </span><span class="cp">#endif</span>
+<span class="w">  </span><span class="p">};</span>
+
+<span class="w">  </span><span class="n">task</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">handle</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">  </span><span class="o">~</span><span class="n">task</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+<span class="w">      </span><span class="n">handle</span><span class="p">.</span><span class="n">destroy</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">Awaiter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">await_ready</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">P</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="cp">#ifndef NDEBUG</span>
+<span class="w">    </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">noinline</span><span class="p">))</span>
+<span class="w">    </span><span class="cp">#endif</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">P</span><span class="o">&gt;</span><span class="w"> </span><span class="n">continuation</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">continuation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">continuation</span><span class="p">;</span>
+<span class="w">      </span><span class="cp">#ifndef NDEBUG</span>
+<span class="w">      </span><span class="n">continuation</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">_coro_suspension_point_addr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__builtin_return_address</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+<span class="w">      </span><span class="cp">#endif</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">await_resume</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">result</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">};</span>
+
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="k">co_await</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">Awaiter</span><span class="p">{</span><span class="n">handle</span><span class="p">};</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">syncStart</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">handle</span><span class="p">.</span><span class="n">resume</span><span class="p">();</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">handle</span><span class="p">.</span><span class="n">promise</span><span class="p">().</span><span class="n">result</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;</span><span class="w"> </span><span class="n">handle</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>Note how the <code class="docutils literal notranslate"><span class="pre">task::promise_type</span></code> has a member variable
+<code class="docutils literal notranslate"><span class="pre">std::coroutine_handle&lt;&gt;</span> <span class="pre">continuation</span></code>. This is the handle of the coroutine
+that will be resumed when the current coroutine is finished executing (see
+<code class="docutils literal notranslate"><span class="pre">final_suspend</span></code>). In a sense, this is the “return address” of the coroutine.
+It is set inside <code class="docutils literal notranslate"><span class="pre">operator</span> <span class="pre">co_await</span></code> when another coroutine calls our
+generator and awaits for the next value to be produced.</p>
+<p>The result value is returned via the <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">result</span></code> member. It is written in
+<code class="docutils literal notranslate"><span class="pre">return_value</span></code> and read by <code class="docutils literal notranslate"><span class="pre">Awaiter::await_resume</span></code>. Usually, the result
+type of a task is a template argument. For simplicity’s sake, we hard-coded the
+<code class="docutils literal notranslate"><span class="pre">int</span></code> type in this example.</p>
+<section id="stack-traces-of-in-flight-coroutines">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Stack traces of in-flight coroutines</a><a class="headerlink" href="#stack-traces-of-in-flight-coroutines" title="Link to this heading">¶</a></h3>
+<p>Let’s assume you have the following program and set a breakpoint inside the
+<code class="docutils literal notranslate"><span class="pre">write_output</span></code> function. There are multiple call paths through which this
+function could have been reached. How can we find out said call path?</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string_view&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;async-task-library.hpp&quot;</span>
+
+<span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">write_output</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">string_view</span><span class="w"> </span><span class="n">contents</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">contents</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_return</span><span class="w"> </span><span class="n">contents</span><span class="p">.</span><span class="n">size</span><span class="p">();</span>
+<span class="p">}</span>
+
+<span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">greet</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">bytes_written</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">bytes_written</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="k">co_await</span><span class="w"> </span><span class="n">write_output</span><span class="p">(</span><span class="s">&quot;Hello&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="n">bytes_written</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="k">co_await</span><span class="w"> </span><span class="n">write_output</span><span class="p">(</span><span class="s">&quot;World&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">co_return</span><span class="w"> </span><span class="n">bytes_written</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">bytes_written</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">greet</span><span class="p">().</span><span class="n">syncStart</span><span class="p">();</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Bytes written: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">bytes_written</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>To do so, let’s break inside <code class="docutils literal notranslate"><span class="pre">write_output</span></code>. We can understand our call-stack
+by looking into the special <code class="docutils literal notranslate"><span class="pre">__promise</span></code> variable. This artificial variable is
+generated by the compiler and points to the <code class="docutils literal notranslate"><span class="pre">promise_type</span></code> instance
+corresponding to the currently in-flight coroutine. In this case, the
+<code class="docutils literal notranslate"><span class="pre">__promise</span></code> variable contains the <code class="docutils literal notranslate"><span class="pre">continuation</span></code> which points to our
+caller. That caller again contains a <code class="docutils literal notranslate"><span class="pre">promise</span></code> with a <code class="docutils literal notranslate"><span class="pre">continuation</span></code> which
+points to our caller’s caller.</p>
+<img alt="_images/coro-async-task-continuations.png" src="_images/coro-async-task-continuations.png" />
+<p>We can figure out the involved coroutine functions and their current suspension
+points as discussed above in the “Inspecting a suspended coroutine” section.</p>
+<p>When using LLDB’s CLI, the command <code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">--ptr-depth</span> <span class="pre">4</span> <span class="pre">__promise</span></code> might also be
+useful to automatically dereference all the pointers up to the given depth.</p>
+<p>To get a flat representation of that call stack, we can use a debugger script,
+such as the one shown in the <a class="reference internal" href="#lldb-script"><span class="std std-ref">LLDB Debugger Script</span></a> section. With that
+script, we can run <code class="docutils literal notranslate"><span class="pre">coro</span> <span class="pre">bt</span></code> to get the following stack trace:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">(</span><span class="n">lldb</span><span class="p">)</span> <span class="n">coro</span> <span class="n">bt</span>
+<span class="n">frame</span> <span class="c1">#0: write_output(std::basic_string_view&lt;char, std::char_traits&lt;char&gt;&gt;) at /home/avogelsgesang/Documents/corotest/async-task-example.cpp:6:16</span>
+<span class="p">[</span><span class="k">async</span><span class="p">]</span> <span class="n">frame</span> <span class="c1">#1: greet() at /home/avogelsgesang/Documents/corotest/async-task-example.cpp:12:20</span>
+<span class="p">[</span><span class="k">async</span><span class="p">]</span> <span class="n">frame</span> <span class="c1">#2: std::__n4861::coroutine_handle&lt;std::__n4861::noop_coroutine_promise&gt;::__frame::__dummy_resume_destroy() at /usr/include/c++/14/coroutine:298, suspension point unknown</span>
+<span class="n">frame</span> <span class="c1">#3: std::__n4861::coroutine_handle&lt;task::promise_type&gt;::resume() const at /usr/include/c++/14/coroutine:242:29</span>
+<span class="n">frame</span> <span class="c1">#4: task::syncStart() at /home/avogelsgesang/Documents/corotest/async-task-library.hpp:78:14</span>
+<span class="n">frame</span> <span class="c1">#5: main at /home/avogelsgesang/Documents/corotest/async-task-example.cpp:18:11</span>
+<span class="n">frame</span> <span class="c1">#6: __libc_start_call_main at sysdeps/nptl/libc_start_call_main.h:58:16</span>
+<span class="n">frame</span> <span class="c1">#7: __libc_start_main_impl at csu/libc-start.c:360:3</span>
+<span class="n">frame</span> <span class="c1">#8: _start at :4294967295</span>
+</pre></div>
+</div>
+<p>Note how the frames #1 and #2 are async frames.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">coro</span> <span class="pre">bt</span></code> command already includes logic to identify the exact suspension
+point of each frame based on the <code class="docutils literal notranslate"><span class="pre">_coro_suspension_point_addr</span></code> stored inside
+the promise.</p>
+</section>
+<section id="stack-traces-of-suspended-coroutines">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Stack traces of suspended coroutines</a><a class="headerlink" href="#stack-traces-of-suspended-coroutines" title="Link to this heading">¶</a></h3>
+<p>Usually, while a coroutine is waiting for, e.g., an in-flight network request,
+the suspended <code class="docutils literal notranslate"><span class="pre">coroutine_handle</span></code> is stored within the work queues inside the
+IO scheduler. As soon as we get hold of the coroutine handle, we can backtrace
+it by using <code class="docutils literal notranslate"><span class="pre">coro</span> <span class="pre">bt</span> <span class="pre">&lt;coro_handle&gt;</span></code> where <code class="docutils literal notranslate"><span class="pre">&lt;coro_handle&gt;</span></code> is an expression
+evaluating to the coroutine handle of the suspended coroutine.</p>
+</section>
+<section id="keeping-track-of-all-existing-coroutines">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Keeping track of all existing coroutines</a><a class="headerlink" href="#keeping-track-of-all-existing-coroutines" title="Link to this heading">¶</a></h3>
+<p>Usually, we should be able to get hold of all currently suspended coroutines by
+inspecting the worker queues of the IO scheduler. In cases where this is not
+possible, we can use the following approach to keep track of all currently
+suspended coroutines.</p>
+<p>One such solution is to store the list of in-flight coroutines in a collection:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kr">inline</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">unordered_set</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">inflight_coroutines</span><span class="p">;</span>
+<span class="kr">inline</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">mutex</span><span class="w"> </span><span class="n">inflight_coroutines_mutex</span><span class="p">;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">promise_type</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="n">promise_type</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">std</span><span class="o">::</span><span class="n">unique_lock</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">mutex</span><span class="o">&gt;</span><span class="w"> </span><span class="n">lock</span><span class="p">(</span><span class="n">inflight_coroutines_mutex</span><span class="p">);</span>
+<span class="w">        </span><span class="n">inflight_coroutines</span><span class="p">.</span><span class="n">insert</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">));</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="o">~</span><span class="n">promise_type</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">std</span><span class="o">::</span><span class="n">unique_lock</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">mutex</span><span class="o">&gt;</span><span class="w"> </span><span class="n">lock</span><span class="p">(</span><span class="n">inflight_coroutines_mutex</span><span class="p">);</span>
+<span class="w">        </span><span class="n">inflight_coroutines</span><span class="p">.</span><span class="n">erase</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;</span><span class="n">promise_type</span><span class="o">&gt;::</span><span class="n">from_promise</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">));</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>With this in place, it is possible to inspect <code class="docutils literal notranslate"><span class="pre">inflight_coroutines</span></code> from the
+debugger, and rely on LLDB’s <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code> pretty-printer to
+inspect the coroutines.</p>
+<p>This technique will track <em>all</em> coroutines, also the ones which are currently
+awaiting another coroutine, though. To identify just the “roots” of our
+in-flight coroutines, we can use the <code class="docutils literal notranslate"><span class="pre">coro</span> <span class="pre">in-flight</span> <span class="pre">inflight_coroutines</span></code>
+command provided by the <a class="reference internal" href="#lldb-script"><span class="std std-ref">LLDB Debugger Script</span></a>.</p>
+<p>Please note that the above is expensive from a runtime performance perspective,
+and requires locking to prevent data races. As such, it is not recommended to
+use this approach in production code.</p>
+</section>
+</section>
+<section id="known-issues-workarounds-for-older-lldb-versions">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Known issues &amp; workarounds for older LLDB versions</a><a class="headerlink" href="#known-issues-workarounds-for-older-lldb-versions" title="Link to this heading">¶</a></h2>
+<p>LLDB before 21.0 did not yet show the <code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> inside
+<code class="docutils literal notranslate"><span class="pre">coroutine_handle</span></code>. To inspect the coroutine frame, you had to use the
+approach described in the <a class="reference internal" href="#devirtualization"><span class="std std-ref">Devirtualization of coroutine handles</span></a> section.</p>
+<p>LLDB before 18.0 was hiding the <code class="docutils literal notranslate"><span class="pre">__promise</span></code> and <code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code>
+variable by default. The variables are still present, but they need to be
+explicitly added to the “watch” pane in VS Code or requested via
+<code class="docutils literal notranslate"><span class="pre">print</span> <span class="pre">__promise</span></code> and <code class="docutils literal notranslate"><span class="pre">print</span> <span class="pre">__coro_frame</span></code> from the debugger console.</p>
+<p>LLDB before 16.0 did not yet provide a pretty-printer for
+<code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code>. To inspect the coroutine handle, you had to manually
+use the approach described in the <a class="reference internal" href="#devirtualization"><span class="std std-ref">Devirtualization of coroutine handles</span></a>
+section.</p>
+</section>
+<section id="toolchain-implementation-details">
+<h2><a class="toc-backref" href="#id14" role="doc-backlink">Toolchain Implementation Details</a><a class="headerlink" href="#toolchain-implementation-details" title="Link to this heading">¶</a></h2>
+<p>This section covers the ABI, as well as additional compiler-specific behavior.
+The ABI is followed by all compilers, on all major systems, including Windows,
+Linux and macOS. Different compilers emit different debug information, though.</p>
+<section id="ramp-resume-and-destroy-functions">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Ramp, resume and destroy functions</a><a class="headerlink" href="#ramp-resume-and-destroy-functions" title="Link to this heading">¶</a></h3>
+<p>Every coroutine is split into three parts:</p>
+<ul class="simple">
+<li><p>The ramp function allocates the coroutine frame and initializes it, usually
+copying over all variables into the coroutine frame</p></li>
+<li><p>The resume function continues the coroutine from its previous suspension point</p></li>
+<li><p>The destroy function destroys and deallocates the coroutine frame</p></li>
+<li><p>The cleanup function destroys the coroutine frame but does not deallocate it.
+It is used when the coroutine’s allocation was elided thanks to
+<a class="reference external" href="https://www.open-std.org/JTC1/SC22/WG21/docs/papers/2018/p0981r0.html">Heap Allocation Elision (HALO)</a></p></li>
+</ul>
+<p>The ramp function is called by the coroutine’s caller, and available under the
+original function name used in the C++ source code. The resume function is
+called via <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle::resume</span></code>. The destroy function is called
+via <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle::destroy</span></code>.</p>
+<p>Information between the three functions is passed via the coroutine frame, a
+compiler-synthesized struct that contains all necessary internal state. The
+resume function knows where to resume execution by reading the suspension point
+index from the coroutine frame. Similarly, the destroy function relies on the
+suspension point index to know which variables are currently in scope and need
+to be destructed.</p>
+<p>Usually, the destroy function calls all destructors and deallocates the
+coroutine frame. When a coroutine frame was elided thanks to HALO, only the
+destructors need to be called, but the coroutine frame must not be deallocated.
+In those cases, the cleanup function is used instead of the destroy function.</p>
+<p>For coroutines allocated with <code class="docutils literal notranslate"><span class="pre">[[clang::coro_await_elidable]]</span></code>, clang also
+generates a <code class="docutils literal notranslate"><span class="pre">.noalloc</span></code> variant of the ramp function, which does not allocate
+the coroutine frame by itself, but instead expects the caller to allocate the
+coroutine frame and pass it to the ramp function.</p>
+<p>When trying to intercept all creations of new coroutines in the debugger, you
+hence might have to set breakpoints in the ramp function and its <code class="docutils literal notranslate"><span class="pre">.noalloc</span></code>
+variant.</p>
+</section>
+<section id="artificial-promise-and-coro-frame-variables">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Artificial <code class="docutils literal notranslate"><span class="pre">__promise</span></code> and <code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> variables</a><a class="headerlink" href="#artificial-promise-and-coro-frame-variables" title="Link to this heading">¶</a></h3>
+<p>Inside all coroutine functions, clang / LLVM synthesize a <code class="docutils literal notranslate"><span class="pre">__promise</span></code> and
+<code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> variable. These variables are used to store the coroutine’s
+state. When inside the coroutine function, those can be used to directly
+inspect the promise and the coroutine frame of the own function.</p>
+</section>
+<section id="the-abi-of-a-coroutine">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">The ABI of a coroutine</a><a class="headerlink" href="#the-abi-of-a-coroutine" title="Link to this heading">¶</a></h3>
+<p>A <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code> essentially only holds a pointer to a coroutine
+frame. It resembles the following struct:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">promise_type</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">coroutine_handle</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">__coroutine_frame</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">nullptr</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>The structure of coroutine frames is defined as</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">my_coroutine_frame</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">__resume</span><span class="p">)(</span><span class="n">coroutine_frame</span><span class="o">*</span><span class="p">);</span><span class="w"> </span><span class="c1">// function pointer to the `resume` function</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">__destroy</span><span class="p">)(</span><span class="n">coroutine_frame</span><span class="o">*</span><span class="p">);</span><span class="w"> </span><span class="c1">// function pointer to the `destroy` function</span>
+<span class="w">  </span><span class="n">promise_type</span><span class="w"> </span><span class="n">promise</span><span class="p">;</span><span class="w"> </span><span class="c1">// the corresponding `promise_type`</span>
+<span class="w">  </span><span class="p">...</span><span class="w"> </span><span class="c1">// Internal coroutine state</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>For each coroutine, the compiler synthesizes a different coroutine type,
+storing all necessary internal state. The actual coroutine type is type-erased
+behind the <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code>.</p>
+<p>However, all coroutine frames always contain the <code class="docutils literal notranslate"><span class="pre">resume</span></code> and <code class="docutils literal notranslate"><span class="pre">destroy</span></code>
+functions as their first two members. As such, we can read the function
+pointers from the coroutine frame and then obtain the function’s name from its
+address.</p>
+<p>The promise is guaranteed to be at a 16 byte offset from the coroutine frame.
+If we have a coroutine handle at address 0x416eb0, we can hence reinterpret-cast
+the promise as follows:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>print (task::promise_type)*(0x416eb0+16)
+</pre></div>
+</div>
+</section>
+<section id="implementation-in-clang-llvm">
+<h3><a class="toc-backref" href="#id18" role="doc-backlink">Implementation in clang / LLVM</a><a class="headerlink" href="#implementation-in-clang-llvm" title="Link to this heading">¶</a></h3>
+<p>The C++ Coroutines feature in the Clang compiler is implemented in two parts of
+the compiler. Semantic analysis is performed in Clang, and Coroutine
+construction and optimization takes place in the LLVM middle-end.</p>
+<p>For each coroutine function, the frontend generates a single corresponding
+LLVM-IR function. This function uses special <code class="docutils literal notranslate"><span class="pre">llvm.coro.suspend</span></code> intrinsics
+to mark the suspension points of the coroutine. The middle end first optimizes
+this function and applies, e.g., constant propagation across the whole,
+non-split coroutine.</p>
+<p>CoroSplit then splits the function into ramp, resume and destroy functions.
+This pass also moves stack-local variables which are alive across suspension
+points into the coroutine frame. Most of the heavy lifting to preserve debugging
+information is done in this pass. This pass needs to rewrite all variable
+locations to point into the coroutine frame.</p>
+<p>Afterwards, a couple of additional optimizations are applied, before code
+gets emitted, but none of them are really interesting regarding debugging
+information.</p>
+<p>For more details on the IR representation of coroutines and the relevant
+optimization passes, see <a class="reference external" href="https://llvm.org/docs/Coroutines.html">Coroutines in LLVM</a>.</p>
+<p>Emitting debug information inside <code class="docutils literal notranslate"><span class="pre">CoroSplit</span></code> forces us to generate
+insufficient debugging information. Usually, the compiler generates debug
+information in the frontend, as debug information is highly language specific.
+However, this is not possible for coroutine frames because the frames are
+constructed in the LLVM middle-end.</p>
+<p>To mitigate this problem, the LLVM middle end attempts to generate some debug
+information, which is unfortunately incomplete, since much of the language
+specific information is missing in the middle end.</p>
+</section>
+<section id="devirtualization-of-coroutine-handles">
+<span id="devirtualization"></span><h3><a class="toc-backref" href="#id19" role="doc-backlink">Devirtualization of coroutine handles</a><a class="headerlink" href="#devirtualization-of-coroutine-handles" title="Link to this heading">¶</a></h3>
+<p>Figuring out the promise type and the coroutine frame type of a coroutine
+handle requires inspecting the <code class="docutils literal notranslate"><span class="pre">resume</span></code> and <code class="docutils literal notranslate"><span class="pre">destroy</span></code> function pointers.
+There are two possible approaches to do so:</p>
+<ol class="arabic simple">
+<li><p>clang always names the type by appending <code class="docutils literal notranslate"><span class="pre">.coro_frame_ty</span></code> to the
+linkage name of the ramp function.</p></li>
+<li><p>Both clang and GCC add the function-local <code class="docutils literal notranslate"><span class="pre">__promise</span></code> and
+<code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> variables to the resume and destroy functions.
+We can lookup their types and thereby get the types of promise
+and coroutine frame.</p></li>
+</ol>
+<p>In gdb, one can use the following approach to devirtualize coroutine type,
+assuming we have a <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code> is at address 0x418eb0:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>(gdb) # Get the address of coroutine frame
+(gdb) print/x *0x418eb0
+$1 = 0x4019e0
+(gdb) # Get the linkage name for the coroutine
+(gdb) x 0x4019e0
+0x4019e0 &lt;_ZL9coro_taski&gt;:  0xe5894855
+(gdb) # Turn off the demangler temporarily to avoid the debugger misunderstanding the name.
+(gdb) set demangle-style none
+(gdb) # The coroutine frame type is &#39;linkage_name.coro_frame_ty&#39;
+(gdb) print  (&#39;_ZL9coro_taski.coro_frame_ty&#39;)*(0x418eb0)
+$2 = {__resume_fn = 0x4019e0 &lt;coro_task(int)&gt;, __destroy_fn = 0x402000 &lt;coro_task(int)&gt;, __promise = {...}, ...}
+</pre></div>
+</div>
+<p>In practice, one would use the <code class="docutils literal notranslate"><span class="pre">show-coro-frame</span></code> command provided by the
+<a class="reference internal" href="#gdb-script"><span class="std std-ref">GDB Debugger Script</span></a>.</p>
+<p>LLDB comes with devirtualization support out of the box, as part of the
+pretty-printer for <code class="docutils literal notranslate"><span class="pre">std::coroutine_handle</span></code>. Internally, this pretty-printer
+uses the second approach. We look up the types in the destroy function and not
+the resume function because the resume function pointer will be set to a
+nullptr as soon as a coroutine reaches its final suspension point. If we used
+the resume function, devirtualization would hence fail for all coroutines that
+have reached their final suspension point.</p>
+</section>
+<section id="interpreting-the-coroutine-frame-in-optimized-builds">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">Interpreting the coroutine frame in optimized builds</a><a class="headerlink" href="#interpreting-the-coroutine-frame-in-optimized-builds" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> variable usually refers to the coroutine frame of an
+<em>in-flight</em> coroutine. This means, the coroutine is currently executing.
+However, the compiler only guarantees the coroutine frame to be in a consistent
+state while the coroutine is suspended. As such, the variables inside the
+<code class="docutils literal notranslate"><span class="pre">__coro_frame</span></code> variable might be outdated, in particular when optimizations
+are enabled.</p>
+<p>Furthermore, when optimizations are enabled, the compiler will layout the
+coroutine frame more aggressively. Unused values are optimized out, and the
+state will usually contain only the minimal information required to reconstruct
+the coroutine’s state.</p>
+<p>clang / LLVM usually use variables like <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> to represent this
+optimized storage. Those values usually do not directly correspond to variables
+in the source code.</p>
+<p>When compiling the program</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">coro_task</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">some_other_task</span><span class="p">();</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is 43 here</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is still 43 here</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is still 43 here!</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">some_other_task</span><span class="p">();</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// __int_32_0 is still 43 here!!</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">a</span><span class="o">++</span><span class="p">;</span><span class="w"> </span><span class="c1">// Why is __int_32_0 still 43 here?</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>clang creates a single entry <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> in the coroutine state.</p>
+<p>Intuitively, one might assume that <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> represents the value of the
+local variable <code class="docutils literal notranslate"><span class="pre">a</span></code>. However, inspecting <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> in the debugger while
+single-stepping will reveal that the value of <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> stays constant,
+despite <code class="docutils literal notranslate"><span class="pre">a</span></code> being frequently incremented.</p>
+<p>While this might be surprising, this is a result of the optimizer recognizing
+that it can eliminate most of the load/store operations.
+The above code gets optimized to the equivalent of:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">static</span><span class="w"> </span><span class="n">task</span><span class="w"> </span><span class="nf">coro_task</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">store</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="n">into</span><span class="w"> </span><span class="n">__int_32_0</span><span class="w"> </span><span class="n">in</span><span class="w"> </span><span class="n">the</span><span class="w"> </span><span class="n">frame</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load</span><span class="w"> </span><span class="n">__int_32_0</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">2</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">3</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">await_counter</span><span class="p">{};</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load</span><span class="w"> </span><span class="n">__int_32_0</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">4</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">cout</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">a</span><span class="o">+</span><span class="mi">5</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>It should now be obvious why the value of <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> remains unchanged
+throughout the function. It is important to recognize that <code class="docutils literal notranslate"><span class="pre">__int_32_0</span></code> does
+not directly correspond to <code class="docutils literal notranslate"><span class="pre">a</span></code>, but is instead a variable generated to assist
+the compiler in code generation. The variables in an optimized coroutine frame
+should not be thought of as directly representing the variables in the C++
+source.</p>
+</section>
+</section>
+<section id="resources">
+<h2><a class="toc-backref" href="#id21" role="doc-backlink">Resources</a><a class="headerlink" href="#resources" title="Link to this heading">¶</a></h2>
+<section id="lldb-debugger-script">
+<span id="lldb-script"></span><h3><a class="toc-backref" href="#id22" role="doc-backlink">LLDB Debugger Script</a><a class="headerlink" href="#lldb-debugger-script" title="Link to this heading">¶</a></h3>
+<p>The following script provides the <code class="docutils literal notranslate"><span class="pre">coro</span> <span class="pre">bt</span></code> and <code class="docutils literal notranslate"><span class="pre">coro</span> <span class="pre">in-flight</span></code> commands
+discussed above. It can be loaded into LLDB using <code class="docutils literal notranslate"><span class="pre">command</span> <span class="pre">script</span> <span class="pre">import</span>
+<span class="pre">lldb_coro_debugging.py</span></code>. To load this by default, add this command to your
+<code class="docutils literal notranslate"><span class="pre">~/.lldbinit</span></code> file.</p>
+<p>Note that this script requires LLDB 21.0 or newer.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># lldb_coro_debugging.py</span>
+<span class="kn">import</span> <span class="nn">lldb</span>
+<span class="kn">from</span> <span class="nn">lldb.plugins.parsed_cmd</span> <span class="kn">import</span> <span class="n">ParsedCommand</span>
+
+<span class="k">def</span> <span class="nf">_get_first_var_path</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">paths</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Tries multiple variable paths via `GetValueForExpressionPath`</span>
+<span class="sd">    and returns the first one that succeeds, or None if none succeed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">:</span>
+        <span class="n">var</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">GetValueForExpressionPath</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">var</span><span class="o">.</span><span class="n">error</span><span class="o">.</span><span class="n">Success</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">var</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span> <span class="nf">_print_async_bt</span><span class="p">(</span><span class="n">coro_hdl</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">curr_idx</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">limit</span><span class="p">,</span> <span class="n">continuation_paths</span><span class="p">,</span> <span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Prints a backtrace for an async coroutine stack starting from `coro_hdl`,</span>
+<span class="sd">    using the given `continuation_paths` to get the next coroutine from the promise.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">GetTarget</span><span class="p">()</span>
+    <span class="k">while</span> <span class="n">curr_idx</span> <span class="o">&lt;</span> <span class="n">limit</span> <span class="ow">and</span> <span class="n">coro_hdl</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">error</span><span class="o">.</span><span class="n">Success</span><span class="p">():</span>
+        <span class="c1"># Print the stack frame, if in range</span>
+        <span class="k">if</span> <span class="n">curr_idx</span> <span class="o">&gt;=</span> <span class="n">start</span><span class="p">:</span>
+            <span class="c1"># Figure out the function name</span>
+            <span class="n">destroy_func_var</span> <span class="o">=</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">GetValueForExpressionPath</span><span class="p">(</span><span class="s2">&quot;.destroy&quot;</span><span class="p">)</span>
+            <span class="n">destroy_addr</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">ResolveLoadAddress</span><span class="p">(</span><span class="n">destroy_func_var</span><span class="o">.</span><span class="n">GetValueAsAddress</span><span class="p">())</span>
+            <span class="n">func_name</span> <span class="o">=</span> <span class="n">destroy_addr</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">name</span>
+            <span class="c1"># Figure out the line entry to show</span>
+            <span class="n">suspension_addr_var</span> <span class="o">=</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">GetValueForExpressionPath</span><span class="p">(</span><span class="s2">&quot;.promise._coro_suspension_point_addr&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">suspension_addr_var</span><span class="o">.</span><span class="n">error</span><span class="o">.</span><span class="n">Success</span><span class="p">():</span>
+                <span class="n">line_entry</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">ResolveLoadAddress</span><span class="p">(</span><span class="n">suspension_addr_var</span><span class="o">.</span><span class="n">GetValueAsAddress</span><span class="p">())</span><span class="o">.</span><span class="n">line_entry</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2"> frame #</span><span class="si">{</span><span class="n">curr_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2"> at </span><span class="si">{</span><span class="n">line_entry</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">result</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># We don&#39;t know the exact line, print the suspension point ID, so we at least show</span>
+                <span class="c1"># the id of the current suspension point</span>
+                <span class="n">suspension_point_var</span> <span class="o">=</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">GetValueForExpressionPath</span><span class="p">(</span><span class="s2">&quot;.coro_frame.__coro_index&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">suspension_point_var</span><span class="o">.</span><span class="n">error</span><span class="o">.</span><span class="n">Success</span><span class="p">():</span>
+                    <span class="n">suspension_point</span> <span class="o">=</span> <span class="n">suspension_point_var</span><span class="o">.</span><span class="n">GetValueAsUnsigned</span><span class="p">()</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">suspension_point</span> <span class="o">=</span> <span class="s2">&quot;unknown&quot;</span>
+                <span class="n">line_entry</span> <span class="o">=</span> <span class="n">destroy_addr</span><span class="o">.</span><span class="n">line_entry</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2"> frame #</span><span class="si">{</span><span class="n">curr_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2"> at </span><span class="si">{</span><span class="n">line_entry</span><span class="si">}</span><span class="s2">, suspension point </span><span class="si">{</span><span class="n">suspension_point</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">result</span><span class="p">)</span>
+        <span class="c1"># Move to the next stack frame</span>
+        <span class="n">curr_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">promise_var</span> <span class="o">=</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">GetChildMemberWithName</span><span class="p">(</span><span class="s2">&quot;promise&quot;</span><span class="p">)</span>
+        <span class="n">coro_hdl</span> <span class="o">=</span> <span class="n">_get_first_var_path</span><span class="p">(</span><span class="n">promise_var</span><span class="p">,</span> <span class="n">continuation_paths</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">curr_idx</span>
+
+<span class="k">def</span> <span class="nf">_print_combined_bt</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">unfiltered</span><span class="p">,</span> <span class="n">curr_idx</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">limit</span><span class="p">,</span> <span class="n">continuation_paths</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Prints a backtrace starting from `frame`, interleaving async coroutine frames</span>
+<span class="sd">    with regular frames.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">while</span> <span class="n">curr_idx</span> <span class="o">&lt;</span> <span class="n">limit</span> <span class="ow">and</span> <span class="n">frame</span><span class="o">.</span><span class="n">IsValid</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">curr_idx</span> <span class="o">&gt;=</span> <span class="n">start</span> <span class="ow">and</span> <span class="p">(</span><span class="n">unfiltered</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">frame</span><span class="o">.</span><span class="n">IsHidden</span><span class="p">()):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;frame #</span><span class="si">{</span><span class="n">curr_idx</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">frame</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> at </span><span class="si">{</span><span class="n">frame</span><span class="o">.</span><span class="n">line_entry</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">result</span><span class="p">)</span>
+        <span class="n">curr_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">coro_var</span> <span class="o">=</span> <span class="n">_get_first_var_path</span><span class="p">(</span><span class="n">frame</span><span class="o">.</span><span class="n">GetValueForVariablePath</span><span class="p">(</span><span class="s2">&quot;__promise&quot;</span><span class="p">),</span> <span class="n">continuation_paths</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">coro_var</span><span class="p">:</span>
+            <span class="n">curr_idx</span> <span class="o">=</span> <span class="n">_print_async_bt</span><span class="p">(</span><span class="n">coro_var</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span>
+                <span class="n">curr_idx</span><span class="o">=</span><span class="n">curr_idx</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
+                <span class="n">continuation_paths</span><span class="o">=</span><span class="n">continuation_paths</span><span class="p">,</span> <span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;[async]&quot;</span><span class="p">)</span>
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">parent</span>
+
+
+<span class="k">class</span> <span class="nc">CoroBacktraceCommand</span><span class="p">(</span><span class="n">ParsedCommand</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">get_short_help</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;Create a backtrace for C++-20 coroutines&quot;</span>
+
+    <span class="k">def</span> <span class="nf">get_flags</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eCommandRequiresFrame</span> <span class="o">|</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eCommandProcessMustBePaused</span>
+
+    <span class="k">def</span> <span class="nf">setup_command_definition</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">ov_parser</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_parser</span><span class="p">()</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_option</span><span class="p">(</span>
+            <span class="s2">&quot;e&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;continuation-expr&quot;</span><span class="p">,</span>
+            <span class="n">help</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="s2">&quot;Semi-colon-separated list of expressions evaluated against the promise object&quot;</span>
+                <span class="s2">&quot;to get the next coroutine (e.g. `.continuation;.coro_parent`)&quot;</span>
+            <span class="p">),</span>
+            <span class="n">value_type</span> <span class="o">=</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeNone</span><span class="p">,</span>
+            <span class="n">dest</span> <span class="o">=</span> <span class="s2">&quot;continuation_expr_arg&quot;</span><span class="p">,</span>
+            <span class="n">default</span> <span class="o">=</span> <span class="s2">&quot;.continuation&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_option</span><span class="p">(</span>
+            <span class="s2">&quot;c&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;count&quot;</span><span class="p">,</span>
+            <span class="n">help</span> <span class="o">=</span> <span class="s2">&quot;How many frames to display (0 for all)&quot;</span><span class="p">,</span>
+            <span class="n">value_type</span> <span class="o">=</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeCount</span><span class="p">,</span>
+            <span class="n">dest</span> <span class="o">=</span> <span class="s2">&quot;count_arg&quot;</span><span class="p">,</span>
+            <span class="n">default</span> <span class="o">=</span> <span class="mi">20</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_option</span><span class="p">(</span>
+            <span class="s2">&quot;s&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;start&quot;</span><span class="p">,</span>
+            <span class="n">help</span> <span class="o">=</span> <span class="s2">&quot;Frame in which to start the backtrace&quot;</span><span class="p">,</span>
+            <span class="n">value_type</span> <span class="o">=</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeIndex</span><span class="p">,</span>
+            <span class="n">dest</span> <span class="o">=</span> <span class="s2">&quot;frame_index_arg&quot;</span><span class="p">,</span>
+            <span class="n">default</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_option</span><span class="p">(</span>
+            <span class="s2">&quot;u&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;unfiltered&quot;</span><span class="p">,</span>
+            <span class="n">help</span> <span class="o">=</span> <span class="s2">&quot;Do not filter out frames according to installed frame recognizers&quot;</span><span class="p">,</span>
+            <span class="n">value_type</span> <span class="o">=</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeBoolean</span><span class="p">,</span>
+            <span class="n">dest</span> <span class="o">=</span> <span class="s2">&quot;unfiltered_arg&quot;</span><span class="p">,</span>
+            <span class="n">default</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_argument_set</span><span class="p">([</span>
+            <span class="n">ov_parser</span><span class="o">.</span><span class="n">make_argument_element</span><span class="p">(</span>
+                <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeExpression</span><span class="p">,</span>
+                <span class="n">repeat</span><span class="o">=</span><span class="s2">&quot;optional&quot;</span>
+            <span class="p">)</span>
+        <span class="p">])</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">debugger</span><span class="p">,</span> <span class="n">args_array</span><span class="p">,</span> <span class="n">exe_ctx</span><span class="p">,</span> <span class="n">result</span><span class="p">):</span>
+        <span class="n">ov_parser</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_parser</span><span class="p">()</span>
+        <span class="n">continuation_paths</span> <span class="o">=</span> <span class="n">ov_parser</span><span class="o">.</span><span class="n">continuation_expr_arg</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;;&quot;</span><span class="p">)</span>
+        <span class="n">count</span> <span class="o">=</span> <span class="n">ov_parser</span><span class="o">.</span><span class="n">count_arg</span>
+        <span class="k">if</span> <span class="n">count</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">count</span> <span class="o">=</span> <span class="mi">99999</span>
+        <span class="n">frame_index</span> <span class="o">=</span> <span class="n">ov_parser</span><span class="o">.</span><span class="n">frame_index_arg</span>
+        <span class="n">unfiltered</span> <span class="o">=</span> <span class="n">ov_parser</span><span class="o">.</span><span class="n">unfiltered_arg</span>
+
+        <span class="n">frame</span> <span class="o">=</span> <span class="n">exe_ctx</span><span class="o">.</span><span class="n">GetFrame</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">frame</span><span class="o">.</span><span class="n">IsValid</span><span class="p">():</span>
+            <span class="n">result</span><span class="o">.</span><span class="n">SetError</span><span class="p">(</span><span class="s2">&quot;invalid frame&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args_array</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">result</span><span class="o">.</span><span class="n">SetError</span><span class="p">(</span><span class="s2">&quot;At most one expression expected&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">args_array</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">args_array</span><span class="o">.</span><span class="n">GetItemAtIndex</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">GetStringValue</span><span class="p">(</span><span class="mi">9999</span><span class="p">)</span>
+            <span class="n">coro_hdl</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">EvaluateExpression</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">coro_hdl</span><span class="o">.</span><span class="n">error</span><span class="o">.</span><span class="n">Success</span><span class="p">():</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">AppendMessage</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s1">&#39;error: expression failed </span><span class="si">{</span><span class="n">expr</span><span class="si">}</span><span class="s1"> =&gt; </span><span class="si">{</span><span class="n">coro_hdl</span><span class="o">.</span><span class="n">error</span><span class="si">}</span><span class="s1">&#39;</span>
+                <span class="p">)</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">SetError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expression `</span><span class="si">{</span><span class="n">expr</span><span class="si">}</span><span class="s2">` failed to evaluate&quot;</span><span class="p">)</span>
+                <span class="k">return</span>
+            <span class="n">_print_async_bt</span><span class="p">(</span><span class="n">coro_hdl</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span>
+                <span class="n">curr_idx</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">start</span> <span class="o">=</span> <span class="n">frame_index</span><span class="p">,</span> <span class="n">limit</span> <span class="o">=</span> <span class="n">frame_index</span> <span class="o">+</span> <span class="n">count</span><span class="p">,</span>
+                <span class="n">continuation_paths</span> <span class="o">=</span> <span class="n">continuation_paths</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_print_combined_bt</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">unfiltered</span><span class="o">=</span><span class="n">unfiltered</span><span class="p">,</span>
+                <span class="n">curr_idx</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">start</span> <span class="o">=</span> <span class="n">frame_index</span><span class="p">,</span> <span class="n">limit</span> <span class="o">=</span> <span class="n">frame_index</span> <span class="o">+</span> <span class="n">count</span><span class="p">,</span>
+                <span class="n">continuation_paths</span> <span class="o">=</span> <span class="n">continuation_paths</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">CoroInflightCommand</span><span class="p">(</span><span class="n">ParsedCommand</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">get_short_help</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;Identify all in-flight coroutines&quot;</span>
+
+    <span class="k">def</span> <span class="nf">get_flags</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eCommandRequiresTarget</span> <span class="o">|</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eCommandProcessMustBePaused</span>
+
+    <span class="k">def</span> <span class="nf">setup_command_definition</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">ov_parser</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_parser</span><span class="p">()</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_option</span><span class="p">(</span>
+            <span class="s2">&quot;e&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;continuation-expr&quot;</span><span class="p">,</span>
+            <span class="n">help</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="s2">&quot;Semi-colon-separated list of expressions evaluated against the promise object&quot;</span>
+                <span class="s2">&quot;to get the next coroutine (e.g. `.continuation;.coro_parent`)&quot;</span>
+            <span class="p">),</span>
+            <span class="n">value_type</span> <span class="o">=</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeNone</span><span class="p">,</span>
+            <span class="n">dest</span> <span class="o">=</span> <span class="s2">&quot;continuation_expr_arg&quot;</span><span class="p">,</span>
+            <span class="n">default</span> <span class="o">=</span> <span class="s2">&quot;.continuation&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_option</span><span class="p">(</span>
+            <span class="s2">&quot;c&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;count&quot;</span><span class="p">,</span>
+            <span class="n">help</span> <span class="o">=</span> <span class="s2">&quot;How many frames to display (0 for all)&quot;</span><span class="p">,</span>
+            <span class="n">value_type</span> <span class="o">=</span> <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeCount</span><span class="p">,</span>
+            <span class="n">dest</span> <span class="o">=</span> <span class="s2">&quot;count_arg&quot;</span><span class="p">,</span>
+            <span class="n">default</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">ov_parser</span><span class="o">.</span><span class="n">add_argument_set</span><span class="p">([</span>
+            <span class="n">ov_parser</span><span class="o">.</span><span class="n">make_argument_element</span><span class="p">(</span>
+                <span class="n">lldb</span><span class="o">.</span><span class="n">eArgTypeExpression</span><span class="p">,</span>
+                <span class="n">repeat</span><span class="o">=</span><span class="s2">&quot;plus&quot;</span>
+            <span class="p">)</span>
+        <span class="p">])</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">debugger</span><span class="p">,</span> <span class="n">args_array</span><span class="p">,</span> <span class="n">exe_ctx</span><span class="p">,</span> <span class="n">result</span><span class="p">):</span>
+        <span class="n">ov_parser</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_parser</span><span class="p">()</span>
+        <span class="n">continuation_paths</span> <span class="o">=</span> <span class="n">ov_parser</span><span class="o">.</span><span class="n">continuation_expr_arg</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;;&quot;</span><span class="p">)</span>
+        <span class="n">count</span> <span class="o">=</span> <span class="n">ov_parser</span><span class="o">.</span><span class="n">count_arg</span>
+
+        <span class="c1"># Collect all coroutine_handles from the provided containers</span>
+        <span class="n">all_coros</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">args_array</span><span class="p">:</span>
+            <span class="n">expr</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">GetStringValue</span><span class="p">(</span><span class="mi">9999</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">exe_ctx</span><span class="o">.</span><span class="n">frame</span><span class="o">.</span><span class="n">IsValid</span><span class="p">():</span>
+                <span class="n">coro_container</span> <span class="o">=</span> <span class="n">exe_ctx</span><span class="o">.</span><span class="n">frame</span><span class="o">.</span><span class="n">EvaluateExpression</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">coro_container</span> <span class="o">=</span> <span class="n">exe_ctx</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">EvaluateExpression</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">coro_container</span><span class="o">.</span><span class="n">error</span><span class="o">.</span><span class="n">Success</span><span class="p">():</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">AppendMessage</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s1">&#39;error: expression failed </span><span class="si">{</span><span class="n">expr</span><span class="si">}</span><span class="s1"> =&gt; </span><span class="si">{</span><span class="n">coro_container</span><span class="o">.</span><span class="n">error</span><span class="si">}</span><span class="s1">&#39;</span>
+                <span class="p">)</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">SetError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expression `</span><span class="si">{</span><span class="n">expr</span><span class="si">}</span><span class="s2">` failed to evaluate&quot;</span><span class="p">)</span>
+                <span class="k">return</span>
+            <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">coro_container</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+                <span class="k">if</span> <span class="s2">&quot;coroutine_handle&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">entry</span><span class="o">.</span><span class="n">GetType</span><span class="p">()</span><span class="o">.</span><span class="n">name</span><span class="p">:</span>
+                    <span class="n">result</span><span class="o">.</span><span class="n">SetError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found entry of type </span><span class="si">{</span><span class="n">entry</span><span class="o">.</span><span class="n">GetType</span><span class="p">()</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> in </span><span class="si">{</span><span class="n">expr</span><span class="si">}</span><span class="s2">,&quot;</span>
+                                    <span class="s2">&quot;  expected a coroutine handle&quot;</span><span class="p">)</span>
+                    <span class="k">return</span>
+                <span class="n">all_coros</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+
+        <span class="c1"># Remove all coroutines that are currently waiting for other coroutines to finish</span>
+        <span class="n">coro_roots</span> <span class="o">=</span> <span class="p">{</span><span class="n">c</span><span class="o">.</span><span class="n">GetChildMemberWithName</span><span class="p">(</span><span class="s2">&quot;coro_frame&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">GetValueAsAddress</span><span class="p">():</span> <span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">all_coros</span><span class="p">}</span>
+        <span class="k">for</span> <span class="n">coro_hdl</span> <span class="ow">in</span> <span class="n">all_coros</span><span class="p">:</span>
+            <span class="n">parent_coro</span> <span class="o">=</span> <span class="n">_get_first_var_path</span><span class="p">(</span><span class="n">coro_hdl</span><span class="o">.</span><span class="n">GetChildMemberWithName</span><span class="p">(</span><span class="s2">&quot;promise&quot;</span><span class="p">),</span> <span class="n">continuation_paths</span><span class="p">)</span>
+            <span class="n">parent_addr</span> <span class="o">=</span> <span class="n">parent_coro</span><span class="o">.</span><span class="n">GetChildMemberWithName</span><span class="p">(</span><span class="s2">&quot;coro_frame&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">GetValueAsAddress</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">parent_addr</span> <span class="ow">in</span> <span class="n">coro_roots</span><span class="p">:</span>
+                <span class="k">del</span> <span class="n">coro_roots</span><span class="p">[</span><span class="n">parent_addr</span><span class="p">]</span>
+
+        <span class="c1"># Print all remaining coroutines</span>
+        <span class="k">for</span> <span class="n">addr</span><span class="p">,</span> <span class="n">root_hdl</span> <span class="ow">in</span> <span class="n">coro_roots</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;coroutine root 0x</span><span class="si">{</span><span class="n">addr</span><span class="si">:</span><span class="s2">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">file</span><span class="o">=</span><span class="n">result</span><span class="p">)</span>
+            <span class="n">_print_async_bt</span><span class="p">(</span><span class="n">root_hdl</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span>
+                            <span class="n">curr_idx</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="n">count</span><span class="p">,</span>
+                            <span class="n">continuation_paths</span><span class="o">=</span><span class="n">continuation_paths</span><span class="p">,</span> <span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;    &quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">__lldb_init_module</span><span class="p">(</span><span class="n">debugger</span><span class="p">,</span> <span class="n">internal_dict</span><span class="p">):</span>
+    <span class="n">debugger</span><span class="o">.</span><span class="n">HandleCommand</span><span class="p">(</span><span class="s2">&quot;command container add -h &#39;Debugging utilities for C++20 coroutines&#39; coro&quot;</span><span class="p">)</span>
+    <span class="n">debugger</span><span class="o">.</span><span class="n">HandleCommand</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;command script add -o -p -c </span><span class="si">{</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.CoroBacktraceCommand coro bt&quot;</span><span class="p">)</span>
+    <span class="n">debugger</span><span class="o">.</span><span class="n">HandleCommand</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;command script add -o -p -c </span><span class="si">{</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.CoroInflightCommand coro in-flight&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Coro debugging utilities installed. Use `help coro` to see available commands.&quot;</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;This script should be loaded from LLDB using `command script import &lt;filename&gt;`&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="gdb-debugger-script">
+<span id="gdb-script"></span><h3><a class="toc-backref" href="#id23" role="doc-backlink">GDB Debugger Script</a><a class="headerlink" href="#gdb-debugger-script" title="Link to this heading">¶</a></h3>
+<p>For GDB, the following script provides a couple of useful commands:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">async-bt</span></code> to print the stack trace of a coroutine</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">show-coro-frame</span></code> to print the coroutine frame, similar to
+LLDB’s builtin pretty-printer for coroutine frames</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># debugging-helper.py</span>
+<span class="kn">import</span> <span class="nn">gdb</span>
+<span class="kn">from</span> <span class="nn">gdb.FrameDecorator</span> <span class="kn">import</span> <span class="n">FrameDecorator</span>
+
+<span class="k">class</span> <span class="nc">SymValueWrapper</span><span class="p">():</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">symbol</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sym</span> <span class="o">=</span> <span class="n">symbol</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">val</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sym</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; = &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">val</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">get_long_pointer_size</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">gdb</span><span class="o">.</span><span class="n">lookup_type</span><span class="p">(</span><span class="s1">&#39;long&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">pointer</span><span class="p">()</span><span class="o">.</span><span class="n">sizeof</span>
+
+<span class="k">def</span> <span class="nf">cast_addr2long_pointer</span><span class="p">(</span><span class="n">addr</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">gdb</span><span class="o">.</span><span class="n">Value</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">gdb</span><span class="o">.</span><span class="n">lookup_type</span><span class="p">(</span><span class="s1">&#39;long&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">pointer</span><span class="p">())</span>
+
+<span class="k">def</span> <span class="nf">dereference</span><span class="p">(</span><span class="n">addr</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">long</span><span class="p">(</span><span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">dereference</span><span class="p">())</span>
+
+<span class="k">class</span> <span class="nc">CoroutineFrame</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task_addr</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frame_addr</span> <span class="o">=</span> <span class="n">task_addr</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resume_addr</span> <span class="o">=</span> <span class="n">task_addr</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">destroy_addr</span> <span class="o">=</span> <span class="n">task_addr</span> <span class="o">+</span> <span class="n">get_long_pointer_size</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promise_addr</span> <span class="o">=</span> <span class="n">task_addr</span> <span class="o">+</span> <span class="n">get_long_pointer_size</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span>
+        <span class="c1"># In the example, the continuation is the first field member of the promise_type.</span>
+        <span class="c1"># So they have the same addresses.</span>
+        <span class="c1"># If we want to generalize the scripts to other coroutine types, we need to be sure</span>
+        <span class="c1"># the continuation field is the first member of promise_type.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">continuation_addr</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">promise_addr</span>
+
+    <span class="k">def</span> <span class="nf">next_task_addr</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">dereference</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">continuation_addr</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">CoroutineFrameDecorator</span><span class="p">(</span><span class="n">FrameDecorator</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coro_frame</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">CoroutineFrameDecorator</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span> <span class="o">=</span> <span class="n">coro_frame</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span> <span class="o">=</span> <span class="n">dereference</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">resume_addr</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resume_func_block</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">block_for_pc</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resume_func_block</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s1">&#39;Not stackless coroutine.&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">line_info</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">find_pc_line</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">address</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resume_func</span>
+
+    <span class="k">def</span> <span class="nf">filename</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">line_info</span><span class="o">.</span><span class="n">symtab</span><span class="o">.</span><span class="n">filename</span>
+
+    <span class="k">def</span> <span class="nf">frame_args</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">SymValueWrapper</span><span class="p">(</span><span class="s2">&quot;frame_addr&quot;</span><span class="p">,</span> <span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">frame_addr</span><span class="p">)),</span>
+                <span class="n">SymValueWrapper</span><span class="p">(</span><span class="s2">&quot;promise_addr&quot;</span><span class="p">,</span> <span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">promise_addr</span><span class="p">)),</span>
+                <span class="n">SymValueWrapper</span><span class="p">(</span><span class="s2">&quot;continuation_addr&quot;</span><span class="p">,</span> <span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">continuation_addr</span><span class="p">))</span>
+                <span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">function</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resume_func_block</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">print_name</span>
+
+    <span class="k">def</span> <span class="nf">line</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">line_info</span><span class="o">.</span><span class="n">line</span>
+
+<span class="k">class</span> <span class="nc">StripDecorator</span><span class="p">(</span><span class="n">FrameDecorator</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">frame</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">StripDecorator</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span>
+        <span class="n">f</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">function</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">function_name</span> <span class="o">=</span> <span class="n">f</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">shift</span> <span class="o">=</span> <span class="mi">2</span><span class="p">):</span>
+        <span class="n">addr</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">address</span><span class="p">()</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="s1">&#39;</span><span class="si">%#x</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">address</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot; in &quot;</span>
+        <span class="n">location</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="p">()</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot; at &quot;</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot;:&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">line</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">addr</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">function</span><span class="p">()</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">([</span><span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="k">for</span> <span class="n">args</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">frame_args</span><span class="p">()])</span> <span class="o">+</span> <span class="n">location</span>
+
+<span class="k">class</span> <span class="nc">CoroutineFilter</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">create_coroutine_frames</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task_addr</span><span class="p">):</span>
+        <span class="n">frames</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">while</span> <span class="n">task_addr</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">coro_frame</span> <span class="o">=</span> <span class="n">CoroutineFrame</span><span class="p">(</span><span class="n">task_addr</span><span class="p">)</span>
+            <span class="n">frames</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">CoroutineFrameDecorator</span><span class="p">(</span><span class="n">coro_frame</span><span class="p">))</span>
+            <span class="n">task_addr</span> <span class="o">=</span> <span class="n">coro_frame</span><span class="o">.</span><span class="n">next_task_addr</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">frames</span>
+
+<span class="k">class</span> <span class="nc">AsyncStack</span><span class="p">(</span><span class="n">gdb</span><span class="o">.</span><span class="n">Command</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">AsyncStack</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="s2">&quot;async-bt&quot;</span><span class="p">,</span> <span class="n">gdb</span><span class="o">.</span><span class="n">COMMAND_USER</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">invoke</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg</span><span class="p">,</span> <span class="n">from_tty</span><span class="p">):</span>
+        <span class="n">coroutine_filter</span> <span class="o">=</span> <span class="n">CoroutineFilter</span><span class="p">()</span>
+        <span class="n">argv</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">string_to_argv</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">task</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">parse_and_eval</span><span class="p">(</span><span class="s1">&#39;__coro_frame&#39;</span><span class="p">)</span>
+                <span class="n">task</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">address</span><span class="p">),</span> <span class="mi">16</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;Can&#39;t find __coro_frame in current context.</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span>
+                      <span class="s2">&quot;Please use `async-bt` in stackless coroutine context.&quot;</span><span class="p">)</span>
+                <span class="k">return</span>
+        <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;usage: async-bt &lt;pointer to task&gt;&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">task</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span>
+
+        <span class="n">frames</span> <span class="o">=</span> <span class="n">coroutine_filter</span><span class="o">.</span><span class="n">create_coroutine_frames</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">frames</span><span class="p">:</span>
+            <span class="nb">print</span> <span class="s1">&#39;#&#39;</span><span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">StripDecorator</span><span class="p">(</span><span class="n">f</span><span class="p">))</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span>
+
+<span class="n">AsyncStack</span><span class="p">()</span>
+
+<span class="k">class</span> <span class="nc">ShowCoroFrame</span><span class="p">(</span><span class="n">gdb</span><span class="o">.</span><span class="n">Command</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ShowCoroFrame</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="s2">&quot;show-coro-frame&quot;</span><span class="p">,</span> <span class="n">gdb</span><span class="o">.</span><span class="n">COMMAND_USER</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">invoke</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg</span><span class="p">,</span> <span class="n">from_tty</span><span class="p">):</span>
+        <span class="n">argv</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">string_to_argv</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;usage: show-coro-frame &lt;address of coroutine frame&gt;&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">addr</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span>
+        <span class="n">block</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">block_for_pc</span><span class="p">(</span><span class="n">long</span><span class="p">(</span><span class="n">cast_addr2long_pointer</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">dereference</span><span class="p">()))</span>
+        <span class="k">if</span> <span class="n">block</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span> <span class="s2">&quot;block &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; is None.&quot;</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Disable demangling since gdb will treat names starting with `_Z`(The marker for Itanium ABI) specially.</span>
+        <span class="n">gdb</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;set demangle-style none&quot;</span><span class="p">)</span>
+
+        <span class="n">coro_frame_type</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">lookup_type</span><span class="p">(</span><span class="n">block</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">linkage_name</span> <span class="o">+</span> <span class="s2">&quot;.coro_frame_ty&quot;</span><span class="p">)</span>
+        <span class="n">coro_frame_ptr_type</span> <span class="o">=</span> <span class="n">coro_frame_type</span><span class="o">.</span><span class="n">pointer</span><span class="p">()</span>
+        <span class="n">coro_frame</span> <span class="o">=</span> <span class="n">gdb</span><span class="o">.</span><span class="n">Value</span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">coro_frame_ptr_type</span><span class="p">)</span><span class="o">.</span><span class="n">dereference</span><span class="p">()</span>
+
+        <span class="n">gdb</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;set demangle-style auto&quot;</span><span class="p">)</span>
+        <span class="n">gdb</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">coro_frame</span><span class="o">.</span><span class="n">format_string</span><span class="p">(</span><span class="n">pretty_structs</span> <span class="o">=</span> <span class="kc">True</span><span class="p">))</span>
+
+<span class="n">ShowCoroFrame</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="further-reading">
+<h3><a class="toc-backref" href="#id24" role="doc-backlink">Further Reading</a><a class="headerlink" href="#further-reading" title="Link to this heading">¶</a></h3>
+<p>The authors of the Folly libraries wrote a blog post series on how they debug coroutines:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://developers.facebook.com/blog/post/2021/09/16/async-stack-traces-folly-Introduction/">Async stack traces in folly: Introduction</a></p></li>
+<li><p><a class="reference external" href="https://developers.facebook.com/blog/post/2021/09/23/async-stack-traces-folly-synchronous-asynchronous-stack-traces/">Async stack traces in folly: Synchronous and asynchronous stack traces</a></p></li>
+<li><p><a class="reference external" href="https://developers.facebook.com/blog/post/2021/09/30/async-stack-traces-folly-forming-async-stack-individual-frames/">Async stack traces in folly: Forming an async stack from individual frames</a></p></li>
+<li><p><a class="reference external" href="https://developers.facebook.com/blog/post/2021/10/14/async-stack-traces-c-plus-plus-coroutines-folly-walking-async-stack/">Async Stack Traces for C++ Coroutines in Folly: Walking the async stack</a></p></li>
+<li><p><a class="reference external" href="https://developers.facebook.com/blog/post/2021/10/21/async-stack-traces-folly-improving-debugging-developer-lifecycle/">Async stack traces in folly: Improving debugging in the developer lifecycle</a></p></li>
+</ul>
+<p>Besides some topics also covered here (stack traces from the debugger), Folly’s blog post series also covers
+more additional topics, such as capturing async stack traces in performance profiles via eBPF filters
+and printing async stack traces on crashes.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="APINotes.html">API Notes: Annotations Without Modifying Headers</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AMDGPUSupport.html">AMDGPU Support</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

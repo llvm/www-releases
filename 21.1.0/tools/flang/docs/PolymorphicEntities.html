@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Polymorphic Entities &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1d8edcb3"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Fortran Preprocessing" href="Preprocessing.html" />
+    <link rel="prev" title="The F18 Parser" href="Parsing.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Polymorphic Entities</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Parsing.html">The F18 Parser</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Preprocessing.html">Fortran Preprocessing</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="polymorphic-entities">
+<h1>Polymorphic Entities<a class="headerlink" href="#polymorphic-entities" title="Link to this heading">¶</a></h1>
+<p>A polymorphic entity is a data entity that can be of different type during the
+execution of a program.</p>
+<p>This document aims to give insights at the representation of polymorphic
+entities in FIR and how polymorphic related constructs and features are lowered
+to FIR.</p>
+<section id="fortran-standard">
+<h2>Fortran standard<a class="headerlink" href="#fortran-standard" title="Link to this heading">¶</a></h2>
+<p>Here is a list of the sections and constraints of the Fortran standard involved
+for polymorphic entities.</p>
+<ul class="simple">
+<li><p>7.3.2.1 - 7.3.2.2: TYPE specifier (TYPE(*))</p>
+<ul>
+<li><p>C708</p></li>
+<li><p>C709</p></li>
+<li><p>C710</p></li>
+<li><p>C711</p></li>
+</ul>
+</li>
+<li><p>7.3.2.3: CLASS specifier</p></li>
+<li><p>7.5.4.5: The passed-object dummy argument</p>
+<ul>
+<li><p>C760</p></li>
+</ul>
+</li>
+<li><p>9.7.1: ALLOCATE statement</p>
+<ul>
+<li><p>C933</p></li>
+</ul>
+</li>
+<li><p>9.7.2: NULLIFY statement</p>
+<ul>
+<li><p>When a NULLIFY statement is applied to a polymorphic pointer (7.3.2.3),
+its dynamic type becomes the same as its declared type.</p></li>
+</ul>
+</li>
+<li><p>10.2.2.3: Data pointer assignment</p></li>
+<li><p>11.1.3: ASSOCIATE construct</p></li>
+<li><p>11.1.11: SELECT TYPE construct</p>
+<ul>
+<li><p>C1157</p></li>
+<li><p>C1158</p></li>
+<li><p>C1159</p></li>
+<li><p>C1160</p></li>
+<li><p>C1161</p></li>
+<li><p>C1162</p></li>
+<li><p>C1163</p></li>
+<li><p>C1164</p></li>
+<li><p>C1165</p></li>
+</ul>
+</li>
+<li><p>16.9.76 EXTENDS_TYPE_OF (A, MOLD)</p></li>
+<li><p>16.9.165 SAME_TYPE_AS (A, B)</p></li>
+<li><p>16.9.184 STORAGE_SIZE (A [, KIND])</p></li>
+<li><p>C.10.5 Polymorphic Argument Association (15.5.2.9)</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="representation-in-fir">
+<h2>Representation in FIR<a class="headerlink" href="#representation-in-fir" title="Link to this heading">¶</a></h2>
+<section id="polymorphic-entities-class-type1">
+<h3>Polymorphic entities <code class="docutils literal notranslate"><span class="pre">CLASS(type1)</span></code><a class="headerlink" href="#polymorphic-entities-class-type1" title="Link to this heading">¶</a></h3>
+<p>A polymorphic entity is represented as a class type in FIR. In the example below
+the dummy argument <code class="docutils literal notranslate"><span class="pre">p</span></code> is passed to the subroutine <code class="docutils literal notranslate"><span class="pre">foo</span></code> as a polymorphic entity
+with the extensible type <code class="docutils literal notranslate"><span class="pre">point</span></code>. The type information captured in the class is
+the best statically available at compile time.
+<code class="docutils literal notranslate"><span class="pre">!fir.class</span></code> is a new type introduced for polymorphic entities. It’s similar to
+a box type but allows the distinction between a monomorphic and a polymorphic
+descriptor.
+<code class="docutils literal notranslate"><span class="pre">!fir.class</span></code> and <code class="docutils literal notranslate"><span class="pre">!fir.box</span></code> are based on a same <code class="docutils literal notranslate"><span class="pre">BaseBoxType</span></code> similar to the
+<code class="docutils literal notranslate"><span class="pre">BaseMemRefType</span></code> done for MemRef.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">point</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>
+<span class="k">end type </span><span class="n">point</span>
+
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="n">point</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">point_3d</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">z</span>
+<span class="k">end type</span>
+
+<span class="k">subroutine </span><span class="n">foo</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">point</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+<span class="w">  </span><span class="c">! code of the subroutine</span>
+<span class="k">end subroutine</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @foo(%p : !fir.class&lt;!fir.type&lt;_QTpoint{x:f32,y:f32}&gt;&gt;)
+</pre></div>
+</div>
+</section>
+<section id="unlimited-polymorphic-entities-class">
+<h3>Unlimited polymorphic entities <code class="docutils literal notranslate"><span class="pre">CLASS(*)</span></code><a class="headerlink" href="#unlimited-polymorphic-entities-class" title="Link to this heading">¶</a></h3>
+<p>The unlimited polymorphic entity is represented as a class type with <code class="docutils literal notranslate"><span class="pre">none</span></code> as
+element type.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">bar</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">  </span><span class="c">! code of the subroutine</span>
+<span class="k">end subroutine</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @bar(%x : !fir.class&lt;none&gt;)
+</pre></div>
+</div>
+</section>
+<section id="assumed-type-type">
+<h3>Assumed-type <code class="docutils literal notranslate"><span class="pre">TYPE(*)</span></code><a class="headerlink" href="#assumed-type-type" title="Link to this heading">¶</a></h3>
+<p>Assumed type is added in Fortran 2018 and it is available only for dummy
+arguments. It’s mainly used for interfaces to non-Fortran code and is similar
+to C’s <code class="docutils literal notranslate"><span class="pre">void</span></code>.
+An entity that is declared using the <code class="docutils literal notranslate"><span class="pre">TYPE(*)</span></code> type specifier is assumed-type
+and is an unlimited polymorphic entity. It is not declared to have a type, and
+is not considered to have the same declared type as any other entity,
+including another unlimited polymorphic entity. Its dynamic type and type
+parameters are assumed from its effective argument (7.3.2.2 - 3).</p>
+<p>Assumed-type is represented in FIR as <code class="docutils literal notranslate"><span class="pre">!fir.box&lt;none&gt;</span></code>.</p>
+</section>
+<section id="select-type-construct">
+<h3>SELECT TYPE construct<a class="headerlink" href="#select-type-construct" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code> construct select for execution at most one of its constituent
+block. The selection is based on the dynamic type of the selector.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">point</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>
+<span class="k">end type </span><span class="n">point</span>
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="n">point</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">point_3d</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">z</span>
+<span class="k">end type </span><span class="n">point_3d</span>
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="n">point</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">color_point</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">color</span>
+<span class="k">end type </span><span class="n">color_point</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">point</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+<span class="k">type</span><span class="p">(</span><span class="n">point_3d</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p3</span>
+<span class="k">type</span><span class="p">(</span><span class="n">color_point</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">c</span>
+<span class="k">class</span><span class="p">(</span><span class="n">point</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p_or_c</span>
+<span class="n">p_or_c</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">c</span>
+<span class="k">select type</span><span class="w"> </span><span class="p">(</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">p_or_c</span><span class="w"> </span><span class="p">)</span>
+<span class="k">class is</span><span class="w"> </span><span class="p">(</span><span class="n">point</span><span class="p">)</span>
+<span class="w">  </span><span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">%</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">%</span><span class="n">y</span>
+<span class="k">type is</span><span class="w"> </span><span class="p">(</span><span class="n">point_3d</span><span class="p">)</span>
+<span class="w">  </span><span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">%</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">%</span><span class="n">y</span><span class="p">,</span><span class="w"> </span><span class="n">a</span><span class="p">%</span><span class="n">z</span>
+<span class="k">class </span><span class="n">default</span>
+<span class="w">  </span><span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="s1">&#39;default&#39;</span>
+<span class="k">end select</span>
+</pre></div>
+</div>
+<p>From the Fortran standard:</p>
+<blockquote>
+<div><p>A <code class="docutils literal notranslate"><span class="pre">TYPE</span> <span class="pre">IS</span></code> type guard statement matches the selector if the dynamic type
+and kind type parameter values of the selector are the same as those specified
+by the statement. A <code class="docutils literal notranslate"><span class="pre">CLASS</span> <span class="pre">IS</span></code> type guard statement matches the selector if the
+dynamic type of the selector is an extension of the type specified by the
+statement and the kind type parameter values specified by the statement are the
+same as the corresponding type parameter values of the dynamic type of the
+selector.</p>
+</div></blockquote>
+<p>In the example above the <code class="docutils literal notranslate"><span class="pre">CLASS</span> <span class="pre">IS</span></code> type guard is matched.</p>
+<p>The construct is lowered to a specific FIR operation <code class="docutils literal notranslate"><span class="pre">fir.select_type</span></code>. It is
+similar to other FIR “select” operations such as <code class="docutils literal notranslate"><span class="pre">fir.select</span></code> and
+<code class="docutils literal notranslate"><span class="pre">fir.select_rank</span></code>. The dynamic type of the selector value is matched against a
+list of type descriptor. The <code class="docutils literal notranslate"><span class="pre">TYPE</span> <span class="pre">IS</span></code> type guard statement is represented by a
+<code class="docutils literal notranslate"><span class="pre">#fir.type_is</span></code> attribute and the <code class="docutils literal notranslate"><span class="pre">CLASS</span> <span class="pre">IS</span></code> type guard statement is represented
+by a <code class="docutils literal notranslate"><span class="pre">#fir.class_is</span></code> attribute.
+The <code class="docutils literal notranslate"><span class="pre">CLASS</span> <span class="pre">DEFAULT</span></code> type guard statement is represented by a <code class="docutils literal notranslate"><span class="pre">unit</span></code> attribute.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>fir.select_type %6 : !fir.class&lt;!fir.ptr&lt;!fir.type&lt;_QFTpoint{x:f32,y:f32}&gt;&gt;&gt; [
+  #fir.class_is&lt;!fir.type&lt;_QFTpoint{x:f32,y:f32}&gt;&gt;, ^bb1,
+  #fir.type_is&lt;!fir.type&lt;_QFTpoint_3d{x:f32,y:f32,z:f32}&gt;&gt;, ^bb2,
+  unit, ^bb3]
+</pre></div>
+</div>
+<p>Lowering of the <code class="docutils literal notranslate"><span class="pre">fir.select_type</span></code> operation will produce a if-then-else ladder.
+The testing of the dynamic type of the selector is done by calling runtime
+functions.</p>
+<p>The runtime has two functions to compare dynamic types. Note that these two
+functions <em>ignore</em> the values of <code class="docutils literal notranslate"><span class="pre">KIND</span></code> type parameters.</p>
+<p>The functions for the <code class="docutils literal notranslate"><span class="pre">EXTENDS_TYPE_OF</span></code> and <code class="docutils literal notranslate"><span class="pre">SAME_TYPE_AS</span></code>
+intrinsics (<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/derived-api.h</span></code>).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Perform the test of the SAME_TYPE_AS intrinsic.</span>
+<span class="kt">bool</span><span class="w"> </span><span class="nf">RTNAME</span><span class="p">(</span><span class="n">SameTypeAs</span><span class="p">)(</span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+
+<span class="c1">// Perform the test of the EXTENDS_TYPE_OF intrinsic.</span>
+<span class="kt">bool</span><span class="w"> </span><span class="nf">RTNAME</span><span class="p">(</span><span class="n">ExtendsTypeOf</span><span class="p">)(</span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>For the <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code> construct, the <code class="docutils literal notranslate"><span class="pre">KIND</span></code> type parameter is not ignored. The
+<code class="docutils literal notranslate"><span class="pre">TYPE</span> <span class="pre">IS</span></code> type guard statement is lowered to an inlined comparison. The
+<code class="docutils literal notranslate"><span class="pre">CLASS</span> <span class="pre">IS</span></code> type guard statement is lowered to a runtime function call.</p>
+<p>The function <code class="docutils literal notranslate"><span class="pre">ClassIs</span></code> implements the dynamic type comparison.
+(<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/derived-api.h</span></code>).</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="c1">// Perform the test of the CLASS IS type guard statement of the SELECT TYPE</span>
+<span class="c1">// construct.</span>
+<span class="kt">bool</span><span class="w"> </span><span class="nf">RTNAME</span><span class="p">(</span><span class="n">ClassIs</span><span class="p">)(</span><span class="k">const</span><span class="w"> </span><span class="n">Descriptor</span><span class="w"> </span><span class="o">&amp;</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">typeInfo</span><span class="o">::</span><span class="n">DerivedType</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong> (lower level FIR/MLIR after conversion to an if-then-else ladder)</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>module  {
+  func @f(%arg0: !fir.class&lt;!fir.ptr&lt;!fir.type&lt;_QFTpoint{x:f32,y:f32}&gt;&gt;&gt;) -&gt; () {
+    // TYPE IS comparison done inlined.
+    %0 = fir.address_of(@_QFE.dt.point_3d) : !fir.ref&lt;!fir type&lt;_QM__fortran_type_infoTderivedtype{}&gt;&gt;
+    %1 = fir.box_tdesc %arg0 : (!fir.class&lt;!fir.ptr&lt;!fir.type&lt;_QFTpoint{x:f32,y:f32}&gt;&gt;&gt;) -&gt; !fir.tdesc&lt;none&gt;
+    %2 = fir.convert %0 : (!fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype{}&gt;&gt;) -&gt; index
+    %3 = fir.convert %1 : (!fir.tdesc&lt;none&gt;) -&gt; index
+    %4 = arith.cmpi eq, %2, %3 : index
+    cf.cond_br %4, ^bb4, ^bb3
+  ^bb1:  // pred: ^bb3
+    cf.br ^bb5
+  ^bb2:  // pred: ^bb3
+    // CLASS IS block.
+    cf.br ^bb6
+  ^bb3:  // pred: ^bb0
+    // CLASS IS comparison done with a runtime function call.
+    %24 = fir.address_of(@_QFE.dt.point) : !fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype{}&gt;&gt;
+    %25 = fir.convert %24 : (!fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype{}&gt;&gt;) -&gt; !fir.ref&lt;none&gt;
+    %26 = fir.convert %6 : (!fir.class&lt;!fir.ptr&lt;!fir.type&lt;_QFTpoint{x:f32,y:f32}&gt;&gt;&gt;) -&gt; !fir.box&lt;none&gt;
+    %27 = fir.call @_FortranAClassIs(%26, %25) : (!fir.box&lt;none&gt;, !fir.ref&lt;none&gt;) -&gt; i1
+    cf.cond_br %27, ^bb2, ^bb1
+  ^bb4:  // pred: ^bb0
+    // TYPE IS block
+    cf.br ^bb6
+  ^bb5:  // pred: ^bb1
+    // CLASS DEFAULT block.
+    cf.br ^bb6
+  ^bb6:  // 3 preds: ^bb2, ^bb4, ^bb5
+    return
+  }
+  func.func private @_FortranAClassIs(!fir.box&lt;none&gt;, !fir.ref&lt;none&gt;) -&gt; i1
+}
+</pre></div>
+</div>
+<p>Dynamic type comparisons are inlined for performance whenever possible.
+Dynamic type comparison for the <code class="docutils literal notranslate"><span class="pre">TYPE</span> <span class="pre">IS</span></code> type guard is inlined and
+intrinsic types comparison when dealing with unlimited polymorphic entities are
+also inlined.</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type is</span><span class="w"> </span><span class="p">(</span><span class="kt">integer</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%i32typecode = arith.constant 9 : i8
+%typecode = fir.box_typecode %selector : (!fir.class&lt;none&gt;) -&gt; i8
+%isi32 = arith.cmpi eq, %typecode, %i32typecode : i8
+</pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils" />
+<section id="dynamic-dispatch">
+<h2>Dynamic dispatch<a class="headerlink" href="#dynamic-dispatch" title="Link to this heading">¶</a></h2>
+<p>Dynamic dispatch is the process of selecting which implementation of a
+polymorphic procedure to call at runtime. The runtime already has information
+to be used in this process (more information can be found here:
+<a class="reference internal" href="RuntimeTypeInfo.html"><span class="std std-doc">RuntimeTypeInfo.md</span></a>).</p>
+<p>The declaration of the data structures are present in
+<code class="docutils literal notranslate"><span class="pre">flang/runtime/type-info.h</span></code>.</p>
+<p>In the example below, there is a basic type <code class="docutils literal notranslate"><span class="pre">shape</span></code> with two type extensions
+<code class="docutils literal notranslate"><span class="pre">triangle</span></code> and <code class="docutils literal notranslate"><span class="pre">rectangle</span></code>.
+The two type extensions override the <code class="docutils literal notranslate"><span class="pre">get_area</span></code> type-bound procedure.</p>
+<p><strong>UML</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>
+                          <span class="o">|---------------------|</span>
+                          <span class="o">|</span>        <span class="n">Shape</span>        <span class="o">|</span>
+                          <span class="o">|---------------------|</span>
+                          <span class="o">|</span> <span class="o">+</span> <span class="n">color</span><span class="p">:</span><span class="n">integer</span>     <span class="o">|</span>
+                          <span class="o">|</span> <span class="o">+</span> <span class="n">isFilled</span><span class="p">:</span><span class="n">logical</span>  <span class="o">|</span>
+                          <span class="o">|---------------------|</span>
+                          <span class="o">|</span> <span class="o">+</span> <span class="n">init</span><span class="p">()</span>            <span class="o">|</span>
+                          <span class="o">|</span> <span class="o">+</span> <span class="n">get_area</span><span class="p">():</span><span class="n">real</span>   <span class="o">|</span>
+                          <span class="o">|---------------------|</span>
+                                     <span class="o">/</span>\
+                                    <span class="o">/</span><span class="n">__</span>\
+                                     <span class="o">|</span>
+            <span class="o">|---------------------------------------------------|</span>
+            <span class="o">|</span>                                                   <span class="o">|</span>
+            <span class="o">|</span>                                                   <span class="o">|</span>
+<span class="o">|---------------------|</span>                              <span class="o">|---------------------|</span>
+<span class="o">|</span>      <span class="n">triangle</span>       <span class="o">|</span>                              <span class="o">|</span>      <span class="n">rectangle</span>      <span class="o">|</span>
+<span class="o">|---------------------|</span>                              <span class="o">|---------------------|</span>
+<span class="o">|</span> <span class="o">+</span> <span class="n">base</span><span class="p">:</span><span class="n">real</span>         <span class="o">|</span>                              <span class="o">|</span> <span class="o">+</span> <span class="n">length</span><span class="p">:</span><span class="n">real</span>       <span class="o">|</span>
+<span class="o">|</span> <span class="o">+</span> <span class="n">height</span><span class="p">:</span><span class="n">real</span>       <span class="o">|</span>                              <span class="o">|</span> <span class="o">+</span> <span class="n">width</span><span class="p">:</span><span class="n">real</span>        <span class="o">|</span>
+<span class="o">|---------------------|</span>                              <span class="o">|---------------------|</span>
+<span class="o">|</span> <span class="o">+</span> <span class="n">get_area</span><span class="p">():</span><span class="n">real</span>   <span class="o">|</span>                              <span class="o">|</span> <span class="o">+</span> <span class="n">get_area</span><span class="p">():</span><span class="n">real</span>   <span class="o">|</span>
+<span class="o">|---------------------|</span>                              <span class="o">|---------------------|</span>
+
+</pre></div>
+</div>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">geometry</span>
+<span class="k">type</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="nb">shape</span>
+<span class="nb">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">color</span>
+<span class="w">  </span><span class="kt">logical</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">isFilled</span>
+<span class="k">contains</span>
+<span class="k">  procedure</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_area</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">get_area_shape</span>
+<span class="w">  </span><span class="k">procedure</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">init</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">init_shape</span>
+<span class="k">end type </span><span class="nb">shape</span>
+
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">triangle</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">base</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">height</span>
+<span class="k">contains</span>
+<span class="k">  procedure</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_area</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">get_area_triangle</span>
+<span class="k">end type </span><span class="n">triangle</span>
+
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">rectangle</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">length</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">width</span>
+<span class="k">contains</span>
+<span class="k">  procedure</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_area</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">get_area_rectangle</span>
+<span class="k">end type </span><span class="n">rectangle</span>
+
+<span class="k">type </span><span class="n">shape_array</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">item</span>
+<span class="k">end type</span>
+
+<span class="k">contains</span>
+
+<span class="k">function </span><span class="n">get_area_shape</span><span class="p">(</span><span class="n">this</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_area_shape</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">this</span>
+<span class="w">  </span><span class="n">get_area_shape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="k">end function</span>
+
+<span class="k">subroutine </span><span class="n">init_shape</span><span class="p">(</span><span class="n">this</span><span class="p">,</span><span class="w"> </span><span class="n">color</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">this</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">color</span>
+<span class="w">  </span><span class="n">this</span><span class="p">%</span><span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">color</span>
+<span class="w">  </span><span class="n">this</span><span class="p">%</span><span class="n">isFilled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">.</span><span class="n">false</span><span class="p">.</span>
+<span class="k">end subroutine</span>
+
+<span class="k">function </span><span class="n">get_area_triangle</span><span class="p">(</span><span class="n">this</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_area_triangle</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">triangle</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">this</span>
+<span class="w">  </span><span class="n">get_area_triangle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">this</span><span class="p">%</span><span class="n">base</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">this</span><span class="p">%</span><span class="n">height</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span>
+<span class="k">end function</span>
+
+<span class="k">function </span><span class="n">get_area_rectangle</span><span class="p">(</span><span class="n">this</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_area_rectangle</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">rectangle</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">this</span>
+<span class="w">  </span><span class="n">get_area_rectangle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">this</span><span class="p">%</span><span class="n">length</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">this</span><span class="p">%</span><span class="n">width</span>
+<span class="k">end function</span>
+
+<span class="k">function </span><span class="n">get_all_area</span><span class="p">(</span><span class="n">shapes</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">get_all_area</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">shape_array</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">shapes</span><span class="p">(:)</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="nb">sum</span>
+<span class="nb">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span>
+
+<span class="w">  </span><span class="n">get_all_area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span>
+
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">(</span><span class="n">shapes</span><span class="p">)</span>
+<span class="w">    </span><span class="n">get_all_area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_all_area</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">shapes</span><span class="p">(</span><span class="n">i</span><span class="p">)%</span><span class="n">item</span><span class="p">%</span><span class="n">get_area</span><span class="p">()</span>
+<span class="w">  </span><span class="k">end do</span>
+<span class="k">end function</span>
+
+<span class="k">subroutine </span><span class="n">set_base_values</span><span class="p">(</span><span class="n">sh</span><span class="p">,</span><span class="w"> </span><span class="n">v1</span><span class="p">,</span><span class="w"> </span><span class="n">v2</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">sh</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">v1</span><span class="p">,</span><span class="w"> </span><span class="n">v2</span>
+
+<span class="w">  </span><span class="k">select type</span><span class="w"> </span><span class="p">(</span><span class="n">sh</span><span class="p">)</span>
+<span class="w">  </span><span class="k">type is</span><span class="w"> </span><span class="p">(</span><span class="n">triangle</span><span class="p">)</span>
+<span class="w">    </span><span class="n">sh</span><span class="p">%</span><span class="n">base</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v1</span>
+<span class="w">    </span><span class="n">sh</span><span class="p">%</span><span class="n">height</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v2</span>
+<span class="w">  </span><span class="k">type is</span><span class="w"> </span><span class="p">(</span><span class="n">rectangle</span><span class="p">)</span>
+<span class="w">    </span><span class="n">sh</span><span class="p">%</span><span class="n">length</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v1</span>
+<span class="w">    </span><span class="n">sh</span><span class="p">%</span><span class="n">width</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v2</span>
+<span class="w">  </span><span class="k">class </span><span class="n">default</span>
+<span class="w">    </span><span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="s1">&#39;Cannot set values&#39;</span>
+<span class="w">  </span><span class="k">end select</span>
+<span class="k">end subroutine</span>
+
+<span class="k">end module</span>
+
+<span class="k">program </span><span class="n">foo</span>
+<span class="w">  </span><span class="k">use </span><span class="n">geometry</span>
+
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">area</span>
+
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">shape_array</span><span class="p">),</span><span class="w"> </span><span class="k">dimension</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">shapes</span>
+
+<span class="w">  </span><span class="k">allocate</span><span class="w"> </span><span class="p">(</span><span class="n">triangle</span><span class="kd">::</span><span class="n">shapes</span><span class="p">(</span><span class="mi">1</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+<span class="w">  </span><span class="k">allocate</span><span class="w"> </span><span class="p">(</span><span class="n">rectangle</span><span class="kd">::</span><span class="n">shapes</span><span class="p">(</span><span class="mi">2</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+
+<span class="w">  </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">(</span><span class="n">shapes</span><span class="p">)</span>
+<span class="w">    </span><span class="k">call </span><span class="n">shapes</span><span class="p">(</span><span class="n">i</span><span class="p">)%</span><span class="n">item</span><span class="p">%</span><span class="n">init</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end do</span>
+
+<span class="k">  call </span><span class="n">set_base_values</span><span class="p">(</span><span class="n">shapes</span><span class="p">(</span><span class="mi">1</span><span class="p">)%</span><span class="n">item</span><span class="p">,</span><span class="w"> </span><span class="mf">2.0</span><span class="p">,</span><span class="w"> </span><span class="mf">1.5</span><span class="p">)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">set_base_values</span><span class="p">(</span><span class="n">shapes</span><span class="p">(</span><span class="mi">2</span><span class="p">)%</span><span class="n">item</span><span class="p">,</span><span class="w"> </span><span class="mf">5.0</span><span class="p">,</span><span class="w"> </span><span class="mf">4.5</span><span class="p">)</span>
+
+<span class="w">  </span><span class="n">area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_all_area</span><span class="p">(</span><span class="n">shapes</span><span class="p">)</span>
+
+<span class="w">  </span><span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">area</span>
+
+<span class="w">  </span><span class="k">deallocate</span><span class="p">(</span><span class="n">shapes</span><span class="p">(</span><span class="mi">1</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+<span class="w">  </span><span class="k">deallocate</span><span class="p">(</span><span class="n">shapes</span><span class="p">(</span><span class="mi">2</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+<span class="k">end program</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code> operation is used to perform a dynamic dispatch. This
+operation is comparable to the <code class="docutils literal notranslate"><span class="pre">fir.call</span></code> operation but for polymorphic
+entities.
+Call to <code class="docutils literal notranslate"><span class="pre">NON_OVERRIDABLE</span></code> type-bound procedure are resolved at compile time and
+a <code class="docutils literal notranslate"><span class="pre">fir.call</span></code> operation is emitted instead of a <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code>.
+When the type of a polymorphic entity can be fully determined at compile
+time, a <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code> op can even be converted to a <code class="docutils literal notranslate"><span class="pre">fir.call</span></code> op. This will
+be discussed in more detailed later in the document in the devirtualization
+section.</p>
+<p><strong>FIR</strong>
+Here is simple example of the <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code> operation. The operation specify
+the binding name of the type-bound procedure to be called and pass the
+descriptor as argument. If the <code class="docutils literal notranslate"><span class="pre">NOPASS</span></code> attribute is set then the descriptor is
+not passed as argument when lowered. If <code class="docutils literal notranslate"><span class="pre">PASS(arg-name)</span></code> is specified, the
+<code class="docutils literal notranslate"><span class="pre">fir.pass</span></code> attribute is added to point to the PASS argument in the
+<code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code> operation. <code class="docutils literal notranslate"><span class="pre">fir.nopass</span></code> attribute is added for the <code class="docutils literal notranslate"><span class="pre">NOPASS</span></code>. The
+descriptor still need to be present in the <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code> operation for the
+dynamic dispatch. The CodeGen will then omit the descriptor in the argument
+of the generated call.</p>
+<p>The dispatch explanation focus only on the call to <code class="docutils literal notranslate"><span class="pre">get_area()</span></code> as seen in the
+example.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="n">get_all_area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_all_area</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">shapes</span><span class="p">(</span><span class="n">i</span><span class="p">)%</span><span class="n">item</span><span class="p">%</span><span class="n">get_area</span><span class="p">()</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%1 = fir.convert %0 : !fir.ref&lt;!fir.class&lt;!fir.type&lt;_QMgeometryTtriangle{color:i32,isFilled:!fir.logical&lt;4&gt;,base:f32,height:f32&gt;&gt;&gt;
+%2 = fir.dispatch &quot;get_area&quot;(%1 : !fir.class&lt;!fir.type&lt;_QMgeometryTtriangle{color:i32,isFilled:!fir.logical&lt;4&gt;,base:f32,height:f32&gt;&gt;) -&gt; f32
+</pre></div>
+</div>
+<p>The type information is stored in the <code class="docutils literal notranslate"><span class="pre">f18Addendum</span></code> of the descriptor. The
+format is defined in <code class="docutils literal notranslate"><span class="pre">flang/runtime/type-info.h</span></code> and part of its representation
+in LLVM IR is shown below. The binding is comparable to a vtable. Each derived
+type has a complete type-bound procedure table in which all of the bindings of
+its ancestor types appear first.</p>
+<p><strong>LLVMIR</strong></p>
+<p>Representation of the derived type information with the bindings.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="n">_QM__fortran_type_infoTderivedtype</span> <span class="o">=</span> <span class="nb">type</span> <span class="p">{</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span> <span class="p">},</span> <span class="n">i64</span><span class="p">,</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]]</span> <span class="p">},</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]]</span> <span class="p">},</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">4</span> <span class="n">x</span> <span class="n">i8</span><span class="p">]</span> <span class="p">}</span>
+<span class="o">%</span><span class="n">_QM__fortran_type_infoTbinding</span> <span class="o">=</span> <span class="nb">type</span> <span class="p">{</span> <span class="o">%</span><span class="n">_QM__fortran_builtinsT__builtin_c_funptr</span><span class="p">,</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span> <span class="p">}</span> <span class="p">}</span>
+<span class="o">%</span><span class="n">_QM__fortran_builtinsT__builtin_c_funptr</span> <span class="o">=</span> <span class="nb">type</span> <span class="p">{</span> <span class="n">i64</span> <span class="p">}</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code> is lowered to FIR operations by the <code class="docutils literal notranslate"><span class="pre">PolymorphicOpConversion</span></code>
+pass. It uses the runtime information to extract the
+correct function from the vtable and to perform the actual call. Here is
+what it can look like in pseudo LLVM IR code.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  %2 = fir.box_tdesc %arg0 : (!fir.class&lt;!fir.type&lt;_QMgeometryTtriangle{color:i32,isFilled:!fir.logical&lt;4&gt;,base:f32,height:f32&gt;&gt;) -&gt; !fir.tdesc&lt;none&gt;
+  %3 = fir.box_tdesc %arg0 : (!fir.class&lt;!fir.type&lt;_QMdispatch1Tp1{a:i32,b:i32}&gt;&gt;) -&gt; !fir.tdesc&lt;none&gt;
+  %4 = fir.convert %3 : (!fir.tdesc&lt;none&gt;) -&gt; !fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype{}&gt;&gt;
+  %5 = fir.field_index binding, !fir.type&lt;_QM__fortran_type_infoTderivedtype{}&gt;
+  %6 = fir.coordinate_of %4, %5 : (!fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype{}&gt;&gt;, !fir.field) -&gt; !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x!fir.type&lt;_QM__fortran_type_infoTbinding{}&gt;&gt;&gt;&gt;&gt;
+  %7 = fir.load %6 : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x!fir.type&lt;_QM__fortran_type_infoTbinding{}&gt;&gt;&gt;&gt;&gt;
+  %8 = fir.box_addr %7 : (!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?x!fir.type&lt;_QM__fortran_type_infoTbinding{}&gt;&gt;&gt;&gt;) -&gt; !fir.ptr&lt;!fir.array&lt;?x!fir.type&lt;_QM__fortran_type_infoTbinding{}&gt;&gt;&gt;
+  %c0 = arith.constant 0 : index
+  %9 = fir.coordinate_of %8, %c0 : (!fir.ptr&lt;!fir.array&lt;?x!fir.type&lt;_QM__fortran_type_infoTbinding{}&gt;&gt;
+  %10 = fir.field_index proc, !fir.type&lt;_QM__fortran_type_infoTbinding{proc:!fir.type&lt;_QM__fortran_builtinsT__builtin_c_funptr{__address:i64}&gt;,name:!fir.box&lt;!fir.ptr&lt;!fir.char&lt;1,?&gt;&gt;&gt;}&gt;
+  %11 = fir.coordinate_of %9, %10 : (!fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTbinding{}&gt;&gt;, !fir.field) -&gt; !fir.ref&lt;!fir.type&lt;_QM__fortran_builtinsT__builtin_c_funptr{__address:i64}&gt;&gt;
+  %12 = fir.field_index __address, !fir.type&lt;_QM__fortran_builtinsT__builtin_c_funptr{__address:i64}&gt;
+  %13 = fir.coordinate_of %11, %12 : (!fir.ref&lt;!fir.type&lt;_QM__fortran_builtinsT__builtin_c_funptr{__address:i64}&gt;&gt;, !fir.field) -&gt; !fir.ref&lt;i64&gt;
+  %14 = fir.load %13 : !fir.ref&lt;i64&gt;
+  %15 = fir.convert %14 : (i64) -&gt; ((!fir.class&lt;!fir.type&lt;_QMdispatch1Tp1{a:i32,b:i32}&gt;&gt;) -&gt; ())
+  fir.call %15(%arg0) : (!fir.class&lt;!fir.type&lt;_QMdispatch1Tp1{a:i32,b:i32}&gt;&gt;) -&gt; ()
+</pre></div>
+</div>
+<p><strong>LLVMIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">//</span> <span class="n">Retrieve</span> <span class="n">the</span> <span class="n">derived</span> <span class="nb">type</span> <span class="n">runtime</span> <span class="n">information</span> <span class="ow">and</span> <span class="n">the</span> <span class="n">vtable</span><span class="o">.</span>
+<span class="o">%</span><span class="mi">14</span> <span class="o">=</span> <span class="n">getelementptr</span> <span class="o">%</span><span class="n">_QM__fortran_type_infoTderivedtype</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">13</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span>
+<span class="o">%</span><span class="mi">15</span> <span class="o">=</span> <span class="n">load</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">14</span>
+<span class="n">store</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">}</span> <span class="o">%</span><span class="mi">15</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">8</span>
+<span class="o">%</span><span class="mi">16</span> <span class="o">=</span> <span class="n">getelementptr</span> <span class="p">{</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">i64</span><span class="p">,</span> <span class="n">i32</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="n">i8</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="p">[</span><span class="mi">3</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]],</span> <span class="n">ptr</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span> <span class="n">x</span> <span class="n">i64</span><span class="p">]</span> <span class="p">},</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">8</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span>
+<span class="o">%</span><span class="mi">17</span> <span class="o">=</span> <span class="n">load</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">16</span>
+<span class="o">%</span><span class="mi">18</span> <span class="o">=</span> <span class="n">getelementptr</span> <span class="o">%</span><span class="n">_QM__fortran_type_infoTbinding</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">17</span><span class="p">,</span> <span class="n">i64</span> <span class="mi">0</span>
+<span class="o">%</span><span class="mi">19</span> <span class="o">=</span> <span class="n">getelementptr</span> <span class="o">%</span><span class="n">_QM__fortran_type_infoTbinding</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">18</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span>
+<span class="o">%</span><span class="mi">20</span> <span class="o">=</span> <span class="n">getelementptr</span> <span class="o">%</span><span class="n">_QM__fortran_builtinsT__builtin_c_funptr</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">19</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span><span class="p">,</span> <span class="n">i32</span> <span class="mi">0</span>
+<span class="o">//</span> <span class="n">Load</span> <span class="n">func</span> <span class="n">address</span>
+<span class="o">%</span><span class="mi">21</span> <span class="o">=</span> <span class="n">load</span> <span class="n">i64</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">%</span><span class="mi">20</span>
+<span class="o">//</span> <span class="n">Cast</span> <span class="n">to</span> <span class="n">func</span> <span class="n">pointer</span>
+<span class="o">%</span><span class="mi">22</span> <span class="o">=</span> <span class="n">inttoptr</span> <span class="n">i64</span> <span class="o">%</span><span class="mi">21</span> <span class="n">to</span> <span class="n">ptr</span>
+<span class="o">//</span> <span class="n">Perform</span> <span class="n">the</span> <span class="n">actual</span> <span class="n">function</span> <span class="n">call</span>
+<span class="n">call</span> <span class="n">void</span> <span class="o">%</span><span class="mi">22</span><span class="p">(</span><span class="n">ptr</span> <span class="o">%</span><span class="mi">0</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="passing-polymorphic-entities-as-argument">
+<h3>Passing polymorphic entities as argument<a class="headerlink" href="#passing-polymorphic-entities-as-argument" title="Link to this heading">¶</a></h3>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">TYPE </span><span class="n">t1</span>
+<span class="k">END TYPE</span>
+<span class="k">TYPE</span><span class="p">,</span><span class="w"> </span><span class="k">EXTENDS</span><span class="p">(</span><span class="n">t1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t2</span>
+<span class="k">END TYPE</span>
+</pre></div>
+</div>
+<ol class="arabic">
+<li><p>Dummy argument is fixed type and actual argument is fixed type.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">TYPE(t1)</span></code>: Nothing special to take into consideration.</p></li>
+</ul>
+</li>
+<li><p>Dummy argument is polymorphic and actual argument is fixed type. In these
+cases, the actual argument need to be boxed to be passed to the
+subroutine/function since those are expecting a descriptor.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @_QMmod1Ps(%arg0: !fir.class&lt;!fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt;&gt;)
+func.func @_QQmain() {
+  %0 = fir.alloca !fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt; {uniq_name = &quot;_QFEsh&quot;}
+  %1 = fir.embox %0 : (!fir.ref&lt;!fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt;&gt;) -&gt; !fir.class&lt;!fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt;&gt;
+  fir.call @_QMmod1Ps(%1) : (!fir.class&lt;!fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt;&gt;) -&gt; ()
+  return
+}
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE(t2)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code> - Invalid</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE(t2)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code></p></li>
+</ul>
+</li>
+<li><p>Actual argument is polymorphic and dummy argument is fixed type. These case
+are restricted to the declared type of the polymorphic entities.</p>
+<ul class="simple">
+<li><p>The simple case is when the actual argument is a scalar
+polymorphic entity passed to a non-PDT. The caller just extract the
+base address from the descriptor and pass it to the function.</p></li>
+<li><p>In other cases, the caller needs to perform a copyin/copyout since it
+cannot just extract the base address of the <code class="docutils literal notranslate"><span class="pre">CLASS(T)</span></code> because it is
+likely not contiguous.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">TYPE(t1)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code> to <code class="docutils literal notranslate"><span class="pre">TYPE(t1)</span></code> - Invalid</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">TYPE(t2)</span></code> - Invalid</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code> to <code class="docutils literal notranslate"><span class="pre">TYPE(t2)</span></code></p></li>
+</ul>
+</li>
+<li><p>Both actual and dummy arguments are polymorphic. These particular cases are
+straight forward. The function expect polymorphic entities already.
+The boxed type is passed without change.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t1)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code> - Invalid</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code> to <code class="docutils literal notranslate"><span class="pre">CLASS(t2)</span></code></p></li>
+</ul>
+</li>
+</ol>
+</section>
+<section id="user-defined-derived-type-input-output">
+<h3>User-Defined Derived Type Input/Output<a class="headerlink" href="#user-defined-derived-type-input-output" title="Link to this heading">¶</a></h3>
+<p>User-Defined Derived Type Input/Output allows to define how a derived-type
+is read or written from/to a file.</p>
+<p>There are 4 basic subroutines that can be defined:</p>
+<ul class="simple">
+<li><p>Formatted READ</p></li>
+<li><p>Formatted WRITE</p></li>
+<li><p>Unformatted READ</p></li>
+<li><p>Unformatted WRITE</p></li>
+</ul>
+<p>Here are their respective interfaces:</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">read_formatted</span><span class="p">(</span><span class="n">dtv</span><span class="p">,</span><span class="w"> </span><span class="n">unit</span><span class="p">,</span><span class="w"> </span><span class="n">iotype</span><span class="p">,</span><span class="w"> </span><span class="n">v_list</span><span class="p">,</span><span class="w"> </span><span class="n">iostat</span><span class="p">,</span><span class="w"> </span><span class="n">iomsg</span><span class="p">)</span>
+<span class="k">subroutine </span><span class="n">write_formatted</span><span class="p">(</span><span class="n">dtv</span><span class="p">,</span><span class="w"> </span><span class="n">unit</span><span class="p">,</span><span class="w"> </span><span class="n">iotype</span><span class="p">,</span><span class="w"> </span><span class="n">v_list</span><span class="p">,</span><span class="w"> </span><span class="n">iostat</span><span class="p">,</span><span class="w"> </span><span class="n">iomsg</span><span class="p">)</span>
+<span class="k">subroutine </span><span class="n">read_unformatted</span><span class="p">(</span><span class="n">dtv</span><span class="p">,</span><span class="w"> </span><span class="n">unit</span><span class="p">,</span><span class="w"> </span><span class="n">iotype</span><span class="p">,</span><span class="w"> </span><span class="n">v_list</span><span class="p">,</span><span class="w"> </span><span class="n">iostat</span><span class="p">,</span><span class="w"> </span><span class="n">iomsg</span><span class="p">)</span>
+<span class="k">subroutine </span><span class="n">write_unformatted</span><span class="p">(</span><span class="n">dtv</span><span class="p">,</span><span class="w"> </span><span class="n">unit</span><span class="p">,</span><span class="w"> </span><span class="n">iotype</span><span class="p">,</span><span class="w"> </span><span class="n">v_list</span><span class="p">,</span><span class="w"> </span><span class="n">iostat</span><span class="p">,</span><span class="w"> </span><span class="n">iomsg</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>When defined on a derived-type, these specific type-bound procedures are stored
+as special bindings in the type descriptor (see <code class="docutils literal notranslate"><span class="pre">SpecialBinding</span></code> in
+<code class="docutils literal notranslate"><span class="pre">flang/runtime/type-info.h</span></code>).</p>
+<p>With a derived-type the function call to <code class="docutils literal notranslate"><span class="pre">&#64;_FortranAioOutputDescriptor</span></code> from IO
+runtime will be emitted in lowering.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="k">write</span><span class="p">(</span><span class="mi">10</span><span class="p">),</span><span class="w"> </span><span class="n">x</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%5 = fir.call @_FortranAioBeginUnformattedOutput(%c10_i32, %4, %c56_i32) : (i32, !fir.ref&lt;i8&gt;, i32) -&gt; !fir.ref&lt;i8&gt;
+%6 = fir.embox %2 : (!fir.ref&lt;!fir.type&lt;_QTt&gt;&gt;) -&gt; !fir.class&lt;!fir.type&lt;_QTt&gt;&gt;
+%7 = fir.convert %6 : (!fir.class&lt;!fir.type&lt;_QTt&gt;&gt;) -&gt; !fir.box&lt;none&gt;
+%8 = fir.call @_FortranAioOutputDescriptor(%5, %7) : (!fir.ref&lt;i8&gt;, !fir.box&lt;none&gt;) -&gt; i1
+%9 = fir.call @_FortranAioEndIoStatement(%5) : (!fir.ref&lt;i8&gt;) -&gt; i32
+</pre></div>
+</div>
+<p>When dealing with polymorphic entities the call to IO runtime can stay
+unchanged. The runtime function <code class="docutils literal notranslate"><span class="pre">OutputDescriptor</span></code> can make the dynamic dispatch
+to the correct binding stored in the descriptor.</p>
+</section>
+<section id="finalization">
+<h3>Finalization<a class="headerlink" href="#finalization" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">FINAL</span></code> specifies a final subroutine that might  be executed when a data
+entity of that type is finalized. Section 7.5.6.3 defines when finalization
+occurs.</p>
+<p>Final subroutines like User-Defined Derived Type Input/Output are stored as
+special bindings in the type descriptor. The runtime is able to handle the
+finalization with a call the the <code class="docutils literal notranslate"><span class="pre">&#64;_FortranADestroy</span></code> function
+(<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/derived-api.h</span></code>).</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>fir.call @_FortranADestroy(%desc) : (!fir.box&lt;none&gt;) -&gt; ()
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">&#64;_FortranADestroy</span></code> function will take care to call the final subroutines
+and the ones from the parent type.</p>
+<p>Appropriate call to finalization have to be lowered at the right places (7.5.6.3
+When finalization occurs).</p>
+</section>
+<section id="devirtualization">
+<h3>Devirtualization<a class="headerlink" href="#devirtualization" title="Link to this heading">¶</a></h3>
+<p>Sometimes there is enough information at compile-time to avoid going through
+a dynamic dispatch for a type-bound procedure call on a polymorphic entity. To
+be able to perform this optimization directly in FIR the dispatch table is also
+present statically with the <code class="docutils literal notranslate"><span class="pre">fir.dispatch_table</span></code> and <code class="docutils literal notranslate"><span class="pre">fir.dt_entry</span></code> operations.</p>
+<p>Here is an example of these operations representing the dispatch tables for the
+same example than for the dynamic dispatch.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">fir</span><span class="o">.</span><span class="n">dispatch_table</span> <span class="nd">@_QMgeometryE</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">shape</span> <span class="p">{</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">dt_entry</span> <span class="n">init</span><span class="p">,</span> <span class="nd">@_QMgeometryPinit_shape</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">dt_entry</span> <span class="n">get_area</span><span class="p">,</span> <span class="nd">@_QMgeometryPget_area_shape</span>
+<span class="p">}</span>
+
+<span class="n">fir</span><span class="o">.</span><span class="n">dispatch_table</span> <span class="nd">@_QMgeometryE</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">rectangle</span> <span class="p">{</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">dt_entry</span> <span class="n">init</span><span class="p">,</span> <span class="nd">@_QMgeometryPinit_shape</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">dt_entry</span> <span class="n">get_area</span><span class="p">,</span> <span class="nd">@_QMgeometryPget_area_rectangle</span>
+<span class="p">}</span>
+
+<span class="n">fir</span><span class="o">.</span><span class="n">dispatch_table</span> <span class="nd">@_QMgeometryE</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">triangle</span> <span class="p">{</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">dt_entry</span> <span class="n">init</span><span class="p">,</span> <span class="nd">@_QMgeometryPinit_shape</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">dt_entry</span> <span class="n">get_area</span><span class="p">,</span> <span class="nd">@_QMgeometryPget_area_triangle</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>With this information, an optimization pass can replace <code class="docutils literal notranslate"><span class="pre">fir.dispatch</span></code>
+operations with <code class="docutils literal notranslate"><span class="pre">fir.call</span></code> operations to the correct functions when the type is
+know at compile time.</p>
+<p>This is the case in a <code class="docutils literal notranslate"><span class="pre">type</span> <span class="pre">is</span></code> type-guard block as illustrated below.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">get_only_triangle_area</span><span class="p">(</span><span class="n">sh</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">sh</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">area</span>
+
+<span class="w">  </span><span class="k">select type</span><span class="w"> </span><span class="p">(</span><span class="n">sh</span><span class="p">)</span>
+<span class="w">  </span><span class="k">type is</span><span class="w"> </span><span class="p">(</span><span class="n">triangle</span><span class="p">)</span>
+<span class="w">    </span><span class="n">area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sh</span><span class="p">%</span><span class="n">get_area</span><span class="p">()</span>
+<span class="w">  </span><span class="k">class </span><span class="n">default</span>
+<span class="w">    </span><span class="n">area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="w">  </span><span class="k">end select</span>
+
+<span class="k">end subroutine</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<p>The call to <code class="docutils literal notranslate"><span class="pre">get_area</span></code> in the <code class="docutils literal notranslate"><span class="pre">type</span> <span class="pre">is</span> <span class="pre">(triangle)</span></code> guard can be replaced.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">3</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">dispatch</span> <span class="s2">&quot;get_area&quot;</span><span class="p">(</span><span class="o">%</span><span class="n">desc</span><span class="p">)</span>
+<span class="o">//</span> <span class="n">Replaced</span> <span class="n">by</span>
+<span class="o">%</span><span class="mi">3</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">call</span> <span class="nd">@get_area_triangle</span><span class="p">(</span><span class="o">%</span><span class="n">desc</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Another example would be the one below. In this case as well, a dynamic dispatch
+is not necessary and a <code class="docutils literal notranslate"><span class="pre">fir.call</span></code> can be emitted instead.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">area</span>
+<span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">sh</span>
+<span class="k">type</span><span class="p">(</span><span class="n">triangle</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">tr</span>
+
+<span class="n">sh</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">tr</span>
+
+<span class="n">area</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sh</span><span class="p">%</span><span class="n">get_area</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Note that the frontend is already replacing some of the dynamic dispatch calls
+with the correct static ones. The optimization pass is useful for cases not
+handled by the frontend and especially cases showing up after some other
+optimizations are applied.</p>
+</section>
+<section id="allocate-deallocate-statements">
+<h3><code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code>/<code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> statements<a class="headerlink" href="#allocate-deallocate-statements" title="Link to this heading">¶</a></h3>
+<p>The allocation and deallocation of polymorphic entities are delegated to the
+runtime.
+The corresponding function signatures can be found in
+<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/allocatable.h</span></code> and in
+<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/pointer.h</span></code> for pointer allocation.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code></p>
+<p>The <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code> statement is lowered to runtime calls as shown in the example
+below.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">allocate</span><span class="p">(</span><span class="n">triangle</span><span class="kd">::</span><span class="n">shapes</span><span class="p">(</span><span class="mi">1</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+<span class="k">allocate</span><span class="p">(</span><span class="n">rectangle</span><span class="kd">::</span><span class="n">shapes</span><span class="p">(</span><span class="mi">2</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%0 = fir.address_of(@_QMgeometryE.dt.triangle) : !fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype&gt;&gt;
+%1 = fir.convert %item1 : (!fir.ref&lt;!fir.class&lt;!fir.type&lt;_QMgeometryTtriangle{color:i32,isFilled:!fir.logical&lt;4&gt;,base:f32,height:f32&gt;&gt;&gt;) -&gt; !fir.ref&lt;!fir.box&lt;none&gt;&gt;
+%2 = fir.call @_FortranAAllocatableInitDerived(%1, %0)
+%3 = fir.call @_FortranAAllocatableAllocate(%1, ...)
+
+%4 = fir.address_of(@_QMgeometryE.dt.rectangle) : !fir.ref&lt;!fir.type&lt;_QM__fortran_type_infoTderivedtype&gt;&gt;
+%5 = fir.convert %item2 : (!fir.ref&lt;!fir.class&lt;_QMgeometryTtriangle{color:i32,isFilled:!fir.logical&lt;4&gt;,base:f32,height:f32}&gt;&gt;&gt;) -&gt; !fir.ref&lt;!fir.box&lt;none&gt;&gt;
+%6 = fir.call @_FortranAAllocatableInitDerived(%5, %4)
+%7 = fir.call @_FortranAAllocatableAllocate(%5, ...)
+</pre></div>
+</div>
+<p>For pointer allocation, the <code class="docutils literal notranslate"><span class="pre">PointerAllocate</span></code> function is used.</p>
+<p><code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code></p>
+<p>The <code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> statement is lowered to a runtime call to
+<code class="docutils literal notranslate"><span class="pre">AllocatableDeallocate</span></code> and <code class="docutils literal notranslate"><span class="pre">PointerDeallocate</span></code> for pointers.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">deallocate</span><span class="p">(</span><span class="n">shapes</span><span class="p">(</span><span class="mi">1</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+<span class="k">deallocate</span><span class="p">(</span><span class="n">shapes</span><span class="p">(</span><span class="mi">2</span><span class="p">)%</span><span class="n">item</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">8</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">call</span> <span class="nd">@_FortranAAllocatableDeallocate</span><span class="p">(</span><span class="o">%</span><span class="n">desc1</span><span class="p">)</span>
+<span class="o">%</span><span class="mi">9</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">call</span> <span class="nd">@_FortranAAllocatableDeallocate</span><span class="p">(</span><span class="o">%</span><span class="n">desc2</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="extends-type-of-same-type-as-intrinsics">
+<h3><code class="docutils literal notranslate"><span class="pre">EXTENDS_TYPE_OF</span></code>/<code class="docutils literal notranslate"><span class="pre">SAME_TYPE_AS</span></code> intrinsics<a class="headerlink" href="#extends-type-of-same-type-as-intrinsics" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">EXTENDS_TYPE_OF</span></code> and <code class="docutils literal notranslate"><span class="pre">SAME_TYPE_AS</span></code> intrinsics have implementation in the
+runtime. Respectively <code class="docutils literal notranslate"><span class="pre">SameTypeAs</span></code> and <code class="docutils literal notranslate"><span class="pre">ExtendsTypeOf</span></code> in
+<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Evaluate/type.h</span></code>.</p>
+<p>Both intrinsic functions are lowered to their respective runtime calls.</p>
+</section>
+<section id="assignment-pointer-assignment">
+<h3>Assignment / Pointer assignment<a class="headerlink" href="#assignment-pointer-assignment" title="Link to this heading">¶</a></h3>
+<p>Intrinsic assignment of an object to another is already implemented in the
+runtime. The function <code class="docutils literal notranslate"><span class="pre">&#64;_FortranAAsssign</span></code> performs the correct operations.</p>
+<p>Available in <code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/assign.h</span></code>.</p>
+</section>
+<section id="user-defined-assignment-and-operator">
+<h3>User defined assignment and operator<a class="headerlink" href="#user-defined-assignment-and-operator" title="Link to this heading">¶</a></h3>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">mod1</span>
+<span class="k">type </span><span class="n">t1</span>
+<span class="k">contains</span>
+<span class="k">  procedure</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">assign_t1</span>
+<span class="w">  </span><span class="k">generic</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">assignment</span><span class="p">(</span><span class="o">=</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">assign_t1</span>
+<span class="k">end type </span><span class="n">t1</span>
+
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="n">t1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t2</span>
+<span class="k">end type</span>
+
+<span class="k">contains</span>
+
+<span class="k">subroutine </span><span class="n">assign_t1</span><span class="p">(</span><span class="n">to</span><span class="p">,</span><span class="w"> </span><span class="n">from</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">inout</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">to</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">from</span>
+<span class="w">  </span><span class="c">! Custom code for the assignment</span>
+<span class="k">end subroutine</span>
+
+<span class="k">subroutine </span><span class="n">assign_t2</span><span class="p">(</span><span class="n">to</span><span class="p">,</span><span class="w"> </span><span class="n">from</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">t2</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">inout</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">to</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">t2</span><span class="p">),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">in</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">from</span>
+<span class="w">  </span><span class="c">! Custom code for the assignment</span>
+<span class="k">end subroutine</span>
+
+<span class="k">end module</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="k">use </span><span class="nb">mod</span>
+
+<span class="k">class</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">v1</span>
+<span class="k">class</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">v2</span>
+
+<span class="k">allocate</span><span class="p">(</span><span class="n">t2</span><span class="kd">::</span><span class="n">v1</span><span class="p">)</span>
+<span class="k">allocate</span><span class="p">(</span><span class="n">t2</span><span class="kd">::</span><span class="n">v2</span><span class="p">)</span>
+
+<span class="n">v2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v1</span>
+
+<span class="k">end program</span>
+</pre></div>
+</div>
+<p>In the example above the assignment <code class="docutils literal notranslate"><span class="pre">v2</span> <span class="pre">=</span> <span class="pre">v1</span></code> is done by a call to <code class="docutils literal notranslate"><span class="pre">assign_t1</span></code>.
+This is resolved at compile time since <code class="docutils literal notranslate"><span class="pre">t2</span></code> could not have a generic type-bound
+procedure for assignment with an interface that is not distinguishable. This
+is the same for user defined operators.</p>
+</section>
+<section id="nullify">
+<h3><code class="docutils literal notranslate"><span class="pre">NULLIFY</span></code><a class="headerlink" href="#nullify" title="Link to this heading">¶</a></h3>
+<p>When a <code class="docutils literal notranslate"><span class="pre">NULLIFY</span></code> statement is applied to a polymorphic pointer (7.3.2.3), its
+dynamic type becomes the same as its declared type.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">NULLIFY</span></code> statement is lowered to a call to the corresponding runtime
+function <code class="docutils literal notranslate"><span class="pre">PointerNullifyDerived</span></code> in <code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/pointer.h</span></code>.</p>
+</section>
+<section id="impact-on-existing-fir-operations-dealing-with-descriptors">
+<h3>Impact on existing FIR operations dealing with descriptors<a class="headerlink" href="#impact-on-existing-fir-operations-dealing-with-descriptors" title="Link to this heading">¶</a></h3>
+<p>Currently, FIR has a couple of operations taking descriptors as inputs or
+producing descriptors as outputs. These operations might need to deal with the
+dynamic type of polymorphic entities.</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.load</span></code>/<code class="docutils literal notranslate"><span class="pre">fir.store</span></code></p>
+<ul class="simple">
+<li><p>Currently a <code class="docutils literal notranslate"><span class="pre">fir.load</span></code> of a <code class="docutils literal notranslate"><span class="pre">fir.box</span></code> is a special case. In the code
+generation no copy is made. This could be problematic with polymorphic
+entities. When a <code class="docutils literal notranslate"><span class="pre">fir.load</span></code> is performed on a <code class="docutils literal notranslate"><span class="pre">fir.class</span></code> type, the dynamic
+can be copied.</p></li>
+</ul>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">mod1</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span>
+<span class="k">contains</span>
+<span class="k">subroutine </span><span class="n">sub1</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="nb">shape</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">b</span>
+<span class="w">  </span><span class="k">associate</span><span class="w"> </span><span class="p">(</span><span class="n">b</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">a</span><span class="p">)</span>
+<span class="w">    </span><span class="c">! Some more code</span>
+<span class="w">  </span><span class="k">end associate</span>
+<span class="k">end subroutine</span>
+<span class="k">end module</span>
+</pre></div>
+</div>
+<p>In the example above, the dynamic type of <code class="docutils literal notranslate"><span class="pre">a</span></code> and <code class="docutils literal notranslate"><span class="pre">b</span></code> might be different. The
+dynamic type of <code class="docutils literal notranslate"><span class="pre">a</span></code> must be copied when it is associated on <code class="docutils literal notranslate"><span class="pre">b</span></code>.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>// fir.load must copy the dynamic type from the pointer `a`
+%0 = fir.address_of(@_QMmod1Ea) : !fir.ref&lt;!fir.class&lt;!fir.ptr&lt;!fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt;&gt;&gt;&gt;
+%1 = fir.load %0 : !fir.ref&lt;!fir.class&lt;!fir.ptr&lt;!fir.type&lt;_QMmod1Tshape{x:i32,y:i32}&gt;&gt;&gt;&gt;
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.embox</span></code></p>
+<ul class="simple">
+<li><p>The embox operation is used to create a descriptor from a reference. With
+polymorphic entities, it is used to create a polymorphic descriptor from
+a derived type. The declared type of the descriptor and the derived type
+are identical. The dynamic type of the descriptor must be set when it is
+created. This is already handled by lowering.</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fir.rebox</span></code></p>
+<ul class="simple">
+<li><p>The rebox operation is used to create a new descriptor from a another
+descriptor with new optional dimension. If the original descriptor is a
+polymorphic entities its dynamic type must be propagated to the new
+descriptor.</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%0 = fir.slice %c10, %c33, %c2 : (index, index, index) -&gt; !fir.slice&lt;1&gt;
+%1 = fir.shift %c0 : (index) -&gt; !fir.shift&lt;1&gt;
+%2 = fir.rebox %x(%1)[%0] : (!fir.class&lt;!fir.array&lt;?x!fir.type&lt;&gt;&gt;&gt;, !fir.shift&lt;1&gt;, !fir.slice&lt;1&gt;) -&gt; !fir.class&lt;!fir.array&lt;?x!fir.type&lt;&gt;&gt;&gt;
+</pre></div>
+</div>
+</li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Lowering part is tested with LIT tests in tree</p></li>
+<li><p>Polymorphic entities involved a lot of runtime information so executable
+tests will be useful for full testing.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="current-todos">
+<h2>Current TODOs<a class="headerlink" href="#current-todos" title="Link to this heading">¶</a></h2>
+<p>Current list of TODOs in lowering:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/Bridge.cpp:448</span></code> not yet implemented: create polymorphic host associated copy</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/CallInterface.cpp:795</span></code> not yet implemented: support for polymorphic types</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertType.cpp:237</span></code> not yet implemented: support for polymorphic types</p></li>
+</ul>
+<hr class="docutils" />
+<p>Resources:</p>
+<ul class="simple">
+<li><p>[1] https://www.pgroup.com/blogs/posts/f03-oop-part1.htm</p></li>
+<li><p>[2] https://www.pgroup.com/blogs/posts/f03-oop-part2.htm</p></li>
+<li><p>[3] https://www.pgroup.com/blogs/posts/f03-oop-part3.htm</p></li>
+<li><p>[4] https://www.pgroup.com/blogs/posts/f03-oop-part4.htm</p></li>
+<li><p>[5] Modern Fortran explained</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Parsing.html">The F18 Parser</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Preprocessing.html">Fortran Preprocessing</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Aug 26, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

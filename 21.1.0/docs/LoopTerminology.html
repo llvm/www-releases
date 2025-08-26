@@ -1,0 +1,770 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>LLVM Loop Terminology (and Canonical Forms) &#8212; LLVM 21.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=c54a4614"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Markdown Quickstart Template" href="MarkdownQuickstartTemplate.html" />
+    <link rel="prev" title="LLVM Link Time Optimization: Design and Implementation" href="LinkTimeOptimization.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="MarkdownQuickstartTemplate.html" title="Markdown Quickstart Template"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="LinkTimeOptimization.html" title="LLVM Link Time Optimization: Design and Implementation"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">LLVM Loop Terminology (and Canonical Forms)</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/LoopTerminology.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="llvm-loop-terminology-and-canonical-forms">
+<span id="loop-terminology"></span><h1>LLVM Loop Terminology (and Canonical Forms)<a class="headerlink" href="#llvm-loop-terminology-and-canonical-forms" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#loop-definition" id="id6">Loop Definition</a></p>
+<ul>
+<li><p><a class="reference internal" href="#terminology" id="id7">Terminology</a></p></li>
+<li><p><a class="reference internal" href="#important-notes" id="id8">Important Notes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#loopinfo" id="id9">LoopInfo</a></p></li>
+<li><p><a class="reference internal" href="#loop-simplify-form" id="id10">Loop Simplify Form</a></p></li>
+<li><p><a class="reference internal" href="#loop-closed-ssa-lcssa" id="id11">Loop Closed SSA (LCSSA)</a></p></li>
+<li><p><a class="reference internal" href="#more-canonical-loops" id="id12">“More Canonical” Loops</a></p>
+<ul>
+<li><p><a class="reference internal" href="#rotated-loops" id="id13">Rotated Loops</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="loop-definition">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Loop Definition</a><a class="headerlink" href="#loop-definition" title="Link to this heading">¶</a></h2>
+<p>Loops are an important concept for a code optimizer. In LLVM, detection
+of loops in a control-flow graph is done by <a class="reference internal" href="#loopinfo"><span class="std std-ref">LoopInfo</span></a>. It is based
+on the following definition.</p>
+<p>A loop is a subset of nodes from the control-flow graph (CFG; where
+nodes represent basic blocks) with the following properties:</p>
+<ol class="arabic simple">
+<li><p>The induced subgraph (which is the subgraph that contains all the
+edges from the CFG within the loop) is strongly connected
+(every node is reachable from all others).</p></li>
+<li><p>All edges from outside the subset into the subset point to the same
+node, called the <strong>header</strong>. As a consequence, the header dominates
+all nodes in the loop (i.e. every execution path to any of the loop’s
+node will have to pass through the header).</p></li>
+<li><p>The loop is the maximum subset with these properties. That is, no
+additional nodes from the CFG can be added such that the induced
+subgraph would still be strongly connected and the header would
+remain the same.</p></li>
+</ol>
+<p>In computer science literature, this is often called a <em>natural loop</em>.
+In LLVM, a more generalized definition is called a
+<a class="reference internal" href="CycleTerminology.html#cycle-terminology"><span class="std std-ref">cycle</span></a>.</p>
+<section id="terminology">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Terminology</a><a class="headerlink" href="#terminology" title="Link to this heading">¶</a></h3>
+<p>The definition of a loop comes with some additional terminology:</p>
+<ul class="simple">
+<li><p>An <strong>entering block</strong> (or <strong>loop predecessor</strong>) is a non-loop node
+that has an edge into the loop (necessarily the header). If there is
+only one entering block, and its only edge is to the
+header, it is also called the loop’s <strong>preheader</strong>. The preheader
+dominates the loop without itself being part of the loop.</p></li>
+<li><p>A <strong>latch</strong> is a loop node that has an edge to the header.</p></li>
+<li><p>A <strong>backedge</strong> is an edge from a latch to the header.</p></li>
+<li><p>An <strong>exiting edge</strong> is an edge from inside the loop to a node outside
+of the loop. The source of such an edge is called an <strong>exiting block</strong>, its
+target is an <strong>exit block</strong>.</p></li>
+</ul>
+<a class="reference internal image-reference" href="_images/loop-terminology.svg"><img alt="_images/loop-terminology.svg" src="_images/loop-terminology.svg" width="400px" /></a>
+</section>
+<section id="important-notes">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Important Notes</a><a class="headerlink" href="#important-notes" title="Link to this heading">¶</a></h3>
+<p>This loop definition has some noteworthy consequences:</p>
+<ul class="simple">
+<li><p>A node can be the header of at most one loop. As such, a loop can be
+identified by its header. Due to the header being the only entry into
+a loop, it can be called a Single-Entry-Multiple-Exits (SEME) region.</p></li>
+<li><p>For basic blocks that are not reachable from the function’s entry, the
+concept of loops is undefined. This follows from the concept of
+dominance being undefined as well.</p></li>
+<li><p>The smallest loop consists of a single basic block that branches to
+itself. In this case that block is the header, latch (and exiting
+block if it has another edge to a different block) at the same time.
+A single block that has no branch to itself is not considered a loop,
+even though it is trivially strongly connected.</p></li>
+</ul>
+<a class="reference internal image-reference" href="_images/loop-single.svg"><img alt="_images/loop-single.svg" src="_images/loop-single.svg" width="300px" /></a>
+<p>In this case, the role of header, exiting block and latch fall to the
+same node. <a class="reference internal" href="#loopinfo"><span class="std std-ref">LoopInfo</span></a> reports this as:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>opt<span class="w"> </span>input.ll<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;print&lt;loops&gt;&#39;</span>
+<span class="go">Loop at depth 1 containing: %for.body&lt;header&gt;&lt;latch&gt;&lt;exiting&gt;</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>Loops can be nested inside each other. That is, a loop’s node set can
+be a subset of another loop with a different loop header. The loop
+hierarchy in a function forms a forest: Each top-level loop is the
+root of the tree of the loops nested inside it.</p></li>
+</ul>
+<a class="reference internal image-reference" href="_images/loop-nested.svg"><img alt="_images/loop-nested.svg" src="_images/loop-nested.svg" width="350px" /></a>
+<ul class="simple">
+<li><p>It is not possible that two loops share only a few of their nodes.
+Two loops are either disjoint or one is nested inside the other. In
+the example below the left and right subsets both violate the
+maximality condition. Only the merge of both sets is considered a loop.</p></li>
+</ul>
+<a class="reference internal image-reference" href="_images/loop-nonmaximal.svg"><img alt="_images/loop-nonmaximal.svg" src="_images/loop-nonmaximal.svg" width="250px" /></a>
+<ul class="simple">
+<li><p>It is also possible that two logical loops share a header, but are
+considered a single loop by LLVM:</p></li>
+</ul>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">128</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">128</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span>
+<span class="w">    </span><span class="n">body</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>which might be represented in LLVM-IR as follows. Note that there is
+only a single header and hence just a single loop.</p>
+<a class="reference internal image-reference" href="_images/loop-merge.svg"><img alt="_images/loop-merge.svg" src="_images/loop-merge.svg" width="400px" /></a>
+<p>The <a class="reference internal" href="#loop-terminology-loop-simplify"><span class="std std-ref">LoopSimplify</span></a> pass will
+detect the loop and ensure separate headers for the outer and inner loop.</p>
+<a class="reference internal image-reference" href="_images/loop-separate.svg"><img alt="_images/loop-separate.svg" src="_images/loop-separate.svg" width="400px" /></a>
+<ul class="simple">
+<li><p>A cycle in the CFG does not imply there is a loop. The example below
+shows such a CFG, where there is no header node that dominates all
+other nodes in the cycle. This is called <strong>irreducible control-flow</strong>.</p></li>
+</ul>
+<a class="reference internal image-reference" href="_images/loop-irreducible.svg"><img alt="_images/loop-irreducible.svg" src="_images/loop-irreducible.svg" width="150px" /></a>
+<p>The term reducible results from the ability to collapse the CFG into a
+single node by successively replacing one of three base structures with
+a single node: A sequential execution of basic blocks, acyclic conditional
+branches (or switches), and a basic block looping on itself.
+<a class="reference external" href="https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility">Wikipedia</a>
+has a more formal definition, which basically says that every cycle has
+a dominating header.</p>
+<ul class="simple">
+<li><p>Irreducible control-flow can occur at any level of the loop nesting.
+That is, a loop that itself does not contain any loops can still have
+cyclic control flow in its body; a loop that is not nested inside
+another loop can still be part of an outer cycle; and there can be
+additional cycles between any two loops where one is contained in the other.
+However, an LLVM <a class="reference internal" href="CycleTerminology.html#cycle-terminology"><span class="std std-ref">cycle</span></a> covers both, loops and
+irreducible control flow.</p></li>
+<li><p>The <a class="reference external" href="https://llvm.org/doxygen/FixIrreducible_8h.html">FixIrreducible</a>
+pass can transform irreducible control flow into loops by inserting
+new loop headers. It is not included in any default optimization pass
+pipeline, but is required for some back-end targets.</p></li>
+<li><p>Exiting edges are not the only way to break out of a loop. Other
+possibilities are unreachable terminators, [[noreturn]] functions,
+exceptions, signals, and your computer’s power button.</p></li>
+<li><p>A basic block “inside” the loop that does not have a path back to the
+loop (i.e. to a latch or header) is not considered part of the loop.
+This is illustrated by the following code.</p></li>
+</ul>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// When reaching this block, we will have exited the loop.</span>
+<span class="w">    </span><span class="n">do_something</span><span class="p">();</span>
+<span class="w">    </span><span class="k">break</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// abort(), never returns, so we have exited the loop.</span>
+<span class="w">    </span><span class="n">abort</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c3</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// The unreachable allows the compiler to assume that this will not rejoin the loop.</span>
+<span class="w">    </span><span class="n">do_something</span><span class="p">();</span>
+<span class="w">    </span><span class="n">__builtin_unreachable</span><span class="p">();</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c4</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// This statically infinite loop is not nested because control-flow will not continue with the for-loop.</span>
+<span class="w">    </span><span class="k">while</span><span class="p">(</span><span class="nb">true</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">do_something</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>There is no requirement for the control flow to eventually leave the
+loop, i.e. a loop can be infinite. A <strong>statically infinite loop</strong> is a
+loop that has no exiting edges. A <strong>dynamically infinite loop</strong> has
+exiting edges, but it is possible to be never taken. This may happen
+only under some circumstances, such as when n == UINT_MAX in the code
+below.</p></li>
+</ul>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="n">body</span><span class="p">(</span><span class="n">i</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>It is possible for the optimizer to turn a dynamically infinite loop
+into a statically infinite loop, for instance when it can prove that the
+exiting condition is always false. Because the exiting edge is never
+taken, the optimizer can change the conditional branch into an
+unconditional one.</p>
+<p>If a is loop is annotated with
+<a class="reference internal" href="LangRef.html#langref-llvm-loop-mustprogress"><span class="std std-ref">llvm.loop.mustprogress</span></a> metadata,
+the compiler is allowed to assume that it will eventually terminate, even
+if it cannot prove it. For instance, it may remove a mustprogress-loop
+that does not have any side-effect in its body even though the program
+could be stuck in that loop forever. Languages such as C and
+<a class="reference external" href="https://eel.is/c++draft/intro.progress#1">C++</a> have such
+forward-progress guarantees for some loops. Also see the
+<a class="reference internal" href="LangRef.html#langref-mustprogress"><span class="std std-ref">mustprogress</span></a> and
+<a class="reference internal" href="LangRef.html#langref-willreturn"><span class="std std-ref">willreturn</span></a> function attributes, as well as
+the older <a class="reference internal" href="LangRef.html#llvm-sideeffect"><span class="std std-ref">llvm.sideeffect</span></a> intrinsic.</p>
+<ul class="simple">
+<li><p>The number of executions of the loop header before leaving the loop is
+the <strong>loop trip count</strong> (or <strong>iteration count</strong>). If the loop should
+not be executed at all, a <strong>loop guard</strong> must skip the entire loop:</p></li>
+</ul>
+<a class="reference internal image-reference" href="_images/loop-guard.svg"><img alt="_images/loop-guard.svg" src="_images/loop-guard.svg" width="500px" /></a>
+<p>Since the first thing a loop header might do is to check whether there
+is another execution and if not, immediately exit without doing any work
+(also see <a class="reference internal" href="#loop-terminology-loop-rotate"><span class="std std-ref">Rotated Loops</span></a>), loop trip count is not
+the best measure of a loop’s number of iterations. For instance, the
+number of header executions of the code below for a non-positive n
+(before loop rotation) is 1, even though the loop body is not executed
+at all.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="n">body</span><span class="p">(</span><span class="n">i</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>A better measure is the <strong>backedge-taken count</strong>, which is the number of
+times any of the backedges is taken before the loop. It is one less than
+the trip count for executions that enter the header.</p>
+</section>
+</section>
+<section id="loopinfo">
+<span id="id1"></span><h2><a class="toc-backref" href="#id9" role="doc-backlink">LoopInfo</a><a class="headerlink" href="#loopinfo" title="Link to this heading">¶</a></h2>
+<p>LoopInfo is the core analysis for obtaining information about loops.
+There are few key implications of the definitions given above which
+are important for working successfully with this interface.</p>
+<ul class="simple">
+<li><p>LoopInfo does not contain information about non-loop cycles.  As a
+result, it is not suitable for any algorithm which requires complete
+cycle detection for correctness.</p></li>
+<li><p>LoopInfo provides an interface for enumerating all top level loops
+(e.g. those not contained in any other loop).  From there, you may
+walk the tree of sub-loops rooted in that top level loop.</p></li>
+<li><p>Loops which become statically unreachable during optimization <em>must</em>
+be removed from LoopInfo. If this can not be done for some reason,
+then the optimization is <em>required</em> to preserve the static
+reachability of the loop.</p></li>
+</ul>
+</section>
+<section id="loop-simplify-form">
+<span id="loop-terminology-loop-simplify"></span><h2><a class="toc-backref" href="#id10" role="doc-backlink">Loop Simplify Form</a><a class="headerlink" href="#loop-simplify-form" title="Link to this heading">¶</a></h2>
+<p>The Loop Simplify Form is a canonical form that makes
+several analyses and transformations simpler and more effective.
+It is ensured by the LoopSimplify
+(<a class="reference internal" href="Passes.html#passes-loop-simplify"><span class="std std-ref">-loop-simplify</span></a>) pass and is automatically
+added by the pass managers when scheduling a LoopPass.
+This pass is implemented in
+<a class="reference external" href="https://llvm.org/doxygen/LoopSimplify_8h_source.html">LoopSimplify.h</a>.
+When it is successful, the loop has:</p>
+<ul class="simple">
+<li><p>A preheader.</p></li>
+<li><p>A single backedge (which implies that there is a single latch).</p></li>
+<li><p>Dedicated exits. That is, no exit block for the loop
+has a predecessor that is outside the loop. This implies
+that all exit blocks are dominated by the loop header.</p></li>
+</ul>
+</section>
+<section id="loop-closed-ssa-lcssa">
+<span id="loop-terminology-lcssa"></span><h2><a class="toc-backref" href="#id11" role="doc-backlink">Loop Closed SSA (LCSSA)</a><a class="headerlink" href="#loop-closed-ssa-lcssa" title="Link to this heading">¶</a></h2>
+<p>A program is in Loop Closed SSA Form if it is in SSA form
+and all values that are defined in a loop are used only inside
+this loop.</p>
+<p>Programs written in LLVM IR are always in SSA form but not necessarily
+in LCSSA. To achieve the latter, for each value that is live across the
+loop boundary, single entry PHI nodes are inserted to each of the exit blocks
+<a class="footnote-reference brackets" href="#lcssa-construction" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> in order to “close” these values inside the loop.
+In particular, consider the following loop:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+<span class="w">    </span><span class="n">X1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="k">else</span>
+<span class="w">    </span><span class="n">X2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="n">X3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">phi</span><span class="p">(</span><span class="n">X1</span><span class="p">,</span><span class="w"> </span><span class="n">X2</span><span class="p">);</span><span class="w">  </span><span class="c1">// X3 defined</span>
+<span class="p">}</span>
+
+<span class="p">...</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">X3</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w">  </span><span class="c1">// X3 used, i.e. live</span>
+<span class="w">               </span><span class="c1">// outside the loop</span>
+</pre></div>
+</div>
+<p>In the inner loop, the X3 is defined inside the loop, but used
+outside of it. In Loop Closed SSA form, this would be represented as follows:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+<span class="w">    </span><span class="n">X1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="k">else</span>
+<span class="w">    </span><span class="n">X2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="n">X3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">phi</span><span class="p">(</span><span class="n">X1</span><span class="p">,</span><span class="w"> </span><span class="n">X2</span><span class="p">);</span>
+<span class="p">}</span>
+<span class="n">X4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">phi</span><span class="p">(</span><span class="n">X3</span><span class="p">);</span>
+
+<span class="p">...</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">X4</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>This is still valid LLVM; the extra phi nodes are purely redundant,
+but all LoopPass’es are required to preserve them.
+This form is ensured by the LCSSA (<a class="reference internal" href="Passes.html#passes-lcssa"><span class="std std-ref">-lcssa</span></a>)
+pass and is added automatically by the LoopPassManager when
+scheduling a LoopPass.
+After the loop optimizations are done, these extra phi nodes
+will be deleted by <a class="reference internal" href="Passes.html#passes-instcombine"><span class="std std-ref">-instcombine</span></a>.</p>
+<p>Note that an exit block is outside of a loop, so how can such a phi “close”
+the value inside the loop since it uses it outside of it ? First of all,
+for phi nodes, as
+<a class="reference external" href="https://llvm.org/docs/LangRef.html#phi-instruction">mentioned in the LangRef</a>:
+“the use of each incoming value is deemed to occur on the edge from the
+corresponding predecessor block to the current block”. Now, an
+edge to an exit block is considered outside of the loop because
+if we take that edge, it leads us clearly out of the loop.</p>
+<p>However, an edge doesn’t actually contain any IR, so in source code,
+we have to choose a convention of whether the use happens in
+the current block or in the respective predecessor. For LCSSA’s purpose,
+we consider the use happens in the latter (so as to consider the
+use inside) <a class="footnote-reference brackets" href="#point-of-use-phis" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>.</p>
+<p>The major benefit of LCSSA is that it makes many other loop optimizations
+simpler.</p>
+<p>First of all, a simple observation is that if one needs to see all
+the outside users, they can just iterate over all the (loop closing)
+PHI nodes in the exit blocks (the alternative would be to
+scan the def-use chain <a class="footnote-reference brackets" href="#def-use-chain" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> of all instructions in the loop).</p>
+<p>Then, consider for example
+<a class="reference internal" href="Passes.html#passes-simple-loop-unswitch"><span class="std std-ref">simple-loop-unswitch</span></a> ing the loop above.
+Because it is in LCSSA form, we know that any value defined inside of
+the loop will be used either only inside the loop or in a loop closing
+PHI node. In this case, the only loop closing PHI node is X4.
+This means that we can just copy the loop and change the X4
+accordingly, like so:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">true</span><span class="p">)</span>
+<span class="w">      </span><span class="n">X1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">    </span><span class="k">else</span>
+<span class="w">      </span><span class="n">X2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">    </span><span class="n">X3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">phi</span><span class="p">(</span><span class="n">X1</span><span class="p">,</span><span class="w"> </span><span class="n">X2</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">false</span><span class="p">)</span>
+<span class="w">      </span><span class="n">X1</span><span class="err">&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">    </span><span class="k">else</span>
+<span class="w">      </span><span class="n">X2</span><span class="err">&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">    </span><span class="n">X3</span><span class="err">&#39;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">phi</span><span class="p">(</span><span class="n">X1</span><span class="err">&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">X2</span><span class="err">&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+<span class="n">X4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">phi</span><span class="p">(</span><span class="n">X3</span><span class="p">,</span><span class="w"> </span><span class="n">X3</span><span class="err">&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Now, all uses of X4 will get the updated value (in general,
+if a loop is in LCSSA form, in any loop transformation,
+we only need to update the loop closing PHI nodes for the changes
+to take effect).  If we did not have Loop Closed SSA form, it means that X3 could
+possibly be used outside the loop. So, we would have to introduce the
+X4 (which is the new X3) and replace all uses of X3 with that.
+However, we should note that because LLVM keeps a def-use chain
+<a class="footnote-reference brackets" href="#def-use-chain" id="id5" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> for each Value, we wouldn’t need
+to perform data-flow analysis to find and replace all the uses
+(there is even a utility function, replaceAllUsesWith(),
+that performs this transformation by iterating the def-use chain).</p>
+<p>Another important advantage is that the behavior of all uses
+of an induction variable is the same.  Without this, you need to
+distinguish the case when the variable is used outside of
+the loop it is defined in, for example:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="p">;</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="n">k</span><span class="p">);</span><span class="w">    </span><span class="c1">// use 1</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">k</span><span class="p">);</span><span class="w">      </span><span class="c1">// use 2</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Looking from the outer loop with the normal SSA form, the first use of k
+is not well-behaved, while the second one is an induction variable with
+base 100 and step 1.  Although, in practice, and in the LLVM context,
+such cases can be handled effectively by SCEV. Scalar Evolution
+(<a class="reference internal" href="Passes.html#passes-scalar-evolution"><span class="std std-ref">scalar-evolution</span></a>) or SCEV, is a
+(analysis) pass that analyzes and categorizes the evolution of scalar
+expressions in loops.</p>
+<p>In general, it’s easier to use SCEV in loops that are in LCSSA form.
+The evolution of a scalar (loop-variant) expression that
+SCEV can analyze is, by definition, relative to a loop.
+An expression is represented in LLVM by an
+<a class="reference external" href="https://llvm.org/doxygen/classllvm_1_1Instruction.html">llvm::Instruction</a>.
+If the expression is inside two (or more) loops (which can only
+happen if the loops are nested, like in the example above) and you want
+to get an analysis of its evolution (from SCEV),
+you have to also specify relative to what Loop you want it.
+Specifically, you have to use
+<a class="reference external" href="https://llvm.org/doxygen/classllvm_1_1ScalarEvolution.html#a21d6ee82eed29080d911dbb548a8bb68">getSCEVAtScope()</a>.</p>
+<p>However, if all loops are in LCSSA form, each expression is actually
+represented by two different llvm::Instructions.  One inside the loop
+and one outside, which is the loop-closing PHI node and represents
+the value of the expression after the last iteration (effectively,
+we break each loop-variant expression into two expressions and so, every
+expression is at most in one loop).  You can now just use
+<a class="reference external" href="https://llvm.org/doxygen/classllvm_1_1ScalarEvolution.html#a30bd18ac905eacf3601bc6a553a9ff49">getSCEV()</a>.
+and which of these two llvm::Instructions you pass to it disambiguates
+the context / scope / relative loop.</p>
+<p class="rubric">Footnotes</p>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="lcssa-construction" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>
+<p>To insert these loop-closing PHI nodes, one has to
+(re-)compute dominance frontiers (if the loop has multiple exits).</p>
+</aside>
+<aside class="footnote brackets" id="point-of-use-phis" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id3">2</a><span class="fn-bracket">]</span></span>
+<p>Considering the point of use of a PHI entry value
+to be in the respective predecessor is a convention across the whole LLVM.
+The reason is mostly practical; for example it preserves the dominance
+property of SSA. It is also just an overapproximation of the actual
+number of uses; the incoming block could branch to another block in which
+case the value is not actually used but there are no side-effects (it might
+increase its live range which is not relevant in LCSSA though).
+Furthermore, we can gain some intuition if we consider liveness:
+A PHI is <em>usually</em> inserted in the current block because the value can’t
+be used from this point and onwards (i.e. the current block is a dominance
+frontier). It doesn’t make sense to consider that the value is used in
+the current block (because of the PHI) since the value stops being live
+before the PHI. In some sense the PHI definition just “replaces” the original
+value definition and doesn’t actually use it. It should be stressed that
+this analogy is only used as an example and does not pose any strict
+requirements. For example, the value might dominate the current block
+but we can still insert a PHI (as we do with LCSSA PHI nodes) <em>and</em>
+use the original value afterwards (in which case the two live ranges overlap,
+although in LCSSA (the whole point is that) we never do that).</p>
+</aside>
+<aside class="footnote brackets" id="def-use-chain" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></span>
+<span class="backrefs">(<a role="doc-backlink" href="#id4">1</a>,<a role="doc-backlink" href="#id5">2</a>)</span>
+<p>A property of SSA is that there exists a def-use chain
+for each definition, which is a list of all the uses of this definition.
+LLVM implements this property by keeping a list of all the uses of a Value
+in an internal data structure.</p>
+</aside>
+</aside>
+</section>
+<section id="more-canonical-loops">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">“More Canonical” Loops</a><a class="headerlink" href="#more-canonical-loops" title="Link to this heading">¶</a></h2>
+<section id="rotated-loops">
+<span id="loop-terminology-loop-rotate"></span><h3><a class="toc-backref" href="#id13" role="doc-backlink">Rotated Loops</a><a class="headerlink" href="#rotated-loops" title="Link to this heading">¶</a></h3>
+<p>Loops are rotated by the LoopRotate (<a class="reference internal" href="Passes.html#passes-loop-rotate"><span class="std std-ref">loop-rotate</span></a>)
+pass, which converts loops into do/while style loops and is
+implemented in
+<a class="reference external" href="https://llvm.org/doxygen/LoopRotation_8h_source.html">LoopRotation.h</a>.  Example:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">test</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="c1">// Loop body</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>is transformed to:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">test</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Loop body</span>
+<span class="w">    </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Warning</strong>: This transformation is valid only if the compiler
+can prove that the loop body will be executed at least once. Otherwise,
+it has to insert a guard which will test it at runtime. In the example
+above, that would be:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">test</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">n</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">do</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="c1">// Loop body</span>
+<span class="w">      </span><span class="n">i</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>It’s important to understand the effect of loop rotation
+at the LLVM IR level. We follow with the previous examples
+in LLVM IR while also providing a graphical representation
+of the control-flow graphs (CFG). You can get the same graphical
+results by utilizing the <a class="reference internal" href="Passes.html#passes-view-cfg"><span class="std std-ref">view-cfg</span></a> pass.</p>
+<p>The initial <strong>for</strong> loop could be translated to:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>define void @test(i32 %n) {
+entry:
+  br label %for.header
+
+for.header:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  %cond = icmp slt i32 %i, %n
+  br i1 %cond, label %body, label %exit
+
+body:
+  ; Loop body
+  br label %latch
+
+latch:
+  %i.next = add nsw i32 %i, 1
+  br label %for.header
+
+exit:
+  ret void
+}
+</pre></div>
+</div>
+<a class="reference internal image-reference" href="_images/loop-terminology-initial-loop.png"><img alt="_images/loop-terminology-initial-loop.png" src="_images/loop-terminology-initial-loop.png" style="width: 400px;" /></a>
+<p>Before we explain how LoopRotate will actually
+transform this loop, here’s how we could convert
+it (by hand) to a do-while style loop.</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>define void @test(i32 %n) {
+entry:
+  br label %body
+
+body:
+  %i = phi i32 [ 0, %entry ], [ %i.next, %latch ]
+  ; Loop body
+  br label %latch
+
+latch:
+  %i.next = add nsw i32 %i, 1
+  %cond = icmp slt i32 %i.next, %n
+  br i1 %cond, label %body, label %exit
+
+exit:
+  ret void
+}
+</pre></div>
+</div>
+<a class="reference internal image-reference" href="_images/loop-terminology-rotated-loop.png"><img alt="_images/loop-terminology-rotated-loop.png" src="_images/loop-terminology-rotated-loop.png" style="width: 400px;" /></a>
+<p>Note two things:</p>
+<ul class="simple">
+<li><p>The condition check was moved to the “bottom” of the loop, i.e.
+the latch. This is something that LoopRotate does by copying the header
+of the loop to the latch.</p></li>
+<li><p>The compiler in this case can’t deduce that the loop will
+definitely execute at least once so the above transformation
+is not valid. As mentioned above, a guard has to be inserted,
+which is something that LoopRotate will do.</p></li>
+</ul>
+<p>This is how LoopRotate transforms this loop:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>define void @test(i32 %n) {
+entry:
+  %guard_cond = icmp slt i32 0, %n
+  br i1 %guard_cond, label %loop.preheader, label %exit
+
+loop.preheader:
+  br label %body
+
+body:
+  %i2 = phi i32 [ 0, %loop.preheader ], [ %i.next, %latch ]
+  br label %latch
+
+latch:
+  %i.next = add nsw i32 %i2, 1
+  %cond = icmp slt i32 %i.next, %n
+  br i1 %cond, label %body, label %loop.exit
+
+loop.exit:
+  br label %exit
+
+exit:
+  ret void
+}
+</pre></div>
+</div>
+<a class="reference internal image-reference" href="_images/loop-terminology-guarded-loop.png"><img alt="_images/loop-terminology-guarded-loop.png" src="_images/loop-terminology-guarded-loop.png" style="width: 500px;" /></a>
+<p>The result is a little bit more complicated than we may expect
+because LoopRotate ensures that the loop is in
+<a class="reference internal" href="#loop-terminology-loop-simplify"><span class="std std-ref">Loop Simplify Form</span></a>
+after rotation.
+In this case, it inserted the %loop.preheader basic block so
+that the loop has a preheader and it introduced the %loop.exit
+basic block so that the loop has dedicated exits
+(otherwise, %exit would be jumped from both %latch and %entry,
+but %entry is not contained in the loop).
+Note that a loop has to be in Loop Simplify Form beforehand
+too for LoopRotate to be applied successfully.</p>
+<p>The main advantage of this form is that it allows hoisting
+invariant instructions, especially loads, into the preheader.
+That could be done in non-rotated loops as well but with
+some disadvantages.  Let’s illustrate them with an example:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">v</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>We assume that loading from p is invariant and use(v) is some
+statement that uses v.
+If we wanted to execute the load only once we could move it
+“out” of the loop body, resulting in this:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">auto</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">v</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>However, now, in the case that n &lt;= 0, in the initial form,
+the loop body would never execute, and so, the load would
+never execute.  This is a problem mainly for semantic reasons.
+Consider the case in which n &lt;= 0 and loading from p is invalid.
+In the initial program there would be no error.  However, with this
+transformation we would introduce one, effectively breaking
+the initial semantics.</p>
+<p>To avoid both of these problems, we can insert a guard:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">n</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">  </span><span class="c1">// loop guard</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="n">v</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This is certainly better but it could be improved slightly. Notice
+that the check for whether n is bigger than 0 is executed twice (and
+n does not change in between).  Once when we check the guard condition
+and once in the first execution of the loop.  To avoid that, we could
+do an unconditional first execution and insert the loop condition
+in the end. This effectively means transforming the loop into a do-while loop:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="mi">0</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="n">v</span><span class="p">);</span>
+<span class="w">    </span><span class="o">++</span><span class="n">i</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">n</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Note that LoopRotate does not generally do such
+hoisting.  Rather, it is an enabling transformation for other
+passes like Loop-Invariant Code Motion (<a class="reference internal" href="Passes.html#passes-licm"><span class="std std-ref">-licm</span></a>).</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="MarkdownQuickstartTemplate.html" title="Markdown Quickstart Template"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="LinkTimeOptimization.html" title="LLVM Link Time Optimization: Design and Implementation"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">LLVM Loop Terminology (and Canonical Forms)</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-08-26.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
