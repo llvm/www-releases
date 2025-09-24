@@ -1,0 +1,348 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Linker Script implementation notes and policy &#8212; lld 21.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm.css?v=1cf7c864" />
+    <script src="../_static/documentation_options.js?v=56ca4867"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="-z start-stop-gc" href="start-stop-gc.html" />
+    <link rel="prev" title="Large data sections" href="large_sections.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+<a href="../index.html"><img src="../_static/logo.png" alt="LLVM Documentation"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="start-stop-gc.html" title="-z start-stop-gc"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="large_sections.html" title="Large data sections"
+             accesskey="P">previous</a> |</li>
+  <li><a href="../index.html">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Linker Script implementation notes and policy</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <div>
+    <h3><a href="../index.html">Table of Contents</a></h3>
+    <ul>
+<li><a class="reference internal" href="#">Linker Script implementation notes and policy</a><ul>
+<li><a class="reference internal" href="#symbol-assignment">Symbol assignment</a></li>
+<li><a class="reference internal" href="#sections-command">SECTIONS command</a></li>
+<li><a class="reference internal" href="#output-section-description">Output section description</a><ul>
+<li><a class="reference internal" href="#output-section-address">Output section address</a></li>
+<li><a class="reference internal" href="#output-section-type">Output section type</a></li>
+<li><a class="reference internal" href="#output-section-alignment">Output section alignment</a></li>
+<li><a class="reference internal" href="#output-section-lma">Output section LMA</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#overwrite-sections">Overwrite sections</a></li>
+<li><a class="reference internal" href="#built-in-functions">Built-in functions</a></li>
+<li><a class="reference internal" href="#section-classes">Section Classes</a></li>
+<li><a class="reference internal" href="#non-contiguous-regions">Non-contiguous regions</a></li>
+</ul>
+</li>
+</ul>
+
+  </div>
+  <div>
+    <h4>Previous topic</h4>
+    <p class="topless"><a href="large_sections.html"
+                          title="previous chapter">Large data sections</a></p>
+  </div>
+  <div>
+    <h4>Next topic</h4>
+    <p class="topless"><a href="start-stop-gc.html"
+                          title="next chapter">-z start-stop-gc</a></p>
+  </div>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/ELF/linker_script.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="linker-script-implementation-notes-and-policy">
+<h1>Linker Script implementation notes and policy<a class="headerlink" href="#linker-script-implementation-notes-and-policy" title="Link to this heading">¶</a></h1>
+<p>LLD implements a large subset of the GNU ld linker script notation. The LLD
+implementation policy is to implement linker script features as they are
+documented in the ld <a class="reference external" href="https://sourceware.org/binutils/docs/ld/Scripts.html">manual</a>
+We consider it a bug if the lld implementation does not agree with the manual
+and it is not mentioned in the exceptions below.</p>
+<p>The ld manual is not a complete specification, and is not sufficient to build
+an implementation. In particular some features are only defined by the
+implementation and have changed over time.</p>
+<p>The lld implementation policy for properties of linker scripts that are not
+defined by the documentation is to follow the GNU ld implementation wherever
+possible. We reserve the right to make different implementation choices where
+it is appropriate for LLD. Intentional deviations will be documented in this
+file.</p>
+<section id="symbol-assignment">
+<h2>Symbol assignment<a class="headerlink" href="#symbol-assignment" title="Link to this heading">¶</a></h2>
+<p>A symbol assignment looks like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">symbol</span> <span class="o">=</span> <span class="n">expression</span><span class="p">;</span>
+<span class="n">symbol</span> <span class="o">+=</span> <span class="n">expression</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The first form defines <code class="docutils literal notranslate"><span class="pre">symbol</span></code>. If <code class="docutils literal notranslate"><span class="pre">symbol</span></code> is already defined, it will be
+overridden. The other form requires <code class="docutils literal notranslate"><span class="pre">symbol</span></code> to be already defined.</p>
+<p>For a simple assignment like <code class="docutils literal notranslate"><span class="pre">alias</span> <span class="pre">=</span> <span class="pre">aliasee;</span></code>, the <code class="docutils literal notranslate"><span class="pre">st_type</span></code> field is
+copied from the original symbol. Any arithmetic operation (e.g. <code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">0</span></code> will
+reset <code class="docutils literal notranslate"><span class="pre">st_type</span></code> to <code class="docutils literal notranslate"><span class="pre">STT_NOTYPE</span></code>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">st_size</span></code> field is set to 0.</p>
+</section>
+<section id="sections-command">
+<h2>SECTIONS command<a class="headerlink" href="#sections-command" title="Link to this heading">¶</a></h2>
+<p>A <code class="docutils literal notranslate"><span class="pre">SECTIONS</span></code> command looks like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">SECTIONS</span> <span class="p">{</span>
+  <span class="n">section</span><span class="o">-</span><span class="n">command</span>
+  <span class="n">section</span><span class="o">-</span><span class="n">command</span>
+  <span class="o">...</span>
+<span class="p">}</span> <span class="p">[</span><span class="n">INSERT</span> <span class="p">[</span><span class="n">AFTER</span><span class="o">|</span><span class="n">BEFORE</span><span class="p">]</span> <span class="n">anchor_section</span><span class="p">;]</span>
+</pre></div>
+</div>
+<p>Each section-command can be a symbol assignment, an output section description,
+or an overlay description.</p>
+<p>When the <code class="docutils literal notranslate"><span class="pre">INSERT</span></code> keyword is present, the <code class="docutils literal notranslate"><span class="pre">SECTIONS</span></code> command describes some
+output sections which should be inserted after or before the specified anchor
+section. The insertion occurs after input sections have been mapped to output
+sections but before orphan sections have been processed.</p>
+<p>In the case where no linker script has been provided or every <code class="docutils literal notranslate"><span class="pre">SECTIONS</span></code>
+command is followed by <code class="docutils literal notranslate"><span class="pre">INSERT</span></code>, LLD applies built-in rules which are similar
+to GNU ld’s internal linker scripts.</p>
+<ul class="simple">
+<li><p>Align the first section in a <code class="docutils literal notranslate"><span class="pre">PT_LOAD</span></code> segment according to
+<code class="docutils literal notranslate"><span class="pre">-z</span> <span class="pre">noseparate-code</span></code>, <code class="docutils literal notranslate"><span class="pre">-z</span> <span class="pre">separate-code</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">-z</span> <span class="pre">separate-loadable-segments</span></code></p></li>
+<li><p>Define <code class="docutils literal notranslate"><span class="pre">__bss_start</span></code>, <code class="docutils literal notranslate"><span class="pre">end</span></code>, <code class="docutils literal notranslate"><span class="pre">_end</span></code>, <code class="docutils literal notranslate"><span class="pre">etext</span></code>, <code class="docutils literal notranslate"><span class="pre">_etext</span></code>, <code class="docutils literal notranslate"><span class="pre">edata</span></code>,
+<code class="docutils literal notranslate"><span class="pre">_edata</span></code></p></li>
+<li><p>Sort <code class="docutils literal notranslate"><span class="pre">.ctors.*</span></code>/<code class="docutils literal notranslate"><span class="pre">.dtors.*</span></code>/<code class="docutils literal notranslate"><span class="pre">.init_array.*</span></code>/<code class="docutils literal notranslate"><span class="pre">.fini_array.*</span></code> and
+PowerPC64 specific <code class="docutils literal notranslate"><span class="pre">.toc</span></code></p></li>
+<li><p>Place input <code class="docutils literal notranslate"><span class="pre">.text.*</span></code> into output <code class="docutils literal notranslate"><span class="pre">.text</span></code>, and handle certain variants
+(<code class="docutils literal notranslate"><span class="pre">.text.hot.</span></code>, <code class="docutils literal notranslate"><span class="pre">.text.unknown.</span></code>, <code class="docutils literal notranslate"><span class="pre">.text.unlikely.</span></code>, etc) in the
+presence of <code class="docutils literal notranslate"><span class="pre">-z</span> <span class="pre">keep-text-section-prefix</span></code>.</p></li>
+</ul>
+</section>
+<section id="output-section-description">
+<h2>Output section description<a class="headerlink" href="#output-section-description" title="Link to this heading">¶</a></h2>
+<p>The description of an output section looks like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">section</span> <span class="p">[</span><span class="n">address</span><span class="p">]</span> <span class="p">[(</span><span class="nb">type</span><span class="p">)]</span> <span class="p">:</span> <span class="p">[</span><span class="n">AT</span><span class="p">(</span><span class="n">lma</span><span class="p">)]</span> <span class="p">[</span><span class="n">ALIGN</span><span class="p">(</span><span class="n">section_align</span><span class="p">)]</span> <span class="p">[</span><span class="n">SUBALIGN</span><span class="p">](</span><span class="n">subsection_align</span><span class="p">)]</span> <span class="p">{</span>
+  <span class="n">output</span><span class="o">-</span><span class="n">section</span><span class="o">-</span><span class="n">command</span>
+  <span class="o">...</span>
+<span class="p">}</span> <span class="p">[</span><span class="o">&gt;</span><span class="n">region</span><span class="p">]</span> <span class="p">[</span><span class="n">AT</span><span class="o">&gt;</span><span class="n">lma_region</span><span class="p">]</span> <span class="p">[:</span><span class="n">phdr</span> <span class="o">...</span><span class="p">]</span> <span class="p">[</span><span class="o">=</span><span class="n">fillexp</span><span class="p">]</span> <span class="p">[,]</span>
+</pre></div>
+</div>
+<section id="output-section-address">
+<h3>Output section address<a class="headerlink" href="#output-section-address" title="Link to this heading">¶</a></h3>
+<p>When an <em>OutputSection</em> <em>S</em> has <code class="docutils literal notranslate"><span class="pre">address</span></code>, LLD will set sh_addr to <code class="docutils literal notranslate"><span class="pre">address</span></code>.</p>
+<p>The ELF specification says:</p>
+<p>&gt; The value of sh_addr must be congruent to 0, modulo the value of sh_addralign.</p>
+<p>The presence of <code class="docutils literal notranslate"><span class="pre">address</span></code> can cause the condition unsatisfied. LLD will warn.
+GNU ld from Binutils 2.35 onwards will reduce sh_addralign so that
+sh_addr=0 (modulo sh_addralign).</p>
+<p>When an output section has no input section, GNU ld will eliminate it if it
+only contains symbol assignments (e.g. <code class="docutils literal notranslate"><span class="pre">.foo</span> <span class="pre">{</span> <span class="pre">symbol</span> <span class="pre">=</span> <span class="pre">42;</span> <span class="pre">}</span></code>). LLD will
+retain such sections unless all the symbol assignments are unreferenced
+<code class="docutils literal notranslate"><span class="pre">PROVIDED</span></code>.</p>
+<p>When an output section has no input section but advances the location counter,
+GNU ld sets the <code class="docutils literal notranslate"><span class="pre">SHF_WRITE</span></code> flag. LLD sets the SHF_WRITE flag only if the
+preceding output section with non-empty input sections also has the SHF_WRITE
+flag.</p>
+</section>
+<section id="output-section-type">
+<h3>Output section type<a class="headerlink" href="#output-section-type" title="Link to this heading">¶</a></h3>
+<p>When an <em>OutputSection</em> <em>S</em> has <code class="docutils literal notranslate"><span class="pre">(type)</span></code>, LLD will set <code class="docutils literal notranslate"><span class="pre">sh_type</span></code> or
+<code class="docutils literal notranslate"><span class="pre">sh_flags</span></code> of <em>S</em>. <code class="docutils literal notranslate"><span class="pre">type</span></code> is one of:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">NOLOAD</span></code>: set <code class="docutils literal notranslate"><span class="pre">sh_type</span></code> to <code class="docutils literal notranslate"><span class="pre">SHT_NOBITS</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">COPY</span></code>, <code class="docutils literal notranslate"><span class="pre">INFO</span></code>, <code class="docutils literal notranslate"><span class="pre">OVERLAY</span></code>: clear the <code class="docutils literal notranslate"><span class="pre">SHF_ALLOC</span></code> bit in <code class="docutils literal notranslate"><span class="pre">sh_flags</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE=&lt;value&gt;</span></code>: set <code class="docutils literal notranslate"><span class="pre">sh_type</span></code> to the specified value. <code class="docutils literal notranslate"><span class="pre">&lt;value&gt;</span></code> must be
+an integer or one of <code class="docutils literal notranslate"><span class="pre">SHT_PROGBITS,</span> <span class="pre">SHT_NOTE,</span> <span class="pre">SHT_NOBITS,</span> <span class="pre">SHT_INIT_ARRAY,</span>
+<span class="pre">SHT_FINI_ARRAY,</span> <span class="pre">SHT_PREINIT_ARRAY</span></code>.</p></li>
+</ul>
+<p>When <code class="docutils literal notranslate"><span class="pre">sh_type</span></code> is specified, it is an error if an input section in <em>S</em> has a
+different type.</p>
+</section>
+<section id="output-section-alignment">
+<h3>Output section alignment<a class="headerlink" href="#output-section-alignment" title="Link to this heading">¶</a></h3>
+<p>sh_addralign of an <em>OutputSection</em> <em>S</em> is the maximum of
+<code class="docutils literal notranslate"><span class="pre">ALIGN(section_align)</span></code> and the maximum alignment of the input sections in
+<em>S</em>.</p>
+<p>When an <em>OutputSection</em> <em>S</em> has both <code class="docutils literal notranslate"><span class="pre">address</span></code> and <code class="docutils literal notranslate"><span class="pre">ALIGN(section_align)</span></code>,
+GNU ld will set sh_addralign to <code class="docutils literal notranslate"><span class="pre">ALIGN(section_align)</span></code>.</p>
+</section>
+<section id="output-section-lma">
+<h3>Output section LMA<a class="headerlink" href="#output-section-lma" title="Link to this heading">¶</a></h3>
+<p>A load address (LMA) can be specified by <code class="docutils literal notranslate"><span class="pre">AT(lma)</span></code> or <code class="docutils literal notranslate"><span class="pre">AT&gt;lma_region</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">AT(lma)</span></code> specifies the exact load address. If the linker script does not
+have a PHDRS command, then a new loadable segment will be generated.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">AT&gt;lma_region</span></code> specifies the LMA region. The lack of <code class="docutils literal notranslate"><span class="pre">AT&gt;lma_region</span></code>
+means the default region is used. Note, GNU ld propagates the previous LMA
+memory region when <code class="docutils literal notranslate"><span class="pre">address</span></code> is not specified. The LMA is set to the
+current location of the memory region aligned to the section alignment.
+If the linker script does not have a PHDRS command, then if
+<code class="docutils literal notranslate"><span class="pre">lma_region</span></code> is different from the <code class="docutils literal notranslate"><span class="pre">lma_region</span></code> for
+the previous OutputSection a new loadable segment will be generated.</p></li>
+</ul>
+<p>The two keywords cannot be specified at the same time.</p>
+<p>If neither <code class="docutils literal notranslate"><span class="pre">AT(lma)</span></code> nor <code class="docutils literal notranslate"><span class="pre">AT&gt;lma_region</span></code> is specified:</p>
+<ul class="simple">
+<li><p>If the previous section is also in the default LMA region, and the two
+section have the same memory regions, the difference between the LMA and the
+VMA is computed to be the same as the previous difference.</p></li>
+<li><p>Otherwise, the LMA is set to the VMA.</p></li>
+</ul>
+</section>
+</section>
+<section id="overwrite-sections">
+<h2>Overwrite sections<a class="headerlink" href="#overwrite-sections" title="Link to this heading">¶</a></h2>
+<p>An <code class="docutils literal notranslate"><span class="pre">OVERWRITE_SECTIONS</span></code> command looks like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">OVERWRITE_SECTIONS</span> <span class="p">{</span>
+  <span class="n">output</span><span class="o">-</span><span class="n">section</span><span class="o">-</span><span class="n">description</span>
+  <span class="n">output</span><span class="o">-</span><span class="n">section</span><span class="o">-</span><span class="n">description</span>
+  <span class="o">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Unlike a <code class="docutils literal notranslate"><span class="pre">SECTIONS</span></code> command, <code class="docutils literal notranslate"><span class="pre">OVERWRITE_SECTIONS</span></code>  does not specify a
+section order or suppress the built-in rules.</p>
+<p>If a described output section description also appears in a <code class="docutils literal notranslate"><span class="pre">SECTIONS</span></code>
+command, the <code class="docutils literal notranslate"><span class="pre">OVERWRITE_SECTIONS</span></code> command wins; otherwise, the output section
+will be added somewhere following the usual orphan section placement rules.</p>
+<p>If a described output section description also appears in an <code class="docutils literal notranslate"><span class="pre">INSERT</span>
+<span class="pre">[AFTER|BEFORE]</span></code> command, the description will be provided by the
+description in the <code class="docutils literal notranslate"><span class="pre">OVERWRITE_SECTIONS</span></code> command while the insert command
+still applies (possibly after orphan section placement). It is recommended to
+leave the brace empty (i.e. <code class="docutils literal notranslate"><span class="pre">section</span> <span class="pre">:</span> <span class="pre">{}</span></code>) for the insert command, because
+its description will be ignored anyway.</p>
+</section>
+<section id="built-in-functions">
+<h2>Built-in functions<a class="headerlink" href="#built-in-functions" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">DATA_SEGMENT_RELRO_END(offset,</span> <span class="pre">exp)</span></code> defines the end of the <code class="docutils literal notranslate"><span class="pre">PT_GNU_RELRO</span></code>
+segment when <code class="docutils literal notranslate"><span class="pre">-z</span> <span class="pre">relro</span></code> (default) is in effect. Sections between
+<code class="docutils literal notranslate"><span class="pre">DATA_SEGMENT_ALIGN</span></code> and <code class="docutils literal notranslate"><span class="pre">DATA_SEGMENT_RELRO_END</span></code> are considered RELRO.</p>
+<p>The typical use case is <code class="docutils literal notranslate"><span class="pre">.</span> <span class="pre">=</span> <span class="pre">DATA_SEGMENT_RELRO_END(0,</span> <span class="pre">.);</span></code> followed by
+writable but non-RELRO sections. LLD ignores <code class="docutils literal notranslate"><span class="pre">offset</span></code> and <code class="docutils literal notranslate"><span class="pre">exp</span></code> and aligns
+the current location to a max-page-size boundary, ensuring that the next
+<code class="docutils literal notranslate"><span class="pre">PT_LOAD</span></code> segment will not overlap with the <code class="docutils literal notranslate"><span class="pre">PT_GNU_RELRO</span></code> segment.</p>
+<p>LLD will insert <code class="docutils literal notranslate"><span class="pre">.relro_padding</span></code> immediately before the symbol assignment
+using <code class="docutils literal notranslate"><span class="pre">DATA_SEGMENT_RELRO_END</span></code>.</p>
+</section>
+<section id="section-classes">
+<h2>Section Classes<a class="headerlink" href="#section-classes" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">CLASS</span></code> keyword inside a <code class="docutils literal notranslate"><span class="pre">SECTIONS</span></code> command defines classes of input
+sections:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">SECTIONS</span> <span class="p">{</span>
+  <span class="n">CLASS</span><span class="p">(</span><span class="n">class_name</span><span class="p">)</span> <span class="p">{</span>
+    <span class="nb">input</span><span class="o">-</span><span class="n">section</span><span class="o">-</span><span class="n">description</span>
+    <span class="nb">input</span><span class="o">-</span><span class="n">section</span><span class="o">-</span><span class="n">description</span>
+    <span class="o">...</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Input section descriptions refer to a class using <code class="docutils literal notranslate"><span class="pre">CLASS(class_name)</span></code>
+instead of the usual filename and section name patterns. For example:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">SECTIONS</span> <span class="p">{</span>
+  <span class="n">CLASS</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="p">{</span> <span class="o">*</span><span class="p">(</span><span class="o">.</span><span class="n">rodata</span><span class="o">.</span><span class="n">earlier</span><span class="p">)</span> <span class="p">}</span>
+  <span class="o">.</span><span class="n">rodata</span> <span class="p">{</span> <span class="o">*</span><span class="p">(</span><span class="o">.</span><span class="n">rodata</span><span class="p">)</span> <span class="n">CLASS</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="p">(</span><span class="o">*.</span><span class="n">rodata</span><span class="o">.</span><span class="n">later</span><span class="p">)</span> <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Input sections that are assigned to a class are not matched by later patterns,
+just as if they had been assigned to an earlier output section. If a class is
+referenced in multiple output sections, when a memory region would overflow,
+the linker spills input sections from a reference to later references rather
+than failing the link.</p>
+<p>Classes cannot reference other classes; an input section is assigned to at most
+one class.</p>
+<p>Sections cannot be specified to possibly spill into or out of
+<code class="docutils literal notranslate"><span class="pre">INSERT</span> <span class="pre">[AFTER|BEFORE]</span></code>, <code class="docutils literal notranslate"><span class="pre">OVERWRITE_SECTIONS</span></code>, or <code class="docutils literal notranslate"><span class="pre">/DISCARD/</span></code>.</p>
+</section>
+<section id="non-contiguous-regions">
+<h2>Non-contiguous regions<a class="headerlink" href="#non-contiguous-regions" title="Link to this heading">¶</a></h2>
+<p>The flag <code class="docutils literal notranslate"><span class="pre">--enable-non-contiguous-regions</span></code> provides a version of the above
+spilling functionality that is more compatible with GNU LD. It allows input
+sections to spill to later pattern matches. (This globally changes the behavior
+of patterns.) Unlike GNU ld, <code class="docutils literal notranslate"><span class="pre">/DISCARD/</span></code> only matches previously-unmatched
+sections (i.e., the flag does not affect it). Also, if a section fails to fit
+at any of its matches, the link fails instead of discarding the section.
+Accordingly, the GNU flag <code class="docutils literal notranslate"><span class="pre">--enable-non-contiguous-regions-warnings</span></code> is not
+implemented, as it exists to warn about such occurrences.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="start-stop-gc.html" title="-z start-stop-gc"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="large_sections.html" title="Large data sections"
+             >previous</a> |</li>
+  <li><a href="../index.html">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Linker Script implementation notes and policy</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2025, LLVM Project.
+      Last updated on 2025-09-23.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

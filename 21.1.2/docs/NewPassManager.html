@@ -1,0 +1,597 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Using the New Pass Manager &#8212; LLVM 21.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=56ca4867"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="User Guide for NVPTX Back-end" href="NVPTXUsage.html" />
+    <link rel="prev" title="JITLink and ORC’s ObjectLinkingLayer" href="JITLink.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="NVPTXUsage.html" title="User Guide for NVPTX Back-end"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="JITLink.html" title="JITLink and ORC’s ObjectLinkingLayer"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Using the New Pass Manager</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/NewPassManager.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="using-the-new-pass-manager">
+<h1>Using the New Pass Manager<a class="headerlink" href="#using-the-new-pass-manager" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id1">Overview</a></p></li>
+<li><p><a class="reference internal" href="#just-tell-me-how-to-run-the-default-optimization-pipeline-with-the-new-pass-manager" id="id2">Just Tell Me How To Run The Default Optimization Pipeline With The New Pass Manager</a></p></li>
+<li><p><a class="reference internal" href="#adding-passes-to-a-pass-manager" id="id3">Adding Passes to a Pass Manager</a></p></li>
+<li><p><a class="reference internal" href="#inserting-passes-into-default-pipelines" id="id4">Inserting Passes into Default Pipelines</a></p></li>
+<li><p><a class="reference internal" href="#using-analyses" id="id5">Using Analyses</a></p></li>
+<li><p><a class="reference internal" href="#implementing-analysis-invalidation" id="id6">Implementing Analysis Invalidation</a></p></li>
+<li><p><a class="reference internal" href="#invoking-opt" id="id7">Invoking <code class="docutils literal notranslate"><span class="pre">opt</span></code></a></p></li>
+<li><p><a class="reference internal" href="#status-of-the-new-and-legacy-pass-managers" id="id8">Status of the New and Legacy Pass Managers</a></p></li>
+</ul>
+</nav>
+<section id="overview">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>For an overview of the new pass manager, see the <a class="reference external" href="https://blog.llvm.org/posts/2021-03-26-the-new-pass-manager/">blog post</a>.</p>
+</section>
+<section id="just-tell-me-how-to-run-the-default-optimization-pipeline-with-the-new-pass-manager">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Just Tell Me How To Run The Default Optimization Pipeline With The New Pass Manager</a><a class="headerlink" href="#just-tell-me-how-to-run-the-default-optimization-pipeline-with-the-new-pass-manager" title="Link to this heading">¶</a></h2>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Create the analysis managers.</span>
+<span class="c1">// These must be declared in this order so that they are destroyed in the</span>
+<span class="c1">// correct order due to inter-analysis-manager references.</span>
+<span class="n">LoopAnalysisManager</span><span class="w"> </span><span class="n">LAM</span><span class="p">;</span>
+<span class="n">FunctionAnalysisManager</span><span class="w"> </span><span class="n">FAM</span><span class="p">;</span>
+<span class="n">CGSCCAnalysisManager</span><span class="w"> </span><span class="n">CGAM</span><span class="p">;</span>
+<span class="n">ModuleAnalysisManager</span><span class="w"> </span><span class="n">MAM</span><span class="p">;</span>
+
+<span class="c1">// Create the new pass manager builder.</span>
+<span class="c1">// Take a look at the PassBuilder constructor parameters for more</span>
+<span class="c1">// customization, e.g. specifying a TargetMachine or various debugging</span>
+<span class="c1">// options.</span>
+<span class="n">PassBuilder</span><span class="w"> </span><span class="n">PB</span><span class="p">;</span>
+
+<span class="c1">// Register all the basic analyses with the managers.</span>
+<span class="n">PB</span><span class="p">.</span><span class="n">registerModuleAnalyses</span><span class="p">(</span><span class="n">MAM</span><span class="p">);</span>
+<span class="n">PB</span><span class="p">.</span><span class="n">registerCGSCCAnalyses</span><span class="p">(</span><span class="n">CGAM</span><span class="p">);</span>
+<span class="n">PB</span><span class="p">.</span><span class="n">registerFunctionAnalyses</span><span class="p">(</span><span class="n">FAM</span><span class="p">);</span>
+<span class="n">PB</span><span class="p">.</span><span class="n">registerLoopAnalyses</span><span class="p">(</span><span class="n">LAM</span><span class="p">);</span>
+<span class="n">PB</span><span class="p">.</span><span class="n">crossRegisterProxies</span><span class="p">(</span><span class="n">LAM</span><span class="p">,</span><span class="w"> </span><span class="n">FAM</span><span class="p">,</span><span class="w"> </span><span class="n">CGAM</span><span class="p">,</span><span class="w"> </span><span class="n">MAM</span><span class="p">);</span>
+
+<span class="c1">// Create the pass manager.</span>
+<span class="c1">// This one corresponds to a typical -O2 optimization pipeline.</span>
+<span class="n">ModulePassManager</span><span class="w"> </span><span class="n">MPM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PB</span><span class="p">.</span><span class="n">buildPerModuleDefaultPipeline</span><span class="p">(</span><span class="n">OptimizationLevel</span><span class="o">::</span><span class="n">O2</span><span class="p">);</span>
+
+<span class="c1">// Optimize the IR!</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">run</span><span class="p">(</span><span class="n">MyModule</span><span class="p">,</span><span class="w"> </span><span class="n">MAM</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The C API also supports most of this, see <code class="docutils literal notranslate"><span class="pre">llvm-c/Transforms/PassBuilder.h</span></code>.</p>
+</section>
+<section id="adding-passes-to-a-pass-manager">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Adding Passes to a Pass Manager</a><a class="headerlink" href="#adding-passes-to-a-pass-manager" title="Link to this heading">¶</a></h2>
+<p>For how to write a new PM pass, see <a class="reference internal" href="WritingAnLLVMNewPMPass.html"><span class="doc">this page</span></a>.</p>
+<p>To add a pass to a new PM pass manager, the important thing is to match the
+pass type and the pass manager type. For example, a <code class="docutils literal notranslate"><span class="pre">FunctionPassManager</span></code>
+can only contain function passes:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">FunctionPassManager</span><span class="w"> </span><span class="n">FPM</span><span class="p">;</span>
+<span class="c1">// InstSimplifyPass is a function pass</span>
+<span class="n">FPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">InstSimplifyPass</span><span class="p">());</span>
+</pre></div>
+</div>
+<p>If you want to add a loop pass that runs on all loops in a function to a
+<code class="docutils literal notranslate"><span class="pre">FunctionPassManager</span></code>, the loop pass must be wrapped in a function pass
+adaptor that goes through all the loops in the function and runs the loop
+pass on each one.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">FunctionPassManager</span><span class="w"> </span><span class="n">FPM</span><span class="p">;</span>
+<span class="c1">// LoopRotatePass is a loop pass</span>
+<span class="n">FPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createFunctionToLoopPassAdaptor</span><span class="p">(</span><span class="n">LoopRotatePass</span><span class="p">()));</span>
+</pre></div>
+</div>
+<p>The IR hierarchy in terms of the new PM is Module -&gt; (CGSCC -&gt;) Function -&gt;
+Loop, where going through a CGSCC is optional.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">FunctionPassManager</span><span class="w"> </span><span class="n">FPM</span><span class="p">;</span>
+<span class="c1">// loop -&gt; function</span>
+<span class="n">FPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createFunctionToLoopPassAdaptor</span><span class="p">(</span><span class="n">LoopFooPass</span><span class="p">()));</span>
+
+<span class="n">CGSCCPassManager</span><span class="w"> </span><span class="n">CGPM</span><span class="p">;</span>
+<span class="c1">// loop -&gt; function -&gt; cgscc</span>
+<span class="n">CGPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createCGSCCToFunctionPassAdaptor</span><span class="p">(</span><span class="n">createFunctionToLoopPassAdaptor</span><span class="p">(</span><span class="n">LoopFooPass</span><span class="p">())));</span>
+<span class="c1">// function -&gt; cgscc</span>
+<span class="n">CGPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createCGSCCToFunctionPassAdaptor</span><span class="p">(</span><span class="n">FunctionFooPass</span><span class="p">()));</span>
+
+<span class="n">ModulePassManager</span><span class="w"> </span><span class="n">MPM</span><span class="p">;</span>
+<span class="c1">// loop -&gt; function -&gt; module</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToFunctionPassAdaptor</span><span class="p">(</span><span class="n">createFunctionToLoopPassAdaptor</span><span class="p">(</span><span class="n">LoopFooPass</span><span class="p">())));</span>
+<span class="c1">// function -&gt; module</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToFunctionPassAdaptor</span><span class="p">(</span><span class="n">FunctionFooPass</span><span class="p">()));</span>
+
+<span class="c1">// loop -&gt; function -&gt; cgscc -&gt; module</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToPostOrderCGSCCPassAdaptor</span><span class="p">(</span><span class="n">createCGSCCToFunctionPassAdaptor</span><span class="p">(</span><span class="n">createFunctionToLoopPassAdaptor</span><span class="p">(</span><span class="n">LoopFooPass</span><span class="p">()))));</span>
+<span class="c1">// function -&gt; cgscc -&gt; module</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToPostOrderCGSCCPassAdaptor</span><span class="p">(</span><span class="n">createCGSCCToFunctionPassAdaptor</span><span class="p">(</span><span class="n">FunctionFooPass</span><span class="p">())));</span>
+</pre></div>
+</div>
+<p>A pass manager of a specific IR unit is also a pass of that kind. For
+example, a <code class="docutils literal notranslate"><span class="pre">FunctionPassManager</span></code> is a function pass, meaning it can be
+added to a <code class="docutils literal notranslate"><span class="pre">ModulePassManager</span></code>:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">ModulePassManager</span><span class="w"> </span><span class="n">MPM</span><span class="p">;</span>
+
+<span class="n">FunctionPassManager</span><span class="w"> </span><span class="n">FPM</span><span class="p">;</span>
+<span class="c1">// InstSimplifyPass is a function pass</span>
+<span class="n">FPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">InstSimplifyPass</span><span class="p">());</span>
+
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToFunctionPassAdaptor</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">FPM</span><span class="p">)));</span>
+</pre></div>
+</div>
+<p>Generally you want to group CGSCC/function/loop passes together in a pass
+manager, as opposed to adding adaptors for each pass to the containing upper
+level pass manager. For example,</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">ModulePassManager</span><span class="w"> </span><span class="n">MPM</span><span class="p">;</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToFunctionPassAdaptor</span><span class="p">(</span><span class="n">FunctionPass1</span><span class="p">()));</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToFunctionPassAdaptor</span><span class="p">(</span><span class="n">FunctionPass2</span><span class="p">()));</span>
+<span class="n">MPM</span><span class="p">.</span><span class="n">run</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>will run <code class="docutils literal notranslate"><span class="pre">FunctionPass1</span></code> on each function in a module, then run
+<code class="docutils literal notranslate"><span class="pre">FunctionPass2</span></code> on each function in the module. In contrast,</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">ModulePassManager</span><span class="w"> </span><span class="n">MPM</span><span class="p">;</span>
+
+<span class="n">FunctionPassManager</span><span class="w"> </span><span class="n">FPM</span><span class="p">;</span>
+<span class="n">FPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">FunctionPass1</span><span class="p">());</span>
+<span class="n">FPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">FunctionPass2</span><span class="p">());</span>
+
+<span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">createModuleToFunctionPassAdaptor</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">FPM</span><span class="p">)));</span>
+</pre></div>
+</div>
+<p>will run <code class="docutils literal notranslate"><span class="pre">FunctionPass1</span></code> and <code class="docutils literal notranslate"><span class="pre">FunctionPass2</span></code> on the first function in a
+module, then run both passes on the second function in the module, and so on.
+This is better for cache locality around LLVM data structures. This similarly
+applies for the other IR types, and in some cases can even affect the quality
+of optimization. For example, running all loop passes on a loop may cause a
+later loop to be able to be optimized more than if each loop pass were run
+separately.</p>
+</section>
+<section id="inserting-passes-into-default-pipelines">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Inserting Passes into Default Pipelines</a><a class="headerlink" href="#inserting-passes-into-default-pipelines" title="Link to this heading">¶</a></h2>
+<p>Rather than manually adding passes to a pass manager, the typical way of
+creating a pass manager is to use a <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> and call something like
+<code class="docutils literal notranslate"><span class="pre">PassBuilder::buildPerModuleDefaultPipeline()</span></code> which creates a typical
+pipeline for a given optimization level.</p>
+<p>Sometimes either frontends or backends will want to inject passes into the
+pipeline. For example, frontends may want to add instrumentation, and target
+backends may want to add passes that lower custom intrinsics. For these
+cases, <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> exposes callbacks that allow injecting passes into
+certain parts of the pipeline. For example,</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">PassBuilder</span><span class="w"> </span><span class="n">PB</span><span class="p">;</span>
+<span class="n">PB</span><span class="p">.</span><span class="n">registerPipelineStartEPCallback</span><span class="p">(</span>
+<span class="w">    </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="n">ModulePassManager</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MPM</span><span class="p">,</span><span class="w"> </span><span class="n">PassBuilder</span><span class="o">::</span><span class="n">OptimizationLevel</span><span class="w"> </span><span class="n">Level</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">MPM</span><span class="p">.</span><span class="n">addPass</span><span class="p">(</span><span class="n">FooPass</span><span class="p">());</span>
+<span class="w">    </span><span class="p">});</span>
+</pre></div>
+</div>
+<p>will add <code class="docutils literal notranslate"><span class="pre">FooPass</span></code> near the very beginning of the pipeline for pass
+managers created by that <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code>. See the documentation for
+<code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> for the various places that passes can be added.</p>
+<p>If a <code class="docutils literal notranslate"><span class="pre">PassBuilder</span></code> has a corresponding <code class="docutils literal notranslate"><span class="pre">TargetMachine</span></code> for a backend, it
+will call <code class="docutils literal notranslate"><span class="pre">TargetMachine::registerPassBuilderCallbacks()</span></code> to allow the
+backend to inject passes into the pipeline.</p>
+<p>Clang’s <code class="docutils literal notranslate"><span class="pre">BackendUtil.cpp</span></code> shows examples of a frontend adding (mostly
+sanitizer) passes to various parts of the pipeline.
+<code class="docutils literal notranslate"><span class="pre">AMDGPUTargetMachine::registerPassBuilderCallbacks()</span></code> is an example of a
+backend adding passes to various parts of the pipeline.</p>
+<p>Pass plugins can also add passes into default pipelines. Different tools have
+different ways of loading dynamic pass plugins. For example, <code class="docutils literal notranslate"><span class="pre">opt</span>
+<span class="pre">-load-pass-plugin=path/to/plugin.so</span></code> loads a pass plugin into <code class="docutils literal notranslate"><span class="pre">opt</span></code>. For
+information on writing a pass plugin, see <a class="reference internal" href="WritingAnLLVMNewPMPass.html"><span class="doc">Writing an LLVM Pass</span></a>.</p>
+</section>
+<section id="using-analyses">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Using Analyses</a><a class="headerlink" href="#using-analyses" title="Link to this heading">¶</a></h2>
+<p>LLVM provides many analyses that passes can use, such as a dominator tree.
+Calculating these can be expensive, so the new pass manager has
+infrastructure to cache analyses and reuse them when possible.</p>
+<p>When a pass runs on some IR, it also receives an analysis manager which it can
+query for analyses. Querying for an analysis will cause the manager to check if
+it has already computed the result for the requested IR. If it already has and
+the result is still valid, it will return that. Otherwise it will construct a
+new result by calling the analysis’s <code class="docutils literal notranslate"><span class="pre">run()</span></code> method, cache it, and return it.
+You can also ask the analysis manager to only return an analysis if it’s
+already cached.</p>
+<p>The analysis manager only provides analysis results for the same IR type as
+what the pass runs on. For example, a function pass receives an analysis
+manager that only provides function-level analyses. This works for many
+passes which work on a fixed scope. However, some passes want to peek up or
+down the IR hierarchy. For example, an SCC pass may want to look at function
+analyses for the functions inside the SCC. Or it may want to look at some
+immutable global analysis. In these cases, the analysis manager can provide a
+proxy to an outer or inner level analysis manager. For example, to get a
+<code class="docutils literal notranslate"><span class="pre">FunctionAnalysisManager</span></code> from a <code class="docutils literal notranslate"><span class="pre">CGSCCAnalysisManager</span></code>, you can call</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">FunctionAnalysisManager</span><span class="w"> </span><span class="o">&amp;</span><span class="n">FAM</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">AM</span><span class="p">.</span><span class="n">getResult</span><span class="o">&lt;</span><span class="n">FunctionAnalysisManagerCGSCCProxy</span><span class="o">&gt;</span><span class="p">(</span><span class="n">InitialC</span><span class="p">,</span><span class="w"> </span><span class="n">CG</span><span class="p">)</span>
+<span class="w">        </span><span class="p">.</span><span class="n">getManager</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>and use <code class="docutils literal notranslate"><span class="pre">FAM</span></code> as a typical <code class="docutils literal notranslate"><span class="pre">FunctionAnalysisManager</span></code> that a function pass
+would have access to. To get access to an outer level IR analysis, you can
+call</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">MAMProxy</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">AM</span><span class="p">.</span><span class="n">getResult</span><span class="o">&lt;</span><span class="n">ModuleAnalysisManagerCGSCCProxy</span><span class="o">&gt;</span><span class="p">(</span><span class="n">InitialC</span><span class="p">,</span><span class="w"> </span><span class="n">CG</span><span class="p">);</span>
+<span class="n">FooAnalysisResult</span><span class="w"> </span><span class="o">*</span><span class="n">AR</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MAMProxy</span><span class="p">.</span><span class="n">getCachedResult</span><span class="o">&lt;</span><span class="n">FooAnalysis</span><span class="o">&gt;</span><span class="p">(</span><span class="n">M</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Asking for a cached and immutable outer level IR analysis works via
+<code class="docutils literal notranslate"><span class="pre">getCachedResult()</span></code>, but getting direct access to an outer level IR analysis
+manager to compute an outer level IR analysis is not allowed. This is for a
+couple reasons.</p>
+<p>The first reason is that running analyses across outer level IR in inner level
+IR passes can result in quadratic compile time behavior. For example, a module
+analysis often scans every function and allowing function passes to run a module
+analysis may cause us to scan functions a quadratic number of times. If passes
+could keep outer level analyses up to date rather than computing them on demand
+this wouldn’t be an issue, but that would be a lot of work to ensure every pass
+updates all outer level analyses, and so far this hasn’t been necessary and
+there isn’t infrastructure for this (aside from function analyses in loop passes
+as described below). Self-updating analyses that gracefully degrade also handle
+this problem (e.g. GlobalsAA), but they run into the issue of having to be
+manually recomputed somewhere in the optimization pipeline if we want precision,
+and they block potential future concurrency.</p>
+<p>The second reason is to keep in mind potential future pass concurrency, for
+example parallelizing function passes over different functions in a CGSCC or
+module. Since passes can ask for a cached analysis result, allowing passes to
+trigger outer level analysis computation could result in non-determinism if
+concurrency was supported. A related limitation is that outer level IR analyses
+that are used must be immutable, or else they could be invalidated by changes to
+inner level IR. Outer analyses unused by inner passes can and often will be
+invalidated by changes to inner level IR. These invalidations happen after the
+inner pass manager finishes, so accessing mutable analyses would give invalid
+results.</p>
+<p>The exception to not being able to access outer level analyses is accessing
+function analyses in loop passes. Loop passes often use function analyses such
+as the dominator tree. Loop passes inherently require modifying the function the
+loop is in, and that includes some function analyses the loop analyses depend
+on. This discounts future concurrency over separate loops in a function, but
+that’s a tradeoff due to how tightly a loop and its function are coupled. To
+make sure the function analyses that loop passes use are valid, they are
+manually updated in the loop passes to ensure that invalidation is not
+necessary. There is a set of common function analyses that loop passes and
+analyses have access to which is passed into loop passes as a
+<code class="docutils literal notranslate"><span class="pre">LoopStandardAnalysisResults</span></code> parameter. Other mutable function analyses are
+not accessible from loop passes.</p>
+<p>As with any caching mechanism, we need some way to tell analysis managers
+when results are no longer valid. Much of the analysis manager complexity
+comes from trying to invalidate as few analysis results as possible to keep
+compile times as low as possible.</p>
+<p>There are two ways to deal with potentially invalid analysis results. One is
+to simply force clear the results. This should generally only be used when
+the IR that the result is keyed on becomes invalid. For example, a function
+is deleted, or a CGSCC has become invalid due to call graph changes.</p>
+<p>The typical way to invalidate analysis results is for a pass to declare what
+types of analyses it preserves and what types it does not. When transforming
+IR, a pass either has the option to update analyses alongside the IR
+transformation, or tell the analysis manager that analyses are no longer
+valid and should be invalidated. If a pass wants to keep some specific
+analysis up to date, such as when updating it would be faster than
+invalidating and recalculating it, the analysis itself may have methods to
+update it for specific transformations, or there may be helper updaters like
+<code class="docutils literal notranslate"><span class="pre">DomTreeUpdater</span></code> for a <code class="docutils literal notranslate"><span class="pre">DominatorTree</span></code>. Otherwise to mark some analysis
+as no longer valid, the pass can return a <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> with the
+proper analyses invalidated.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// We&#39;ve made no transformations that can affect any analyses.</span>
+<span class="k">return</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="o">::</span><span class="n">all</span><span class="p">();</span>
+
+<span class="c1">// We&#39;ve made transformations and don&#39;t want to bother to update any analyses.</span>
+<span class="k">return</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="o">::</span><span class="n">none</span><span class="p">();</span>
+
+<span class="c1">// We&#39;ve specifically updated the dominator tree alongside any transformations, but other analysis results may be invalid.</span>
+<span class="n">PreservedAnalyses</span><span class="w"> </span><span class="n">PA</span><span class="p">;</span>
+<span class="n">PA</span><span class="p">.</span><span class="n">preserve</span><span class="o">&lt;</span><span class="n">DominatorAnalysis</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="k">return</span><span class="w"> </span><span class="n">PA</span><span class="p">;</span>
+
+<span class="c1">// We haven&#39;t made any control flow changes, any analyses that only care about the control flow are still valid.</span>
+<span class="n">PreservedAnalyses</span><span class="w"> </span><span class="n">PA</span><span class="p">;</span>
+<span class="n">PA</span><span class="p">.</span><span class="n">preserveSet</span><span class="o">&lt;</span><span class="n">CFGAnalyses</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="k">return</span><span class="w"> </span><span class="n">PA</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The pass manager will call the analysis manager’s <code class="docutils literal notranslate"><span class="pre">invalidate()</span></code> method
+with the pass’s returned <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code>. This can be also done
+manually within the pass:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">FooModulePass</span><span class="o">::</span><span class="n">run</span><span class="p">(</span><span class="n">Module</span><span class="o">&amp;</span><span class="w"> </span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">ModuleAnalysisManager</span><span class="o">&amp;</span><span class="w"> </span><span class="n">AM</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">FAM</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">AM</span><span class="p">.</span><span class="n">getResult</span><span class="o">&lt;</span><span class="n">FunctionAnalysisManagerModuleProxy</span><span class="o">&gt;</span><span class="p">(</span><span class="n">M</span><span class="p">).</span><span class="n">getManager</span><span class="p">();</span>
+
+<span class="w">  </span><span class="c1">// Invalidate all analysis results for function F1.</span>
+<span class="w">  </span><span class="n">FAM</span><span class="p">.</span><span class="n">invalidate</span><span class="p">(</span><span class="n">F1</span><span class="p">,</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="o">::</span><span class="n">none</span><span class="p">());</span>
+
+<span class="w">  </span><span class="c1">// Invalidate all analysis results across the entire module.</span>
+<span class="w">  </span><span class="n">AM</span><span class="p">.</span><span class="n">invalidate</span><span class="p">(</span><span class="n">M</span><span class="p">,</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="o">::</span><span class="n">none</span><span class="p">());</span>
+
+<span class="w">  </span><span class="c1">// Clear the entry in the analysis manager for function F2 if we&#39;ve completely removed it from the module.</span>
+<span class="w">  </span><span class="n">FAM</span><span class="p">.</span><span class="n">clear</span><span class="p">(</span><span class="n">F2</span><span class="p">);</span>
+
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>One thing to note when accessing inner level IR analyses is cached results for
+deleted IR. If a function is deleted in a module pass, its address is still used
+as the key for cached analyses. Take care in the pass to either clear the
+results for that function or not use inner analyses at all.</p>
+<p><code class="docutils literal notranslate"><span class="pre">AM.invalidate(M,</span> <span class="pre">PreservedAnalyses::none());</span></code> will invalidate the inner
+analysis manager proxy which will clear all cached analyses, conservatively
+assuming that there are invalid addresses used as keys for cached analyses.
+However, if you’d like to be more selective about which analyses are
+cached/invalidated, you can mark the analysis manager proxy as preserved,
+essentially saying that all deleted entries have been taken care of manually.
+This should only be done with measurable compile time gains as it can be tricky
+to make sure all the right analyses are invalidated.</p>
+</section>
+<section id="implementing-analysis-invalidation">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Implementing Analysis Invalidation</a><a class="headerlink" href="#implementing-analysis-invalidation" title="Link to this heading">¶</a></h2>
+<p>By default, an analysis is invalidated if <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> says that
+analyses on the IR unit it runs on are not preserved (see
+<code class="docutils literal notranslate"><span class="pre">AnalysisResultModel::invalidate()</span></code>). An analysis can implement
+<code class="docutils literal notranslate"><span class="pre">invalidate()</span></code> to be more conservative when it comes to invalidation. For
+example,</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">bool</span><span class="w"> </span><span class="nf">FooAnalysisResult::invalidate</span><span class="p">(</span><span class="n">Function</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="w"> </span><span class="o">&amp;</span><span class="n">PA</span><span class="p">,</span>
+<span class="w">                                   </span><span class="n">FunctionAnalysisManager</span><span class="o">::</span><span class="n">Invalidator</span><span class="w"> </span><span class="o">&amp;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">PAC</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PA</span><span class="p">.</span><span class="n">getChecker</span><span class="o">&lt;</span><span class="n">FooAnalysis</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">  </span><span class="c1">// the default would be:</span>
+<span class="w">  </span><span class="c1">// return !(PAC.preserved() || PAC.preservedSet&lt;AllAnalysesOn&lt;Function&gt;&gt;());</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="o">!</span><span class="p">(</span><span class="n">PAC</span><span class="p">.</span><span class="n">preserved</span><span class="p">()</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">PAC</span><span class="p">.</span><span class="n">preservedSet</span><span class="o">&lt;</span><span class="n">AllAnalysesOn</span><span class="o">&lt;</span><span class="n">Function</span><span class="o">&gt;&gt;</span><span class="p">()</span>
+<span class="w">      </span><span class="o">||</span><span class="w"> </span><span class="n">PAC</span><span class="p">.</span><span class="n">preservedSet</span><span class="o">&lt;</span><span class="n">CFGAnalyses</span><span class="o">&gt;</span><span class="p">());</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>says that if the <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> specifically preserves
+<code class="docutils literal notranslate"><span class="pre">FooAnalysis</span></code>, or if <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> preserves all analyses (implicit
+in <code class="docutils literal notranslate"><span class="pre">PAC.preserved()</span></code>), or if <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> preserves all function
+analyses, or <code class="docutils literal notranslate"><span class="pre">PreservedAnalyses</span></code> preserves all analyses that only care
+about the CFG, the <code class="docutils literal notranslate"><span class="pre">FooAnalysisResult</span></code> should not be invalidated.</p>
+<p>If an analysis is stateless and generally shouldn’t be invalidated, use the
+following:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">bool</span><span class="w"> </span><span class="nf">FooAnalysisResult::invalidate</span><span class="p">(</span><span class="n">Function</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="w"> </span><span class="o">&amp;</span><span class="n">PA</span><span class="p">,</span>
+<span class="w">                                   </span><span class="n">FunctionAnalysisManager</span><span class="o">::</span><span class="n">Invalidator</span><span class="w"> </span><span class="o">&amp;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// Check whether the analysis has been explicitly invalidated. Otherwise, it&#39;s</span>
+<span class="w">  </span><span class="c1">// stateless and remains preserved.</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">PAC</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PA</span><span class="p">.</span><span class="n">getChecker</span><span class="o">&lt;</span><span class="n">FooAnalysis</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="o">!</span><span class="n">PAC</span><span class="p">.</span><span class="n">preservedWhenStateless</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If an analysis depends on other analyses, those analyses also need to be
+checked if they are invalidated:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">bool</span><span class="w"> </span><span class="nf">FooAnalysisResult::invalidate</span><span class="p">(</span><span class="n">Function</span><span class="w"> </span><span class="o">&amp;</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">PreservedAnalyses</span><span class="w"> </span><span class="o">&amp;</span><span class="n">PA</span><span class="p">,</span>
+<span class="w">                                   </span><span class="n">FunctionAnalysisManager</span><span class="o">::</span><span class="n">Invalidator</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Inv</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">PAC</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PA</span><span class="p">.</span><span class="n">getChecker</span><span class="o">&lt;</span><span class="n">FooAnalysis</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">PAC</span><span class="p">.</span><span class="n">preserved</span><span class="p">()</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">!</span><span class="n">PAC</span><span class="p">.</span><span class="n">preservedSet</span><span class="o">&lt;</span><span class="n">AllAnalysesOn</span><span class="o">&lt;</span><span class="n">Function</span><span class="o">&gt;&gt;</span><span class="p">())</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+
+<span class="w">  </span><span class="c1">// Check transitive dependencies.</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">Inv</span><span class="p">.</span><span class="n">invalidate</span><span class="o">&lt;</span><span class="n">BarAnalysis</span><span class="o">&gt;</span><span class="p">(</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="n">PA</span><span class="p">)</span><span class="w"> </span><span class="o">||</span>
+<span class="w">        </span><span class="n">Inv</span><span class="p">.</span><span class="n">invalidate</span><span class="o">&lt;</span><span class="n">BazAnalysis</span><span class="o">&gt;</span><span class="p">(</span><span class="n">F</span><span class="p">,</span><span class="w"> </span><span class="n">PA</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Combining invalidation and analysis manager proxies results in some
+complexity. For example, when we invalidate all analyses in a module pass,
+we have to make sure that we also invalidate function analyses accessible via
+any existing inner proxies. The inner proxy’s <code class="docutils literal notranslate"><span class="pre">invalidate()</span></code> first checks
+if the proxy itself should be invalidated. If so, that means the proxy may
+contain pointers to IR that is no longer valid, meaning that the inner proxy
+needs to completely clear all relevant analysis results. Otherwise the proxy
+simply forwards the invalidation to the inner analysis manager.</p>
+<p>Generally for outer proxies, analysis results from the outer analysis manager
+should be immutable, so invalidation shouldn’t be a concern. However, it is
+possible for some inner analysis to depend on some outer analysis, and when
+the outer analysis is invalidated, we need to make sure that dependent inner
+analyses are also invalidated. This actually happens with alias analysis
+results. Alias analysis is a function-level analysis, but there are
+module-level implementations of specific types of alias analysis. Currently
+<code class="docutils literal notranslate"><span class="pre">GlobalsAA</span></code> is the only module-level alias analysis and it generally is not
+invalidated so this is not so much of a concern. See
+<code class="docutils literal notranslate"><span class="pre">OuterAnalysisManagerProxy::Result::registerOuterAnalysisInvalidation()</span></code>
+for more details.</p>
+</section>
+<section id="invoking-opt">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Invoking <code class="docutils literal notranslate"><span class="pre">opt</span></code></a><a class="headerlink" href="#invoking-opt" title="Link to this heading">¶</a></h2>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;pass1,pass2&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+<span class="c1"># -p is an alias for -passes</span>
+$<span class="w"> </span>opt<span class="w"> </span>-p<span class="w"> </span>pass1,pass2<span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+</pre></div>
+</div>
+<p>The new PM typically requires explicit pass nesting. For example, to run a
+function pass, then a module pass, we need to wrap the function pass in a module
+adaptor:</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;function(no-op-function),no-op-module&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+</pre></div>
+</div>
+<p>A more complete example, and <code class="docutils literal notranslate"><span class="pre">-debug-pass-manager</span></code> to show the execution
+order:</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;no-op-module,cgscc(no-op-cgscc,function(no-op-function,loop(no-op-loop))),function(no-op-function,loop(no-op-loop))&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S<span class="w"> </span>-debug-pass-manager
+</pre></div>
+</div>
+<p>Improper nesting can lead to error messages such as</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;no-op-function,no-op-module&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+opt:<span class="w"> </span>unknown<span class="w"> </span><span class="k">function</span><span class="w"> </span>pass<span class="w"> </span><span class="s1">&#39;no-op-module&#39;</span>
+</pre></div>
+</div>
+<p>The nesting is: module (-&gt; cgscc) -&gt; function -&gt; loop, where the CGSCC nesting is optional.</p>
+<p>There are a couple of special cases for easier typing:</p>
+<ul class="simple">
+<li><p>If the first pass is not a module pass, a pass manager of the first pass is
+implicitly created</p>
+<ul>
+<li><p>For example, the following are equivalent</p></li>
+</ul>
+</li>
+</ul>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;no-op-function,no-op-function&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;function(no-op-function,no-op-function)&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>If there is an adaptor for a pass that lets it fit in the previous pass
+manager, that is implicitly created</p>
+<ul>
+<li><p>For example, the following are equivalent</p></li>
+</ul>
+</li>
+</ul>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;no-op-function,no-op-loop&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;no-op-function,loop(no-op-loop)&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+</pre></div>
+</div>
+<p>For a list of available passes and analyses, including the IR unit (module,
+CGSCC, function, loop) they operate on, run</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>--print-passes
+</pre></div>
+</div>
+<p>or take a look at <code class="docutils literal notranslate"><span class="pre">PassRegistry.def</span></code>.</p>
+<p>To make sure an analysis named <code class="docutils literal notranslate"><span class="pre">foo</span></code> is available before a pass, add
+<code class="docutils literal notranslate"><span class="pre">require&lt;foo&gt;</span></code> to the pass pipeline. This adds a pass that simply requests
+that the analysis is run. This pass is also subject to proper nesting.  For
+example, to make sure some function analysis is already computed for all
+functions before a module pass:</p>
+<div class="highlight-shell notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-passes<span class="o">=</span><span class="s1">&#39;function(require&lt;my-function-analysis&gt;),my-module-pass&#39;</span><span class="w"> </span>/tmp/a.ll<span class="w"> </span>-S
+</pre></div>
+</div>
+</section>
+<section id="status-of-the-new-and-legacy-pass-managers">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Status of the New and Legacy Pass Managers</a><a class="headerlink" href="#status-of-the-new-and-legacy-pass-managers" title="Link to this heading">¶</a></h2>
+<p>LLVM currently contains two pass managers, the legacy PM and the new PM. The
+optimization pipeline (aka the middle-end) uses the new PM, whereas the backend
+target-dependent code generation uses the legacy PM.</p>
+<p>The legacy PM somewhat works with the optimization pipeline, but this is
+deprecated and there are ongoing efforts to remove its usage.</p>
+<p>Some IR passes are considered part of the backend codegen pipeline even if
+they are LLVM IR passes (whereas all MIR passes are codegen passes). This
+includes anything added via <code class="docutils literal notranslate"><span class="pre">TargetPassConfig</span></code> hooks, e.g.
+<code class="docutils literal notranslate"><span class="pre">TargetPassConfig::addCodeGenPrepare()</span></code>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">TargetMachine::adjustPassManager()</span></code> function that was used to extend a
+legacy PM with passes on a per target basis has been removed. It was mainly
+used from opt, but since support for using the default pipelines has been
+removed in opt the function isn’t needed any longer. In the new PM such
+adjustments are done by using <code class="docutils literal notranslate"><span class="pre">TargetMachine::registerPassBuilderCallbacks()</span></code>.</p>
+<p>Currently there are efforts to make the codegen pipeline work with the new
+PM.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="NVPTXUsage.html" title="User Guide for NVPTX Back-end"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="JITLink.html" title="JITLink and ORC’s ObjectLinkingLayer"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Using the New Pass Manager</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-09-23.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

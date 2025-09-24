@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>SafeStack &#8212; Clang 21.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=56ca4867"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="ShadowCallStack" href="ShadowCallStack.html" />
+    <link rel="prev" title="LTO Visibility" href="LTOVisibility.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 21.1.2 documentation</span></a></h1>
+        <h2 class="heading"><span>SafeStack</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LTOVisibility.html">LTO Visibility</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ShadowCallStack.html">ShadowCallStack</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="safestack">
+<h1>SafeStack<a class="headerlink" href="#safestack" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p>
+<ul>
+<li><p><a class="reference internal" href="#performance" id="id2">Performance</a></p></li>
+<li><p><a class="reference internal" href="#compatibility" id="id3">Compatibility</a></p>
+<ul>
+<li><p><a class="reference internal" href="#known-compatibility-limitations" id="id4">Known compatibility limitations</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#security" id="id5">Security</a></p>
+<ul>
+<li><p><a class="reference internal" href="#known-security-limitations" id="id6">Known security limitations</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#usage" id="id7">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#supported-platforms" id="id8">Supported Platforms</a></p></li>
+<li><p><a class="reference internal" href="#low-level-api" id="id9">Low-level API</a></p>
+<ul>
+<li><p><a class="reference internal" href="#has-feature-safe-stack" id="id10"><code class="docutils literal notranslate"><span class="pre">__has_feature(safe_stack)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#attribute-no-sanitize-safe-stack" id="id11"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;safe-stack&quot;)))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#builtin-get-unsafe-stack-ptr" id="id12"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_ptr()</span></code></a></p></li>
+<li><p><a class="reference internal" href="#builtin-get-unsafe-stack-bottom" id="id13"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_bottom()</span></code></a></p></li>
+<li><p><a class="reference internal" href="#builtin-get-unsafe-stack-top" id="id14"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_top()</span></code></a></p></li>
+<li><p><a class="reference internal" href="#builtin-get-unsafe-stack-start" id="id15"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_start()</span></code></a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#design" id="id16">Design</a></p>
+<ul>
+<li><p><a class="reference internal" href="#setjmp-and-exception-handling" id="id17">setjmp and exception handling</a></p></li>
+<li><p><a class="reference internal" href="#publications" id="id18">Publications</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>SafeStack is an instrumentation pass that protects programs against attacks
+based on stack buffer overflows, without introducing any measurable performance
+overhead. It works by separating the program stack into two distinct regions:
+the safe stack and the unsafe stack. The safe stack stores return addresses,
+register spills, and local variables that are always accessed in a safe way,
+while the unsafe stack stores everything else. This separation ensures that
+buffer overflows on the unsafe stack cannot be used to overwrite anything
+on the safe stack.</p>
+<p>SafeStack is a part of the <a class="reference external" href="https://dslab.epfl.ch/research/cpi/">Code-Pointer Integrity (CPI) Project</a>.</p>
+<section id="performance">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink">Performance</a><a class="headerlink" href="#performance" title="Link to this heading">¶</a></h3>
+<p>The performance overhead of the SafeStack instrumentation is less than 0.1% on
+average across a variety of benchmarks (see the <a class="reference external" href="https://dslab.epfl.ch/pubs/cpi.pdf">Code-Pointer Integrity</a> paper for details). This is mainly
+because most small functions do not have any variables that require the unsafe
+stack and, hence, do not need unsafe stack frames to be created. The cost of
+creating unsafe stack frames for large functions is amortized by the cost of
+executing the function.</p>
+<p>In some cases, SafeStack actually improves the performance. Objects that end up
+being moved to the unsafe stack are usually large arrays or variables that are
+used through multiple stack frames. Moving such objects away from the safe
+stack increases the locality of frequently accessed values on the stack, such
+as register spills, return addresses, and small local variables.</p>
+</section>
+<section id="compatibility">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Compatibility</a><a class="headerlink" href="#compatibility" title="Link to this heading">¶</a></h3>
+<p>Most programs, static libraries, or individual files can be compiled
+with SafeStack as is. SafeStack requires basic runtime support, which, on most
+platforms, is implemented as a compiler-rt library that is automatically linked
+in when the program is compiled with SafeStack.</p>
+<p>Linking a DSO with SafeStack is not currently supported.</p>
+<section id="known-compatibility-limitations">
+<h4><a class="toc-backref" href="#id4" role="doc-backlink">Known compatibility limitations</a><a class="headerlink" href="#known-compatibility-limitations" title="Link to this heading">¶</a></h4>
+<p>Certain code that relies on low-level stack manipulations requires adaption to
+work with SafeStack. One example is mark-and-sweep garbage collection
+implementations for C/C++ (e.g., Oilpan in chromium/blink), which must be
+changed to look for the live pointers on both safe and unsafe stacks.</p>
+<p>SafeStack supports linking statically modules that are compiled with and
+without SafeStack. An executable compiled with SafeStack can load dynamic
+libraries that are not compiled with SafeStack. At the moment, compiling
+dynamic libraries with SafeStack is not supported.</p>
+<p>Signal handlers that use <code class="docutils literal notranslate"><span class="pre">sigaltstack()</span></code> must not use the unsafe stack (see
+<code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;safe-stack&quot;)))</span></code> below).</p>
+<p>Programs that use APIs from <code class="docutils literal notranslate"><span class="pre">ucontext.h</span></code> are not supported yet.</p>
+</section>
+</section>
+<section id="security">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Security</a><a class="headerlink" href="#security" title="Link to this heading">¶</a></h3>
+<p>SafeStack protects return addresses, spilled registers and local variables that
+are always accessed in a safe way by separating them in a dedicated safe stack
+region. The safe stack is automatically protected against stack-based buffer
+overflows, since it is disjoint from the unsafe stack in memory, and it itself
+is always accessed in a safe way. In the current implementation, the safe stack
+is protected against arbitrary memory write vulnerabilities though
+randomization and information hiding: the safe stack is allocated at a random
+address and the instrumentation ensures that no pointers to the safe stack are
+ever stored outside of the safe stack itself (see limitations below).</p>
+<section id="known-security-limitations">
+<h4><a class="toc-backref" href="#id6" role="doc-backlink">Known security limitations</a><a class="headerlink" href="#known-security-limitations" title="Link to this heading">¶</a></h4>
+<p>A complete protection against control-flow hijack attacks requires combining
+SafeStack with another mechanism that enforces the integrity of code pointers
+that are stored on the heap or the unsafe stack, such as <a class="reference external" href="https://dslab.epfl.ch/research/cpi/">CPI</a>, or a forward-edge control flow integrity
+mechanism that enforces correct calling conventions at indirect call sites,
+such as <a class="reference external" href="https://research.google.com/pubs/archive/42808.pdf">IFCC</a> with arity
+checks. Clang has control-flow integrity protection scheme for <a class="reference internal" href="ControlFlowIntegrity.html"><span class="doc">C++ virtual
+calls</span></a>, but not non-virtual indirect calls. With
+SafeStack alone, an attacker can overwrite a function pointer on the heap or
+the unsafe stack and cause a program to call arbitrary location, which in turn
+might enable stack pivoting and return-oriented programming.</p>
+<p>In its current implementation, SafeStack provides precise protection against
+stack-based buffer overflows, but protection against arbitrary memory write
+vulnerabilities is probabilistic and relies on randomization and information
+hiding. The randomization is currently based on system-enforced ASLR and shares
+its known security limitations. The safe stack pointer hiding is not perfect
+yet either: system library functions such as <code class="docutils literal notranslate"><span class="pre">swapcontext</span></code>, exception
+handling mechanisms, intrinsics such as <code class="docutils literal notranslate"><span class="pre">__builtin_frame_address</span></code>, or
+low-level bugs in runtime support could leak the safe stack pointer. In the
+future, such leaks could be detected by static or dynamic analysis tools and
+prevented by adjusting such functions to either encrypt the stack pointer when
+storing it in the heap (as already done e.g., by <code class="docutils literal notranslate"><span class="pre">setjmp</span></code>/<code class="docutils literal notranslate"><span class="pre">longjmp</span></code>
+implementation in glibc), or store it in a safe region instead.</p>
+<p>The <a class="reference external" href="https://dslab.epfl.ch/pubs/cpi.pdf">CPI paper</a> describes two alternative,
+stronger safe stack protection mechanisms, that rely on software fault
+isolation, or hardware segmentation (as available on x86-32 and some x86-64
+CPUs).</p>
+<p>At the moment, SafeStack assumes that the compiler’s implementation is correct.
+This has not been verified except through manual code inspection, and could
+always regress in the future. It’s therefore desirable to have a separate
+static or dynamic binary verification tool that would check the correctness of
+the SafeStack instrumentation in final binaries.</p>
+</section>
+</section>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>To enable SafeStack, just pass <code class="docutils literal notranslate"><span class="pre">-fsanitize=safe-stack</span></code> flag to both compile
+and link command lines.</p>
+<section id="supported-platforms">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Supported Platforms</a><a class="headerlink" href="#supported-platforms" title="Link to this heading">¶</a></h3>
+<p>SafeStack was tested on Linux, NetBSD, FreeBSD and macOS.</p>
+</section>
+<section id="low-level-api">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Low-level API</a><a class="headerlink" href="#low-level-api" title="Link to this heading">¶</a></h3>
+<section id="has-feature-safe-stack">
+<h4><a class="toc-backref" href="#id10" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__has_feature(safe_stack)</span></code></a><a class="headerlink" href="#has-feature-safe-stack" title="Link to this heading">¶</a></h4>
+<p>In some rare cases one may need to execute different code depending on
+whether SafeStack is enabled. The macro <code class="docutils literal notranslate"><span class="pre">__has_feature(safe_stack)</span></code> can
+be used for this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if __has_feature(safe_stack)</span>
+<span class="c1">// code that builds only under SafeStack</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-no-sanitize-safe-stack">
+<h4><a class="toc-backref" href="#id11" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;safe-stack&quot;)))</span></code></a><a class="headerlink" href="#attribute-no-sanitize-safe-stack" title="Link to this heading">¶</a></h4>
+<p>Use <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;safe-stack&quot;)))</span></code> on a function declaration
+to specify that the safe stack instrumentation should not be applied to that
+function, even if enabled globally (see <code class="docutils literal notranslate"><span class="pre">-fsanitize=safe-stack</span></code> flag). This
+attribute may be required for functions that make assumptions about the
+exact layout of their stack frames.</p>
+<p>All local variables in functions with this attribute will be stored on the safe
+stack. The safe stack remains unprotected against memory errors when accessing
+these variables, so extra care must be taken to manually ensure that all such
+accesses are safe. Furthermore, the addresses of such local variables should
+never be stored on the heap, as it would leak the location of the SafeStack.</p>
+</section>
+<section id="builtin-get-unsafe-stack-ptr">
+<h4><a class="toc-backref" href="#id12" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_ptr()</span></code></a><a class="headerlink" href="#builtin-get-unsafe-stack-ptr" title="Link to this heading">¶</a></h4>
+<p>This builtin function returns current unsafe stack pointer of the current
+thread.</p>
+</section>
+<section id="builtin-get-unsafe-stack-bottom">
+<h4><a class="toc-backref" href="#id13" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_bottom()</span></code></a><a class="headerlink" href="#builtin-get-unsafe-stack-bottom" title="Link to this heading">¶</a></h4>
+<p>This builtin function returns a pointer to the bottom of the unsafe stack of the
+current thread.</p>
+</section>
+<section id="builtin-get-unsafe-stack-top">
+<h4><a class="toc-backref" href="#id14" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_top()</span></code></a><a class="headerlink" href="#builtin-get-unsafe-stack-top" title="Link to this heading">¶</a></h4>
+<p>This builtin function returns a pointer to the top of the unsafe stack of the
+current thread.</p>
+</section>
+<section id="builtin-get-unsafe-stack-start">
+<h4><a class="toc-backref" href="#id15" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_start()</span></code></a><a class="headerlink" href="#builtin-get-unsafe-stack-start" title="Link to this heading">¶</a></h4>
+<p>Deprecated: This builtin function is an alias for
+<code class="docutils literal notranslate"><span class="pre">__builtin___get_unsafe_stack_bottom()</span></code>.</p>
+</section>
+</section>
+</section>
+<section id="design">
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Design</a><a class="headerlink" href="#design" title="Link to this heading">¶</a></h2>
+<p>Please refer to the <a class="reference external" href="https://dslab.epfl.ch/research/cpi/">Code-Pointer Integrity</a>
+project page for more information about the design of the SafeStack and its
+related technologies.</p>
+<section id="setjmp-and-exception-handling">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">setjmp and exception handling</a><a class="headerlink" href="#setjmp-and-exception-handling" title="Link to this heading">¶</a></h3>
+<p>The <a class="reference external" href="https://dslab.epfl.ch/pubs/cpi.pdf">OSDI’14 paper</a> mentions that
+on Linux the instrumentation pass finds calls to setjmp or functions that
+may throw an exception, and inserts required instrumentation at their call
+sites. Specifically, the instrumentation pass saves the shadow stack pointer
+on the safe stack before the call site, and restores it either after the
+call to setjmp or after an exception has been caught. This is implemented
+in the function <code class="docutils literal notranslate"><span class="pre">SafeStack::createStackRestorePoints</span></code>.</p>
+</section>
+<section id="publications">
+<h3><a class="toc-backref" href="#id18" role="doc-backlink">Publications</a><a class="headerlink" href="#publications" title="Link to this heading">¶</a></h3>
+<p><a class="reference external" href="https://dslab.epfl.ch/pubs/cpi.pdf">Code-Pointer Integrity</a>.
+Volodymyr Kuznetsov, Laszlo Szekeres, Mathias Payer, George Candea, R. Sekar, Dawn Song.
+USENIX Symposium on Operating Systems Design and Implementation
+(<a class="reference external" href="https://www.usenix.org/conference/osdi14">OSDI</a>), Broomfield, CO, October 2014</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LTOVisibility.html">LTO Visibility</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ShadowCallStack.html">ShadowCallStack</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>DO CONCURRENT mapping to OpenMP &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1d8edcb3"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Fortran Extensions supported by Flang" href="Extensions.html" />
+    <link rel="prev" title="DO CONCURRENT isn’t necessarily concurrent" href="DoConcurrent.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>DO CONCURRENT mapping to OpenMP</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="DoConcurrent.html"><code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> isn’t necessarily concurrent</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Extensions.html">Fortran Extensions supported by Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/DoConcurrentMappingToOpenMP.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="do-concurrent-mapping-to-openmp">
+<h1><code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> mapping to OpenMP<a class="headerlink" href="#do-concurrent-mapping-to-openmp" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#usage" id="id3">Usage</a></p></li>
+<li><p><a class="reference internal" href="#current-status" id="id4">Current status</a></p>
+<ul>
+<li><p><a class="reference internal" href="#loop-nest-detection" id="id5">Loop nest detection</a></p>
+<ul>
+<li><p><a class="reference internal" href="#further-info-regarding-loop-nest-detection" id="id6">Further info regarding loop nest detection</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#single-range-loops" id="id7">Single-range loops</a></p>
+<ul>
+<li><p><a class="reference internal" href="#mapping-to-host" id="id8">Mapping to <code class="docutils literal notranslate"><span class="pre">host</span></code></a></p></li>
+<li><p><a class="reference internal" href="#mapping-to-device" id="id9">Mapping to <code class="docutils literal notranslate"><span class="pre">device</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#multi-range-loops" id="id10">Multi-range loops</a></p></li>
+<li><p><a class="reference internal" href="#data-environment" id="id11">Data environment</a></p>
+<ul>
+<li><p><a class="reference internal" href="#non-perfectly-nested-loops-ivs" id="id12">Non-perfectly-nested loops’ IVs</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#next-steps" id="id13">Next steps</a></p>
+<ul>
+<li><p><a class="reference internal" href="#separate-mlir-op-for-do-concurrent" id="id14">Separate MLIR op for <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code></a></p></li>
+<li><p><a class="reference internal" href="#delayed-privatization" id="id15">Delayed privatization</a></p></li>
+<li><p><a class="reference internal" href="#locality-specifiers-for-do-concurrent" id="id16">Locality specifiers for <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code></a></p>
+<ul>
+<li><p><a class="reference internal" href="#sharing-tablegen-clause-records-from-the-openmp-dialect" id="id17">Sharing TableGen clause records from the OpenMP dialect</a></p></li>
+<li><p><a class="reference internal" href="#supporting-reductions" id="id18">Supporting reductions</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#more-advanced-detection-of-loop-nests" id="id19">More advanced detection of loop nests</a></p></li>
+<li><p><a class="reference internal" href="#data-dependence-analysis" id="id20">Data-dependence analysis</a></p></li>
+<li><p><a class="reference internal" href="#non-rectangular-loop-nests" id="id21">Non-rectangular loop nests</a></p></li>
+<li><p><a class="reference internal" href="#generalizing-the-pass-to-other-parallel-programming-models" id="id22">Generalizing the pass to other parallel programming models</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#upstreaming-status" id="id23">Upstreaming status</a></p></li>
+</ul>
+</nav>
+<p>This document seeks to describe the effort to parallelize <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loops
+by mapping them to OpenMP worksharing constructs. The goals of this document
+are:</p>
+<ul class="simple">
+<li><p>Describing how to instruct <code class="docutils literal notranslate"><span class="pre">flang</span></code> to map <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> loops to OpenMP
+constructs.</p></li>
+<li><p>Tracking the current status of such mapping.</p></li>
+<li><p>Describing the limitations of the current implementation.</p></li>
+<li><p>Describing next steps.</p></li>
+<li><p>Tracking the current upstreaming status (from the AMD ROCm fork).</p></li>
+</ul>
+<section id="usage">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>In order to enable <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> to OpenMP mapping, <code class="docutils literal notranslate"><span class="pre">flang</span></code> adds a new
+compiler flag: <code class="docutils literal notranslate"><span class="pre">-fdo-concurrent-to-openmp</span></code>. This flag has 3 possible values:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">host</span></code>: this maps <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loops to run in parallel on the host CPU.
+This maps such loops to the equivalent of <code class="docutils literal notranslate"><span class="pre">omp</span> <span class="pre">parallel</span> <span class="pre">do</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">device</span></code>: this maps <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loops to run in parallel on a target device.
+This maps such loops to the equivalent of
+<code class="docutils literal notranslate"><span class="pre">omp</span> <span class="pre">target</span> <span class="pre">teams</span> <span class="pre">distribute</span> <span class="pre">parallel</span> <span class="pre">do</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">none</span></code>: this disables <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> mapping altogether. In that case, such
+loops are emitted as sequential loops.</p></li>
+</ol>
+<p>The <code class="docutils literal notranslate"><span class="pre">-fdo-concurrent-to-openmp</span></code> compiler switch is currently available only when
+OpenMP is also enabled. So you need to provide the following options to flang in
+order to enable it:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">flang</span> <span class="o">...</span> <span class="o">-</span><span class="n">fopenmp</span> <span class="o">-</span><span class="n">fdo</span><span class="o">-</span><span class="n">concurrent</span><span class="o">-</span><span class="n">to</span><span class="o">-</span><span class="n">openmp</span><span class="o">=</span><span class="p">[</span><span class="n">host</span><span class="o">|</span><span class="n">device</span><span class="o">|</span><span class="n">none</span><span class="p">]</span> <span class="o">...</span>
+</pre></div>
+</div>
+<p>For mapping to device, the target device architecture must be specified as well.
+See <code class="docutils literal notranslate"><span class="pre">-fopenmp-targets</span></code> and <code class="docutils literal notranslate"><span class="pre">--offload-arch</span></code> for more info.</p>
+</section>
+<section id="current-status">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Current status</a><a class="headerlink" href="#current-status" title="Link to this heading">¶</a></h2>
+<p>Under the hood, <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> mapping is implemented in the
+<code class="docutils literal notranslate"><span class="pre">DoConcurrentConversionPass</span></code>. This is still an experimental pass which means
+that:</p>
+<ul class="simple">
+<li><p>It has been tested in a very limited way so far.</p></li>
+<li><p>It has been tested mostly on simple synthetic inputs.</p></li>
+</ul>
+<section id="loop-nest-detection">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Loop nest detection</a><a class="headerlink" href="#loop-nest-detection" title="Link to this heading">¶</a></h3>
+<p>On the <code class="docutils literal notranslate"><span class="pre">FIR</span></code> dialect level, the following loop:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">m</span><span class="p">,</span><span class="w"> </span><span class="n">k</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">o</span><span class="p">)</span>
+<span class="w">    </span><span class="n">a</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">k</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">k</span>
+<span class="w">  </span><span class="k">end do</span>
+</pre></div>
+</div>
+<p>is modelled as a nest of <code class="docutils literal notranslate"><span class="pre">fir.do_loop</span></code> ops such that an outer loop’s region
+contains <strong>only</strong> the following:</p>
+<ol class="arabic simple">
+<li><p>The operations needed to assign/update the outer loop’s induction variable.</p></li>
+<li><p>The inner loop itself.</p></li>
+</ol>
+<p>So the MLIR structure for the above example looks similar to the following:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">fir</span><span class="o">.</span><span class="n">do_loop</span> <span class="o">%</span><span class="n">i_idx</span> <span class="o">=</span> <span class="o">%</span><span class="mi">34</span> <span class="n">to</span> <span class="o">%</span><span class="mi">36</span> <span class="n">step</span> <span class="o">%</span><span class="n">c1</span> <span class="n">unordered</span> <span class="p">{</span>
+    <span class="o">%</span><span class="n">i_idx_2</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">convert</span> <span class="o">%</span><span class="n">i_idx</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">i32</span>
+    <span class="n">fir</span><span class="o">.</span><span class="n">store</span> <span class="o">%</span><span class="n">i_idx_2</span> <span class="n">to</span> <span class="o">%</span><span class="n">i_iv</span><span class="c1">#1 : !fir.ref&lt;i32&gt;</span>
+
+    <span class="n">fir</span><span class="o">.</span><span class="n">do_loop</span> <span class="o">%</span><span class="n">j_idx</span> <span class="o">=</span> <span class="o">%</span><span class="mi">37</span> <span class="n">to</span> <span class="o">%</span><span class="mi">39</span> <span class="n">step</span> <span class="o">%</span><span class="n">c1_3</span> <span class="n">unordered</span> <span class="p">{</span>
+      <span class="o">%</span><span class="n">j_idx_2</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">convert</span> <span class="o">%</span><span class="n">j_idx</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">i32</span>
+      <span class="n">fir</span><span class="o">.</span><span class="n">store</span> <span class="o">%</span><span class="n">j_idx_2</span> <span class="n">to</span> <span class="o">%</span><span class="n">j_iv</span><span class="c1">#1 : !fir.ref&lt;i32&gt;</span>
+
+      <span class="n">fir</span><span class="o">.</span><span class="n">do_loop</span> <span class="o">%</span><span class="n">k_idx</span> <span class="o">=</span> <span class="o">%</span><span class="mi">40</span> <span class="n">to</span> <span class="o">%</span><span class="mi">42</span> <span class="n">step</span> <span class="o">%</span><span class="n">c1_5</span> <span class="n">unordered</span> <span class="p">{</span>
+        <span class="o">%</span><span class="n">k_idx_2</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">convert</span> <span class="o">%</span><span class="n">k_idx</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">i32</span>
+        <span class="n">fir</span><span class="o">.</span><span class="n">store</span> <span class="o">%</span><span class="n">k_idx_2</span> <span class="n">to</span> <span class="o">%</span><span class="n">k_iv</span><span class="c1">#1 : !fir.ref&lt;i32&gt;</span>
+
+        <span class="o">...</span> <span class="n">loop</span> <span class="n">nest</span> <span class="n">body</span> <span class="n">goes</span> <span class="n">here</span> <span class="o">...</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+</pre></div>
+</div>
+<p>This applies to multi-range loops in general; they are represented in the IR as
+a nest of <code class="docutils literal notranslate"><span class="pre">fir.do_loop</span></code> ops with the above nesting structure.</p>
+<p>Therefore, the pass detects such “perfectly” nested loop ops to identify multi-range
+loops and map them as “collapsed” loops in OpenMP.</p>
+<section id="further-info-regarding-loop-nest-detection">
+<h4><a class="toc-backref" href="#id6" role="doc-backlink">Further info regarding loop nest detection</a><a class="headerlink" href="#further-info-regarding-loop-nest-detection" title="Link to this heading">¶</a></h4>
+<p>Loop nest detection is currently limited to the scenario described in the previous
+section. However, this is quite limited and can be extended in the future to cover
+more cases. At the moment, for the following loop nest, even though both loops are
+perfectly nested, only the outer loop is parallelized:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">m</span><span class="p">)</span>
+<span class="w">    </span><span class="n">a</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="k">end do</span>
+<span class="k">end do</span>
+</pre></div>
+</div>
+<p>Similarly, for the following loop nest, even though the intervening statement <code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">=</span> <span class="pre">41</span></code>
+does not have any memory effects that would affect parallelization, this nest is
+not parallelized either (only the outer loop is).</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">41</span>
+<span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">m</span><span class="p">)</span>
+<span class="w">    </span><span class="n">a</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="k">end do</span>
+<span class="k">end do</span>
+</pre></div>
+</div>
+<p>The above also has the consequence that the <code class="docutils literal notranslate"><span class="pre">j</span></code> variable will <strong>not</strong> be
+privatized in the OpenMP parallel/target region. In other words, it will be
+treated as if it was a <code class="docutils literal notranslate"><span class="pre">shared</span></code> variable. For more details about privatization,
+see the “Data environment” section below.</p>
+<p>See <code class="docutils literal notranslate"><span class="pre">flang/test/Transforms/DoConcurrent/loop_nest_test.f90</span></code> for more examples
+of what is and is not detected as a perfect loop nest.</p>
+</section>
+</section>
+<section id="single-range-loops">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Single-range loops</a><a class="headerlink" href="#single-range-loops" title="Link to this heading">¶</a></h3>
+<p>Given the following loop:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">)</span>
+<span class="w">    </span><span class="n">a</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">i</span>
+<span class="w">  </span><span class="k">end do</span>
+</pre></div>
+</div>
+<section id="mapping-to-host">
+<h4><a class="toc-backref" href="#id8" role="doc-backlink">Mapping to <code class="docutils literal notranslate"><span class="pre">host</span></code></a><a class="headerlink" href="#mapping-to-host" title="Link to this heading">¶</a></h4>
+<p>Mapping this loop to the <code class="docutils literal notranslate"><span class="pre">host</span></code>, generates MLIR operations of the following
+structure:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%4 = fir.address_of(@_QFEa) ...
+%6:2 = hlfir.declare %4 ...
+
+omp.parallel {
+  // Allocate private copy for `i`.
+  // TODO Use delayed privatization.
+  %19 = fir.alloca i32 {bindc_name = &quot;i&quot;}
+  %20:2 = hlfir.declare %19 {uniq_name = &quot;_QFEi&quot;} ...
+
+  omp.wsloop {
+    omp.loop_nest (%arg0) : index = (%21) to (%22) inclusive step (%c1_2) {
+      %23 = fir.convert %arg0 : (index) -&gt; i32
+      // Use the privatized version of `i`.
+      fir.store %23 to %20#1 : !fir.ref&lt;i32&gt;
+      ...
+
+      // Use &quot;shared&quot; SSA value of `a`.
+      %42 = hlfir.designate %6#0
+      hlfir.assign %35 to %42
+      ...
+      omp.yield
+    }
+    omp.terminator
+  }
+  omp.terminator
+}
+</pre></div>
+</div>
+</section>
+<section id="mapping-to-device">
+<h4><a class="toc-backref" href="#id9" role="doc-backlink">Mapping to <code class="docutils literal notranslate"><span class="pre">device</span></code></a><a class="headerlink" href="#mapping-to-device" title="Link to this heading">¶</a></h4>
+<!-- TODO -->
+</section>
+</section>
+<section id="multi-range-loops">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Multi-range loops</a><a class="headerlink" href="#multi-range-loops" title="Link to this heading">¶</a></h3>
+<p>The pass currently supports multi-range loops as well. Given the following
+example:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="w">   </span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">m</span><span class="p">)</span>
+<span class="w">       </span><span class="n">a</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">j</span>
+<span class="w">   </span><span class="k">end do</span>
+</pre></div>
+</div>
+<p>The generated <code class="docutils literal notranslate"><span class="pre">omp.loop_nest</span></code> operation look like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">omp</span><span class="o">.</span><span class="n">loop_nest</span> <span class="p">(</span><span class="o">%</span><span class="n">arg0</span><span class="p">,</span> <span class="o">%</span><span class="n">arg1</span><span class="p">)</span>
+    <span class="p">:</span> <span class="n">index</span> <span class="o">=</span> <span class="p">(</span><span class="o">%</span><span class="mi">17</span><span class="p">,</span> <span class="o">%</span><span class="mi">19</span><span class="p">)</span> <span class="n">to</span> <span class="p">(</span><span class="o">%</span><span class="mi">18</span><span class="p">,</span> <span class="o">%</span><span class="mi">20</span><span class="p">)</span>
+    <span class="n">inclusive</span> <span class="n">step</span> <span class="p">(</span><span class="o">%</span><span class="n">c1_2</span><span class="p">,</span> <span class="o">%</span><span class="n">c1_4</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">store</span> <span class="o">%</span><span class="n">arg0</span> <span class="n">to</span> <span class="o">%</span><span class="n">private_i</span><span class="c1">#1 : !fir.ref&lt;i32&gt;</span>
+  <span class="n">fir</span><span class="o">.</span><span class="n">store</span> <span class="o">%</span><span class="n">arg1</span> <span class="n">to</span> <span class="o">%</span><span class="n">private_j</span><span class="c1">#1 : !fir.ref&lt;i32&gt;</span>
+  <span class="o">...</span>
+  <span class="n">omp</span><span class="o">.</span><span class="k">yield</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>It is worth noting that we have privatized versions for both iteration
+variables: <code class="docutils literal notranslate"><span class="pre">i</span></code> and <code class="docutils literal notranslate"><span class="pre">j</span></code>. These are locally allocated inside the parallel/target
+OpenMP region similar to what the single-range example in previous section
+shows.</p>
+</section>
+<section id="data-environment">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Data environment</a><a class="headerlink" href="#data-environment" title="Link to this heading">¶</a></h3>
+<p>By default, variables that are used inside a <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loop nest are
+either treated as <code class="docutils literal notranslate"><span class="pre">shared</span></code> in case of mapping to <code class="docutils literal notranslate"><span class="pre">host</span></code>, or mapped into the
+<code class="docutils literal notranslate"><span class="pre">target</span></code> region using a <code class="docutils literal notranslate"><span class="pre">map</span></code> clause in case of mapping to <code class="docutils literal notranslate"><span class="pre">device</span></code>. The only
+exceptions to this are:</p>
+<ol class="arabic simple">
+<li><p>the loop’s iteration variable(s) (IV) of <strong>perfect</strong> loop nests. In that
+case, for each IV, we allocate a local copy as shown by the mapping
+examples above.</p></li>
+<li><p>any values that are from allocations outside the loop nest and used
+exclusively inside of it. In such cases, a local privatized
+copy is created in the OpenMP region to prevent multiple teams of threads
+from accessing and destroying the same memory block, which causes runtime
+issues. For an example of such cases, see
+<code class="docutils literal notranslate"><span class="pre">flang/test/Transforms/DoConcurrent/locally_destroyed_temp.f90</span></code>.</p></li>
+</ol>
+<p>Implicit mapping detection (for mapping to the target device) is still quite
+limited and work to make it smarter is underway for both OpenMP in general
+and <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> mapping.</p>
+<section id="non-perfectly-nested-loops-ivs">
+<h4><a class="toc-backref" href="#id12" role="doc-backlink">Non-perfectly-nested loops’ IVs</a><a class="headerlink" href="#non-perfectly-nested-loops-ivs" title="Link to this heading">¶</a></h4>
+<p>For non-perfectly-nested loops, the IVs are still treated as <code class="docutils literal notranslate"><span class="pre">shared</span></code> or
+<code class="docutils literal notranslate"><span class="pre">map</span></code> entries as pointed out above. This <strong>might not</strong> be consistent with what
+the Fortran specification tells us. In particular, taking the following
+snippets from the spec (version 2023) into account:</p>
+<blockquote>
+<div><h2 class="rubric" id="id1">§ 3.35</h2>
+<p>construct entity
+entity whose identifier has the scope of a construct</p>
+</div></blockquote>
+<blockquote>
+<div><h2 class="rubric" id="id2">§ 19.4</h2>
+<p>A variable that appears as an index-name in a FORALL or DO CONCURRENT
+construct […] is a construct entity. A variable that has LOCAL or
+LOCAL_INIT locality in a DO CONCURRENT construct is a construct entity.
+[…]
+The name of a variable that appears as an index-name in a DO CONCURRENT
+construct, FORALL statement, or FORALL construct has a scope of the statement
+or construct. A variable that has LOCAL or LOCAL_INIT locality in a DO
+CONCURRENT construct has the scope of that construct.</p>
+</div></blockquote>
+<p>From the above quotes, it seems there is an equivalence between the IV of a <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loop and a variable with a <code class="docutils literal notranslate"><span class="pre">LOCAL</span></code> locality specifier (equivalent
+to OpenMP’s <code class="docutils literal notranslate"><span class="pre">private</span></code> clause). Which means that we should probably
+localize/privatize a <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loop’s IV even if it is not perfectly
+nested in the nest we are parallelizing. For now, however, we <strong>do not</strong> do
+that as pointed out previously. In the near future, we propose a middle-ground
+solution (see the Next steps section for more details).</p>
+<!--
+More details about current status will be added along with relevant parts of the
+implementation in later upstreaming patches.
+-->
+</section>
+</section>
+</section>
+<section id="next-steps">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Next steps</a><a class="headerlink" href="#next-steps" title="Link to this heading">¶</a></h2>
+<p>This section describes some of the open questions/issues that are not tackled yet
+even in the downstream implementation.</p>
+<section id="separate-mlir-op-for-do-concurrent">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Separate MLIR op for <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code></a><a class="headerlink" href="#separate-mlir-op-for-do-concurrent" title="Link to this heading">¶</a></h3>
+<p>At the moment, both increment and concurrent loops are represented by one MLIR
+op: <code class="docutils literal notranslate"><span class="pre">fir.do_loop</span></code>; where we differentiate concurrent loops with the <code class="docutils literal notranslate"><span class="pre">unordered</span></code>
+attribute. This is not ideal since the <code class="docutils literal notranslate"><span class="pre">fir.do_loop</span></code> op support only single
+iteration ranges. Consequently, to model multi-range <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loops, flang
+emits a nest of <code class="docutils literal notranslate"><span class="pre">fir.do_loop</span></code> ops which we have to detect in the OpenMP conversion
+pass to handle multi-range loops. Instead, it would better to model multi-range
+concurrent loops using a separate op which the IR more representative of the input
+Fortran code and also easier to detect and transform.</p>
+</section>
+<section id="delayed-privatization">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Delayed privatization</a><a class="headerlink" href="#delayed-privatization" title="Link to this heading">¶</a></h3>
+<p>So far, we emit the privatization logic for IVs inline in the parallel/target
+region. This is enough for our purposes right now since we don’t
+localize/privatize any sophisticated types of variables yet. Once we have need
+for more advanced localization through <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code>’s locality specifiers
+(see below), delayed privatization will enable us to have a much cleaner IR.
+Once delayed privatization’s implementation upstream is supported for the
+required constructs by the pass, we will move to it rather than inlined/early
+privatization.</p>
+</section>
+<section id="locality-specifiers-for-do-concurrent">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Locality specifiers for <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code></a><a class="headerlink" href="#locality-specifiers-for-do-concurrent" title="Link to this heading">¶</a></h3>
+<p>Locality specifiers will enable the user to control the data environment of the
+loop nest in a more fine-grained way. Implementing these specifiers on the
+<code class="docutils literal notranslate"><span class="pre">FIR</span></code> dialect level is needed in order to support this in the
+<code class="docutils literal notranslate"><span class="pre">DoConcurrentConversionPass</span></code>.</p>
+<p>Such specifiers will also unlock a potential solution to the
+non-perfectly-nested loops’ IVs issue described above. In particular, for a
+non-perfectly nested loop, one middle-ground proposal/solution would be to:</p>
+<ul class="simple">
+<li><p>Emit the loop’s IV as shared/mapped just like we do currently.</p></li>
+<li><p>Emit a warning that the IV of the loop is emitted as shared/mapped.</p></li>
+<li><p>Given support for <code class="docutils literal notranslate"><span class="pre">LOCAL</span></code>, we can recommend the user to explicitly
+localize/privatize the loop’s IV if they choose to.</p></li>
+</ul>
+<section id="sharing-tablegen-clause-records-from-the-openmp-dialect">
+<h4><a class="toc-backref" href="#id17" role="doc-backlink">Sharing TableGen clause records from the OpenMP dialect</a><a class="headerlink" href="#sharing-tablegen-clause-records-from-the-openmp-dialect" title="Link to this heading">¶</a></h4>
+<p>At the moment, the FIR dialect does not have a way to model locality specifiers
+on the IR level. Instead, something similar to early/eager privatization in OpenMP
+is done for the locality specifiers in <code class="docutils literal notranslate"><span class="pre">fir.do_loop</span></code> ops. Having locality specifier
+modelled in a way similar to delayed privatization (i.e. the <code class="docutils literal notranslate"><span class="pre">omp.private</span></code> op) and
+reductions (i.e. the <code class="docutils literal notranslate"><span class="pre">omp.declare_reduction</span></code> op) can make mapping <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code>
+to OpenMP (and other parallel programming models) much easier.</p>
+<p>Therefore, one way to approach this problem is to extract the TableGen records
+for relevant OpenMP clauses in a shared dialect for “data environment management”
+and use these shared records for OpenMP, <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code>, and possibly OpenACC
+as well.</p>
+</section>
+<section id="supporting-reductions">
+<h4><a class="toc-backref" href="#id18" role="doc-backlink">Supporting reductions</a><a class="headerlink" href="#supporting-reductions" title="Link to this heading">¶</a></h4>
+<p>Similar to locality specifiers, mapping reductions from <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> to OpenMP
+is also still an open TODO. We can potentially extend the MLIR infrastructure
+proposed in the previous section to share reduction records among the different
+relevant dialects as well.</p>
+</section>
+</section>
+<section id="more-advanced-detection-of-loop-nests">
+<h3><a class="toc-backref" href="#id19" role="doc-backlink">More advanced detection of loop nests</a><a class="headerlink" href="#more-advanced-detection-of-loop-nests" title="Link to this heading">¶</a></h3>
+<p>As pointed out earlier, any intervening code between the headers of 2 nested
+<code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> loops prevents us from detecting this as a loop nest. In some
+cases this is overly conservative. Therefore, a more flexible detection logic
+of loop nests needs to be implemented.</p>
+</section>
+<section id="data-dependence-analysis">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">Data-dependence analysis</a><a class="headerlink" href="#data-dependence-analysis" title="Link to this heading">¶</a></h3>
+<p>Right now, we map loop nests without analysing whether such mapping is safe to
+do or not. We probably need to at least warn the user of unsafe loop nests due
+to loop-carried dependencies.</p>
+</section>
+<section id="non-rectangular-loop-nests">
+<h3><a class="toc-backref" href="#id21" role="doc-backlink">Non-rectangular loop nests</a><a class="headerlink" href="#non-rectangular-loop-nests" title="Link to this heading">¶</a></h3>
+<p>So far, we did not need to use the pass for non-rectangular loop nests. For
+example:</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">i</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="k">do</span><span class="w"> </span><span class="k">concurrent</span><span class="p">(</span><span class="n">j</span><span class="o">=</span><span class="n">i</span><span class="p">:</span><span class="n">n</span><span class="p">)</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="k">end do</span>
+<span class="k">end do</span>
+</pre></div>
+</div>
+<p>We defer this to the (hopefully) near future when we get the conversion in a
+good share for the samples/projects at hand.</p>
+</section>
+<section id="generalizing-the-pass-to-other-parallel-programming-models">
+<h3><a class="toc-backref" href="#id22" role="doc-backlink">Generalizing the pass to other parallel programming models</a><a class="headerlink" href="#generalizing-the-pass-to-other-parallel-programming-models" title="Link to this heading">¶</a></h3>
+<p>Once we have a stable and capable <code class="docutils literal notranslate"><span class="pre">do</span> <span class="pre">concurrent</span></code> to OpenMP mapping, we can take
+this in a more generalized direction and allow the pass to target other models;
+e.g. OpenACC. This goal should be kept in mind from the get-go even while only
+targeting OpenMP.</p>
+</section>
+</section>
+<section id="upstreaming-status">
+<h2><a class="toc-backref" href="#id23" role="doc-backlink">Upstreaming status</a><a class="headerlink" href="#upstreaming-status" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>[x] Command line options for <code class="docutils literal notranslate"><span class="pre">flang</span></code> and <code class="docutils literal notranslate"><span class="pre">bbc</span></code>.</p></li>
+<li><p>[x] Conversion pass skeleton (no transormations happen yet).</p></li>
+<li><p>[x] Status description and tracking document (this document).</p></li>
+<li><p>[x] Loop nest detection to identify multi-range loops.</p></li>
+<li><p>[ ] Basic host/CPU mapping support.</p></li>
+<li><p>[ ] Basic device/GPU mapping support.</p></li>
+<li><p>[ ] More advanced host and device support (expaned to multiple items as needed).</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="DoConcurrent.html"><code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> isn’t necessarily concurrent</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Extensions.html">Fortran Extensions supported by Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Sep 23, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

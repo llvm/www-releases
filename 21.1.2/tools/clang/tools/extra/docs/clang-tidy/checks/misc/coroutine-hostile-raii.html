@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - misc-coroutine-hostile-raii &#8212; Extra Clang Tools 21.1.2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=56ca4867"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="misc-definitions-in-headers" href="definitions-in-headers.html" />
+    <link rel="prev" title="misc-const-correctness" href="const-correctness.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 21.1.2 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - misc-coroutine-hostile-raii</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="const-correctness.html">misc-const-correctness</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="definitions-in-headers.html">misc-definitions-in-headers</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="misc-coroutine-hostile-raii">
+<h1>misc-coroutine-hostile-raii<a class="headerlink" href="#misc-coroutine-hostile-raii" title="Link to this heading">¶</a></h1>
+<p>Detects when objects of certain hostile RAII types persists across suspension
+points in a coroutine. Such hostile types include scoped-lockable types and
+types belonging to a configurable denylist.</p>
+<p>Some objects require that they be destroyed on the same thread that created them.
+Traditionally this requirement was often phrased as “must be a local variable”,
+under the assumption that local variables always work this way. However this is
+incorrect with C++20 coroutines, since an intervening <code class="docutils literal notranslate"><span class="pre">co_await</span></code> may cause the
+coroutine to suspend and later be resumed on another thread.</p>
+<p>The lifetime of an object that requires being destroyed on the same thread must
+not encompass a <code class="docutils literal notranslate"><span class="pre">co_await</span></code> or <code class="docutils literal notranslate"><span class="pre">co_yield</span></code> point. If you create/destroy an object,
+you must do so without allowing the coroutine to suspend in the meantime.</p>
+<p>Following types are considered as hostile:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Scoped-lockable types: A scoped-lockable object persisting across a suspension
+point is problematic as the lock held by this object could be unlocked by a
+different thread. This would be undefined behaviour.
+This includes all types annotated with the <code class="docutils literal notranslate"><span class="pre">scoped_lockable</span></code> attribute.</p></li>
+<li><p>Types belonging to a configurable denylist.</p></li>
+</ul>
+</div></blockquote>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Call some async API while holding a lock.</span>
+<span class="n">task</span><span class="w"> </span><span class="nf">coro</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">lock_guard</span><span class="w"> </span><span class="n">l</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mu_</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">// Oops! The async Bar function may finish on a different</span>
+<span class="w">  </span><span class="c1">// thread from the one that created the lock_guard (and called</span>
+<span class="w">  </span><span class="c1">// Mutex::Lock). After suspension, Mutex::Unlock will be called on the wrong thread.</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">Bar</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<section id="options">
+<h2>Options<a class="headerlink" href="#options" title="Link to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-RAIITypesList">
+<span class="sig-name descname"><span class="pre">RAIITypesList</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-RAIITypesList" title="Link to this definition">¶</a></dt>
+<dd><p>A semicolon-separated list of qualified types which should not be allowed to
+persist across suspension points.
+Eg: <cite>my::lockable;a::b;::my::other::lockable</cite>
+The default value of this option is <cite>std::lock_guard;std::scoped_lock</cite>.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-AllowedAwaitablesList">
+<span class="sig-name descname"><span class="pre">AllowedAwaitablesList</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-AllowedAwaitablesList" title="Link to this definition">¶</a></dt>
+<dd><p>A semicolon-separated list of qualified types of awaitables types which can
+be safely awaited while having hostile RAII objects in scope.</p>
+<p><code class="docutils literal notranslate"><span class="pre">co_await</span></code>-ing an expression of <code class="docutils literal notranslate"><span class="pre">awaitable</span></code> type is considered
+safe if the <code class="docutils literal notranslate"><span class="pre">awaitable</span></code> type is part of this list.
+RAII objects persisting across such a <code class="docutils literal notranslate"><span class="pre">co_await</span></code> expression are
+considered safe and hence are not flagged.</p>
+<p>Example usage:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Consider option AllowedAwaitablesList = &quot;safe_awaitable&quot;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">safe_awaitable</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">bool</span><span class="w"> </span><span class="nf">await_ready</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">await_suspend</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">coroutine_handle</span><span class="o">&lt;&gt;</span><span class="p">)</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="nf">await_resume</span><span class="p">()</span><span class="w"> </span><span class="k">noexcept</span><span class="w"> </span><span class="p">{}</span>
+<span class="p">};</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">wait</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">safe_awaitable</span><span class="p">{};</span><span class="w"> </span><span class="p">}</span>
+
+<span class="n">task</span><span class="w"> </span><span class="n">coro</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// This persists across both the co_await&#39;s but is not flagged</span>
+<span class="w">  </span><span class="c1">// because the awaitable is considered safe to await on.</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">lock_guard</span><span class="w"> </span><span class="nf">l</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mu_</span><span class="p">);</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">safe_awaitable</span><span class="p">{};</span>
+<span class="w">  </span><span class="k">co_await</span><span class="w"> </span><span class="n">wait</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Eg: <cite>my::safe::awaitable;other::awaitable</cite>
+Default is an empty string.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="const-correctness.html">misc-const-correctness</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="definitions-in-headers.html">misc-definitions-in-headers</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Fortran descriptor type mapping for OpenMP offload &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1d8edcb3"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="OpenMP Semantic Analysis" href="OpenMP-semantics.html" />
+    <link rel="prev" title="OpenMP Declare Target" href="OpenMP-declare-target.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Fortran descriptor type mapping for OpenMP offload</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMP-declare-target.html">OpenMP Declare Target</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OpenMP-semantics.html">OpenMP Semantic Analysis</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/OpenMP-descriptor-management.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="fortran-descriptor-type-mapping-for-openmp-offload">
+<h1>Fortran descriptor type mapping for OpenMP offload<a class="headerlink" href="#fortran-descriptor-type-mapping-for-openmp-offload" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#details" id="id1">Details</a></p></li>
+<li><p><a class="reference internal" href="#differences-from-openacc" id="id2">Differences from OpenACC</a></p></li>
+</ul>
+</nav>
+<section id="details">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Details</a><a class="headerlink" href="#details" title="Link to this heading">¶</a></h2>
+<p>The initial method for mapping Fortran types tied to descriptors for OpenMP offloading is to treat these types
+as a special case of OpenMP record type (C/C++ structure/class, Fortran derived type etc.) mapping as far as the
+runtime is concerned. Where the box (descriptor information) is the holding container and the underlying
+data pointer is contained within the container, and we must generate explicit maps for both the pointer member and
+the container. As an example, a small C++ program that is equivalent to the concept described, with the
+<code class="docutils literal notranslate"><span class="pre">mock_descriptor</span></code> class being representative of the class utilised for descriptors in Clang:</p>
+<div class="highlight-C++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">mock_descriptor</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">long</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">byte</span><span class="w"> </span><span class="n">x1</span><span class="p">,</span><span class="w"> </span><span class="n">x2</span><span class="p">,</span><span class="w"> </span><span class="n">x3</span><span class="p">,</span><span class="w"> </span><span class="n">x4</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">pointer</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">long</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">lx</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="mi">3</span><span class="p">];</span>
+<span class="p">};</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="n">mock_descriptor</span><span class="w"> </span><span class="n">data</span><span class="p">;</span>
+<span class="cp">#pragma omp target map(tofrom: data, data.pointer[:upper_bound])</span>
+<span class="p">{</span>
+<span class="w">    </span><span class="k">do</span><span class="w"> </span><span class="n">something</span><span class="p">...</span><span class="w"> </span>
+<span class="p">}</span>
+
+<span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In the above, we have to map both the containing structure, with its non-pointer members and the
+data pointed to by the pointer contained within the structure to appropriately access the data. This
+is effectively what is done with descriptor types for the time being. Other pointers that are part
+of the descriptor container such as the addendum should also be treated as the data pointer is
+treated.</p>
+<p>Currently, Flang will lower these descriptor types in the OpenMP lowering (lower/OpenMP.cpp) similarly
+to all other map types, generating an omp.MapInfoOp containing relevant information required for lowering
+the OpenMP dialect to LLVM-IR during the final stages of the MLIR lowering. However, after
+the lowering to FIR/HLFIR has been performed an OpenMP dialect specific pass for Fortran,
+<code class="docutils literal notranslate"><span class="pre">MapInfoFinalizationPass</span></code> (Optimizer/OpenMP/MapInfoFinalization.cpp) will expand the
+<code class="docutils literal notranslate"><span class="pre">omp.MapInfoOp</span></code>’s containing descriptors (which currently will be a <code class="docutils literal notranslate"><span class="pre">BoxType</span></code> or <code class="docutils literal notranslate"><span class="pre">BoxAddrOp</span></code>) into multiple
+mappings, with one extra per pointer member in the descriptor that is supported on top of the original
+descriptor map operation. These pointers members are linked to the parent descriptor by adding them to
+the member field of the original descriptor map operation, they are then inserted into the relevant map
+owning operation’s (<code class="docutils literal notranslate"><span class="pre">omp.TargetOp</span></code>, <code class="docutils literal notranslate"><span class="pre">omp.TargetDataOp</span></code> etc.) map operand list and in cases where the owning
+operation is <code class="docutils literal notranslate"><span class="pre">IsolatedFromAbove</span></code>, it also inserts them as <code class="docutils literal notranslate"><span class="pre">BlockArgs</span></code> to canonicalize the mappings and
+simplify lowering.</p>
+<p>An example transformation by the <code class="docutils literal notranslate"><span class="pre">MapInfoFinalizationPass</span></code>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>
+...
+%12 = omp.map.info var_ptr(%1#1 : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, !fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;) map_clauses(tofrom) capture(ByRef) bounds(%11) -&gt; !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt; {name = &quot;arg_alloc&quot;}
+...
+omp.target map_entries(%12 -&gt; %arg1, %13 -&gt; %arg2 : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, !fir.ref&lt;i32&gt;) {
+    ^bb0(%arg1: !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, %arg2: !fir.ref&lt;i32&gt;):
+...
+
+====&gt;
+
+...
+%12 = fir.box_offset %1#1 base_addr : (!fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;) -&gt; !fir.llvm_ptr&lt;!fir.ref&lt;!fir.array&lt;?xi32&gt;&gt;&gt;
+%13 = omp.map.info var_ptr(%1#1 : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, !fir.array&lt;?xi32&gt;) map_clauses(tofrom) capture(ByRef) var_ptr_ptr(%12 : !fir.llvm_ptr&lt;!fir.ref&lt;!fir.array&lt;?xi32&gt;&gt;&gt;) bounds(%11) -&gt; !fir.llvm_ptr&lt;!fir.ref&lt;!fir.array&lt;?xi32&gt;&gt;&gt; {name = &quot;&quot;}
+%14 = omp.map.info var_ptr(%1#1 : !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, !fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;) map_clauses(tofrom) capture(ByRef) members(%13 : !fir.llvm_ptr&lt;!fir.ref&lt;!fir.array&lt;?xi32&gt;&gt;&gt;) -&gt; !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt; {name = &quot;arg_alloc&quot;}
+...
+omp.target map_entries(%13 -&gt; %arg1, %14 -&gt; %arg2, %15 -&gt; %arg3 : !fir.llvm_ptr&lt;!fir.ref&lt;!fir.array&lt;?xi32&gt;&gt;&gt;, !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, !fir.ref&lt;i32&gt;) {
+    ^bb0(%arg1: !fir.llvm_ptr&lt;!fir.ref&lt;!fir.array&lt;?xi32&gt;&gt;&gt;, %arg2: !fir.ref&lt;!fir.box&lt;!fir.ptr&lt;!fir.array&lt;?xi32&gt;&gt;&gt;&gt;, %arg3: !fir.ref&lt;i32&gt;):
+...
+
+</pre></div>
+</div>
+<p>In later stages of the compilation flow when the OpenMP dialect is being lowered to LLVM-IR these descriptor
+mappings are treated as if they were structure mappings with explicit member maps on the same directive as
+their parent was mapped.</p>
+<p>This implementation utilises the member field of the <code class="docutils literal notranslate"><span class="pre">map_info</span></code> operation to indicate that the pointer
+descriptor elements which are contained in their own <code class="docutils literal notranslate"><span class="pre">map_info</span></code> operation are part of their respective
+parent descriptor. This allows the descriptor containing the descriptor pointer member to be mapped
+as a composite entity during lowering, with the correct mappings being generated to tie them together,
+allowing the OpenMP runtime to map them correctly, attaching the pointer member to the parent
+structure so it can be accessed during execution. If we opt to not treat the descriptor as a single
+entity we have issues with the member being correctly attached to the parent and being accessible,
+this can cause runtime segfaults on the device when we try to access the data through the parent. It
+may be possible to avoid this member mapping, treating them as individual entities, but treating a
+composite mapping as an individual mapping could lead to problems such as the runtime taking
+liberties with the mapping it usually wouldn’t if it knew they were linked, we would also have to
+be careful to maintian the correct order of mappings as we lower, if we misorder the maps, it’d be
+possible to overwrite already written data, e.g. if we write the descriptor data pointer first, and
+then the containing descriptor, we would overwrite the descriptor data pointer with the incorrect
+address.</p>
+<p>This method is generic in the sense that the OpenMP dialect doesn’t need to understand that it is mapping a
+Fortran type containing a descriptor, it just thinks it’s a record type from either Fortran or C++. However,
+it is a little rigid in how the descriptor mappings are handled as there is no specialisation or possibility
+to specialise the mappings for possible edge cases without polluting the dialect or lowering with further
+knowledge of Fortran and the FIR dialect.</p>
+</section>
+<section id="differences-from-openacc">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Differences from OpenACC</a><a class="headerlink" href="#differences-from-openacc" title="Link to this heading">¶</a></h2>
+<p>The descriptor mapping for OpenMP currently works differently to the planned direction for OpenACC, however,
+it is possible and would likely be ideal to align the method with OpenACC in the future.</p>
+<p>Currently the OpenMP specification is less descriptive and has less stringent rules around descriptor based
+types so does not require as complex a set of descriptor management rules as OpenACC (although, in certain
+cases for the interim adopting OpenACC’s rules where it makes sense could be useful). To handle the more
+complex descriptor mapping rules OpenACC has opted to utilise a more runtime oriented approach, where
+specialized runtime functions for handling descriptor mapping for OpenACC are created and these runtime
+function handles are attatched to a special OpenACC dialect operation. When this operation is lowered it
+will lower to the attatched OpenACC descriptor mapping runtime function. This sounds like it will work
+(no implementation yet) similarly to some of the existing HLFIR operations which optionally lower to
+Fortran runtime calls.</p>
+<p>This methodology described by OpenACC which utilises runtime functions to handle specialised mappings allows
+more flexibility as a significant amount of the mapping logic can be moved into the runtime from the compiler.
+It also allows specialisation of the mapping for fortran specific types. This may be a desireable approach
+to take for OpenMP in the future, in particular if we find need to specialise mapping further for
+descriptors or other Fortran types. However, for the moment the currently chosen implementation for OpenMP
+appears sufficient as far as the OpenMP specification and current testing can show.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMP-declare-target.html">OpenMP Declare Target</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OpenMP-semantics.html">OpenMP Semantic Analysis</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Sep 23, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
