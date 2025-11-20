@@ -1,0 +1,498 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>LLVM Interface Export Annotations &#8212; LLVM 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="LLVM Language Reference Manual" href="LangRef.html" />
+    <link rel="prev" title="Design and Usage of the InAlloca Attribute" href="InAlloca.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="LangRef.html" title="LLVM Language Reference Manual"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="InAlloca.html" title="Design and Usage of the InAlloca Attribute"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" accesskey="U">Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">LLVM Interface Export Annotations</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/InterfaceExportAnnotations.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="llvm-interface-export-annotations">
+<h1>LLVM Interface Export Annotations<a class="headerlink" href="#llvm-interface-export-annotations" title="Link to this heading">¶</a></h1>
+<p>Symbols that are part of LLVM’s public interface must be explicitly annotated
+to support shared library builds with hidden default symbol visibility. This
+document provides background and guidelines for annotating the codebase.</p>
+<section id="llvm-shared-library">
+<h2>LLVM Shared Library<a class="headerlink" href="#llvm-shared-library" title="Link to this heading">¶</a></h2>
+<p>LLVM builds as a static library by default, but it can also be built as a shared
+library with the following configuration:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LLVM_BUILD_LLVM_DYLIB</span><span class="o">=</span><span class="n">On</span>
+<span class="n">LLVM_LINK_LLVM_DYLIB</span><span class="o">=</span><span class="n">On</span>
+</pre></div>
+</div>
+<p>There are three shared library executable formats we’re interested in: PE
+Dynamic Link Library (.dll) on Windows, Mach-O Shared Object (.dylib) on Apple
+systems, and ELF Shared Object (.so) on Linux, BSD and other Unix-like systems.</p>
+<p>ELF and Mach-O Shared Object files can be built with no additional setup or
+configuration. This is because all global symbols in the library are exported by
+default – the same as when building a static library. However, when building a
+DLL for Windows, the situation is more complex:</p>
+<ul class="simple">
+<li><p>Symbols are not exported from a DLL by default. Symbols must be annotated with
+<code class="docutils literal notranslate"><span class="pre">__declspec(dllexport)</span></code> when building the library to be externally visible.</p></li>
+<li><p>Symbols imported from a Windows DLL should generally be annotated with
+<code class="docutils literal notranslate"><span class="pre">__declspec(dllimport)</span></code> when compiling clients.</p></li>
+<li><p>A single Windows DLL can export a maximum of 65,535 symbols.</p></li>
+</ul>
+<p>Because of the requirements for Windows DLLs, additional work must be done to
+ensure the proper set of public symbols is exported and visible to clients.</p>
+</section>
+<section id="annotation-macros">
+<h2>Annotation Macros<a class="headerlink" href="#annotation-macros" title="Link to this heading">¶</a></h2>
+<p>The distinct DLL import and export annotations required for Windows DLLs
+typically lead developers to define a preprocessor macro for annotating
+exported symbols in header public files. The custom macro resolves to the
+<strong>export</strong> annotation when building the library and the <strong>import</strong> annotation
+when building the client.</p>
+<p>We have defined the <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> macro in <a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/llvm/include/llvm/Support/Compiler.h#L152">llvm/Support/Compiler.h</a>
+for this purpose:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(LLVM_EXPORTS)</span>
+<span class="cp">#define LLVM_ABI __declspec(dllexport)</span>
+<span class="cp">#else</span>
+<span class="cp">#define LLVM_ABI __declspec(dllimport)</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+<p>Windows DLL symbol visibility requirements are approximated on ELF and Mach-O
+shared library builds by setting default symbol visibility to hidden
+(<code class="docutils literal notranslate"><span class="pre">-fvisibility-default=hidden</span></code>) when building with the following
+configuration:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LLVM_BUILD_LLVM_DYLIB_VIS</span><span class="o">=</span><span class="n">On</span>
+</pre></div>
+</div>
+<p>For an ELF or Mach-O platform with this setting, the <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> macro is
+defined to override the default hidden symbol visibility:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#define LLVM_ABI __attribute__((visibility(&quot;default&quot;)))</span>
+</pre></div>
+</div>
+<p>In addition to <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>, there are a few other macros for use in less
+common cases described below.</p>
+<p>Export macros are used to annotate symbols only within their intended shared
+library. This is necessary because of the way Windows handles import/export
+annotations.</p>
+<p>For example, <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> resolves to <code class="docutils literal notranslate"><span class="pre">__declspec(dllexport)</span></code> only when
+building source that is part of the LLVM shared library (e.g. source under
+<code class="docutils literal notranslate"><span class="pre">llvm-project/llvm</span></code>). If <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> were incorrectly used to annotate a
+symbol from a different LLVM project (such as Clang) it would always resolve to
+<code class="docutils literal notranslate"><span class="pre">__declspec(dllimport)</span></code> and the symbol would not be properly exported.</p>
+</section>
+<section id="how-to-annotate-symbols">
+<h2>How to Annotate Symbols<a class="headerlink" href="#how-to-annotate-symbols" title="Link to this heading">¶</a></h2>
+<section id="functions">
+<h3>Functions<a class="headerlink" href="#functions" title="Link to this heading">¶</a></h3>
+<p>Exported function declarations in header files must be annotated with
+<code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="n">LLVM_ABI</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">exported_function</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="global-variables">
+<h3>Global Variables<a class="headerlink" href="#global-variables" title="Link to this heading">¶</a></h3>
+<p>Exported global variables must be annotated with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> at their
+<code class="docutils literal notranslate"><span class="pre">extern</span></code> declarations.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="n">LLVM_ABI</span><span class="w"> </span><span class="k">extern</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">exported_global_variable</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+<section id="classes-structs-and-unions">
+<h3>Classes, Structs, and Unions<a class="headerlink" href="#classes-structs-and-unions" title="Link to this heading">¶</a></h3>
+<p>Classes, structs, and unions can be annotated with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> at their
+declaration, but this option is generally discouraged because it will
+export every class member, vtable, and type information. Instead, <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>
+should be applied to individual class members that require export.</p>
+<p>In the most common case, public and protected methods without a body in the
+class declaration must be annotated with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="c1">// Public methods defined externally must be annotated.</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">sourceDefinedPublicMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">// Methods defined in the class definition do not need annotation.</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="nf">headerDefinedPublicMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="c1">// Constructors and destructors must be annotated if defined externally.</span>
+<span class="w">  </span><span class="n">ExampleClass</span><span class="p">()</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="o">~</span><span class="n">ExampleClass</span><span class="p">();</span>
+
+<span class="w">  </span><span class="c1">// Public static methods defined externally must be annotated.</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">sourceDefinedPublicStaticMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>Additionally, public and protected static fields that are not initialized at
+declaration must be annotated with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="c1">// Public static fields defined externally must be annotated.</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">mutableStaticField</span><span class="p">;</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="k">static</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">constStaticField</span><span class="p">;</span>
+
+<span class="w">  </span><span class="c1">// Static members initialized at declaration do not need to be annotated.</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">initializedConstStaticField</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">initializedConstexprStaticField</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>Private methods may also require <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> annotation. This situation occurs
+when a method defined in a header calls the private method. The private method
+call may be from within the class or a friend class or method.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="c1">// Private methods must be annotated if referenced by a public method defined a</span>
+<span class="w">  </span><span class="c1">// header file.</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">privateMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="c1">// Inlineable method defined in the class definition calls a private method</span>
+<span class="w">  </span><span class="c1">// defined externally. If the private method is not annotated for export, this</span>
+<span class="w">  </span><span class="c1">// method will fail to link.</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">publicMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">privateMethod</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>There are less common cases where you may also need to annotate an inline
+function even though it is fully defined in a header. Annotating an inline
+function for export does not prevent it being inlined into client code. However,
+it does ensure there is a single, stable address for the function exported from
+the shared library.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="c1">// Annotate the function so it is exported from the library at a fixed</span>
+<span class="c1">// address.</span>
+<span class="n">LLVM_ABI</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">inlineFunction</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Similarly, if a stable pointer-to-member function address is required for a
+method in a C++ class, it may be annotated for export.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="c1">// Annotate the method so it is exported from the library at a fixed</span>
+<span class="w">  </span><span class="c1">// address.</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">inlineMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>When an inline function is annotated for export, the header containing the
+function definition <strong>must</strong> be included by at least one of the library’s
+source files or the function will never be compiled with the export
+annotation.</p>
+</div>
+</section>
+<section id="friend-functions">
+<h3>Friend Functions<a class="headerlink" href="#friend-functions" title="Link to this heading">¶</a></h3>
+<p>Friend functions declared in a class, struct or union must be annotated with
+<code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> if the corresponding function declaration is annotated with
+<code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>. This requirement applies even when the class containing the friend
+declaration is annotated with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="c1">// An exported function that has friend access to ExampleClass internals.</span>
+<span class="n">LLVM_ABI</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">friend_function</span><span class="p">(</span><span class="n">ExampleClass</span><span class="w"> </span><span class="o">&amp;</span><span class="n">obj</span><span class="p">);</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ExampleClass</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// Friend declaration of a function must be annotated the same as the actual</span>
+<span class="w">  </span><span class="c1">// function declaration.</span>
+<span class="w">  </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="k">friend</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">friend_function</span><span class="p">(</span><span class="n">ExampleClass</span><span class="w"> </span><span class="o">&amp;</span><span class="n">obj</span><span class="p">);</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Annotating the friend declaration avoids an “inconsistent dll linkage”
+compiler error when building a DLL for Windows.</p>
+</div>
+</section>
+<section id="virtual-table-and-type-info">
+<h3>Virtual Table and Type Info<a class="headerlink" href="#virtual-table-and-type-info" title="Link to this heading">¶</a></h3>
+<p>Classes and structs with exported virtual methods, including child classes that
+export overridden virtual methods, must also export their vtable for ELF and
+Mach-O builds. This can be achieved by annotating the class rather than
+individual class members.</p>
+<p>The general rule here is to annotate at the class level if any out-of-line
+method is declared <code class="docutils literal notranslate"><span class="pre">virtual</span></code> or <code class="docutils literal notranslate"><span class="pre">override</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="c1">// Annotating the class exports vtable and type information as well as all</span>
+<span class="c1">// class members.</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LLVM_ABI</span><span class="w"> </span><span class="n">ParentClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">virtualMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">anotherVirtualMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="w">  </span><span class="k">virtual</span><span class="w"> </span><span class="o">~</span><span class="n">ParentClass</span><span class="p">();</span>
+<span class="p">};</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LLVM_ABI</span><span class="w"> </span><span class="n">ChildClass</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="k">public</span><span class="w"> </span><span class="n">ParentClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="c1">// Inline method override does not require the class be annotated.</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">virtualMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="k">override</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">ParentClass</span><span class="o">::</span><span class="n">virtualMethod</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="c1">// Overriding a virtual method from the parent requires the class be</span>
+<span class="w">  </span><span class="c1">// annotated.</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">pureVirtualMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="k">override</span><span class="p">;</span>
+
+<span class="w">  </span><span class="o">~</span><span class="n">ChildClass</span><span class="p">();</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>If a class is annotated, none of its members may be annotated. If class- and
+member-level annotations are combined on a class, it will fail compilation on
+Windows.</p>
+</div>
+<section id="compilation-errors">
+<h4>Compilation Errors<a class="headerlink" href="#compilation-errors" title="Link to this heading">¶</a></h4>
+<p>Annotating a class with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code> causes the compiler to fully instantiate
+the class at compile time. This requires exporting every method that could be
+potentially used by a client even though no existing clients may actually use
+them. This can cause compilation errors that were not previously present.</p>
+<p>The most common type of error occurs when the compiler attempts to instantiate
+and export a class’ implicit copy constructor and copy assignment operator. If
+the class contains move-only members that cannot be copied (<code class="docutils literal notranslate"><span class="pre">std::unique_ptr</span></code>
+for example), the compiler will fail to instantiate these implicit
+methods.</p>
+<p>This problem is easily addressed by explicitly deleting the class’ copy
+constructor and copy assignment operator:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LLVM_ABI</span><span class="w"> </span><span class="n">ExportedClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">ExportedClass</span><span class="p">()</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">default</span><span class="p">;</span>
+
+<span class="w">  </span><span class="c1">// Explicitly delete the copy constructor and assignment operator.</span>
+<span class="w">  </span><span class="n">ExportedClass</span><span class="p">(</span><span class="n">ExportedClass</span><span class="w"> </span><span class="k">const</span><span class="o">&amp;</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">delete</span><span class="p">;</span>
+<span class="w">  </span><span class="n">ExportedClass</span><span class="o">&amp;</span><span class="w"> </span><span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">ExportedClass</span><span class="w"> </span><span class="k">const</span><span class="o">&amp;</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">delete</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>We know this modification is harmless because any clients attempting to use
+these methods already would fail to compile. For a more detailed explanation,
+see <a class="reference external" href="https://devblogs.microsoft.com/oldnewthing/20190927-00/?p=102932">this Microsoft dev blog</a>.</p>
+</section>
+</section>
+<section id="templates">
+<h3>Templates<a class="headerlink" href="#templates" title="Link to this heading">¶</a></h3>
+<p>Most template classes are entirely header-defined and do not need to be exported
+because they will be instantiated and compiled into the client as needed. Such
+template classes require no export annotations. However, there are some less
+common cases where annotations are required for templates.</p>
+<section id="specialized-template-functions">
+<h4>Specialized Template Functions<a class="headerlink" href="#specialized-template-functions" title="Link to this heading">¶</a></h4>
+<p>As with any other exported function, an exported specialization of a template
+function not defined in a header file must have its declaration annotated with
+<code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">templateMethod</span><span class="p">(</span><span class="n">T</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="c1">// The explicitly specialized definition of templateMethod for int is located in</span>
+<span class="c1">// a source file. This declaration must be annotated with LLVM_ABI to export it.</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">templateMethod</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Similarly, an exported specialization of a method in a template class must have
+its declaration annotated with <code class="docutils literal notranslate"><span class="pre">LLVM_ABI</span></code>.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">TemplateClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">method</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">};</span>
+
+<span class="c1">// The explicitly specialized definition of method for int is defined in a</span>
+<span class="c1">// source file. The declaration must be annotated with LLVM_ABI to export it.</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;&gt;</span><span class="w"> </span><span class="n">LLVM_ABI</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">TemplateStruct</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;::</span><span class="n">method</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="explicitly-instantiated-template-classes">
+<h4>Explicitly Instantiated Template Classes<a class="headerlink" href="#explicitly-instantiated-template-classes" title="Link to this heading">¶</a></h4>
+<p>Explicitly instantiated template classes must be annotated with
+template-specific annotations at both declaration and definition.</p>
+<p>An extern template instantiation in a header file must be annotated with
+<code class="docutils literal notranslate"><span class="pre">LLVM_TEMPLATE_ABI</span></code>. This will typically be located in a header file.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;llvm/Support/Compiler.h&quot;</span>
+
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">TemplateClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">TemplateClass</span><span class="p">(</span><span class="n">T</span><span class="w"> </span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">val_</span><span class="p">(</span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="n">get</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">val_</span><span class="p">;</span><span class="w">  </span><span class="p">}</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">T</span><span class="w"> </span><span class="n">val_</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="c1">// Explicitly instantiate and export TempalateClass for int type.</span>
+<span class="k">extern</span><span class="w"> </span><span class="k">template</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">LLVM_TEMPLATE_ABI</span><span class="w"> </span><span class="n">TemplateClass</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>The corresponding definition of the template instantiation must be annotated
+with <code class="docutils literal notranslate"><span class="pre">LLVM_EXPORT_TEMPLATE</span></code>. This will typically be located in a source file.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;TemplateClass.h&quot;</span>
+
+<span class="c1">// Explicitly instantiate and export TempalateClass for int type.</span>
+<span class="k">template</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">LLVM_EXPORT_TEMPLATE</span><span class="w"> </span><span class="n">TemplateClass</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="LangRef.html" title="LLVM Language Reference Manual"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="InAlloca.html" title="Design and Usage of the InAlloca Attribute"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" >Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">LLVM Interface Export Annotations</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-11-20.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

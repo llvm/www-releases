@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debug Generation &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=1d8edcb3"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Compiler directives supported by Flang" href="Directives.html" />
+    <link rel="prev" title="Control Flow Graph" href="ControlFlowGraph.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Debug Generation</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ControlFlowGraph.html">Control Flow Graph</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Directives.html">Compiler directives supported by Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="debug-generation">
+<h1>Debug Generation<a class="headerlink" href="#debug-generation" title="Link to this heading">¶</a></h1>
+<p>Application developers spend a significant time debugging the applications that
+they create. Hence it is important that a compiler provide support for a good
+debug experience. DWARF[1] is the standard debugging file format used by
+compilers and debuggers. The LLVM infrastructure supports debug info generation
+using metadata[2]. Support for generating debug metadata is present
+in MLIR by way of MLIR attributes. Flang can leverage these MLIR attributes to
+generate good debug information.</p>
+<p>We can break the work for debug generation into two separate tasks:</p>
+<ol class="arabic simple">
+<li><p>Line Table generation</p></li>
+<li><p>Full debug generation
+The support for Fortran Debug in LLVM infrastructure[3] has made great progress
+due to many Fortran frontends adopting LLVM as the backend as well as the
+availability of the Classic Flang compiler.</p></li>
+</ol>
+<section id="driver-flags">
+<h2>Driver Flags<a class="headerlink" href="#driver-flags" title="Link to this heading">¶</a></h2>
+<p>By default, Flang will not generate any debug or linetable information.
+Debug information will be generated if the following flags are present.</p>
+<p>-gline-tables-only, -g1 : Emit debug line number tables only<br />
+-g : Emit full debug info</p>
+</section>
+<section id="line-table-generation">
+<h2>Line Table Generation<a class="headerlink" href="#line-table-generation" title="Link to this heading">¶</a></h2>
+<p>There is existing AddDebugFoundationPass which add <code class="docutils literal notranslate"><span class="pre">FusedLoc</span></code> with a
+<code class="docutils literal notranslate"><span class="pre">SubprogramAttr</span></code> on FuncOp. This allows MLIR to generate LLVM IR metadata
+for that function. However, following values are hardcoded at the moment. These
+will instead be passed from the driver.</p>
+<ul class="simple">
+<li><p>Details of the compiler (name and version and git hash).</p></li>
+<li><p>Language Standard. We can set it to Fortran95 for now and periodically
+revise it when full support for later standards is available.</p></li>
+<li><p>Optimisation Level.</p></li>
+<li><p>Type of debug generated (linetable/full debug).</p></li>
+<li><p>Calling Convention: <code class="docutils literal notranslate"><span class="pre">DW_CC_normal</span></code> by default and <code class="docutils literal notranslate"><span class="pre">DW_CC_program</span></code> if it is
+the main program.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">DISubroutineTypeAttr</span></code> currently has a fixed type. This will be changed to
+match the signature of the actual function/subroutine.</p>
+</section>
+<section id="full-debug-generation">
+<h2>Full Debug Generation<a class="headerlink" href="#full-debug-generation" title="Link to this heading">¶</a></h2>
+<p>Full debug info will include metadata to describe functions, variables and
+types. Flang will generate debug metadata in the form of MLIR attributes. These
+attributes will be converted to the format expected by LLVM IR in DebugTranslation[4].</p>
+<p>Debug metadata generation can be broken down in 2 steps.</p>
+<ol class="arabic simple">
+<li><p>MLIR attributes are generated by reading information from AST or FIR. This
+step can happen anytime before or during conversion to LLVM dialect. An example
+of the metadata generated in this step is <code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> or
+<code class="docutils literal notranslate"><span class="pre">DIDerivedTypeAttr</span></code>.</p></li>
+<li><p>Changes that can only happen during or after conversion to LLVM dialect. The
+example of this is passing <code class="docutils literal notranslate"><span class="pre">DIGlobalVariableExpressionAttr</span></code> while
+creating <code class="docutils literal notranslate"><span class="pre">LLVM::GlobalOp</span></code>. Another example will be generation of <code class="docutils literal notranslate"><span class="pre">DbgDeclareOp</span></code>
+that is required for local variables. It can only be created after conversion to
+LLVM dialect as it requires LLVM.Ptr type. The changes required for step 2 are
+quite minimal. The bulk of the work happens in step 1.</p></li>
+</ol>
+<p>One design decision that we need to make is to decide where to perform step 1.
+Here are some possible options:</p>
+<p><strong>During conversion to LLVM dialect</strong></p>
+<p>Pros:</p>
+<ol class="arabic simple">
+<li><p>Do step 1 and 2 in one place.</p></li>
+<li><p>No chance of missing any change introduced by an earlier transformation.</p></li>
+</ol>
+<p>Cons:</p>
+<ol class="arabic simple">
+<li><p>Passing a lot of information from the driver as discussed in the line table
+section above may muddle interface of FIRToLLVMConversion.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> is removed before this pass.</p></li>
+<li><p>Even if <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> is retained, creating debug metadata while some ops have
+been converted to LLVMdialect and others are not may cause its own issues. We
+have to walk the ops chain to extract the information which may be problematic
+in this case.</p></li>
+<li><p>Some source information is lost by this point. Examples include
+information about namelists, source line information about field of derived
+types etc.</p></li>
+</ol>
+<p><strong>During a pass before conversion to LLVM dialect</strong></p>
+<p>This is similar to what AddDebugFoundationPass is currently doing.</p>
+<p>Pros:</p>
+<ol class="arabic simple">
+<li><p>One central location dedicated to debug information processing. This can
+result in a cleaner implementation.</p></li>
+<li><p>Similar to above, less chance of missing any change introduced by an earlier
+transformation.</p></li>
+</ol>
+<p>Cons:</p>
+<ol class="arabic simple">
+<li><p>Step 2 still need to happen during conversion to LLVM dialect. But
+changes required for step 2 are quite minimal.</p></li>
+<li><p>Similar to above, some source information may be lost by this point.</p></li>
+</ol>
+<p><strong>During Lowering from AST</strong></p>
+<p>Pros</p>
+<ol class="arabic simple">
+<li><p>We have better source information.</p></li>
+</ol>
+<p>Cons:</p>
+<ol class="arabic simple">
+<li><p>There may be change in the code after lowering which may not be
+reflected in debug information.</p></li>
+<li><p>Comments on an earlier PR [5] advised against this approach.</p></li>
+</ol>
+</section>
+<section id="design">
+<h2>Design<a class="headerlink" href="#design" title="Link to this heading">¶</a></h2>
+<p>The design below assumes that we are extracting the information from FIR.
+If we generate debug metadata during lowering then the description below
+may need to change. Although the generated metadata remains the same in
+both cases.</p>
+<p>The AddDebugFoundationPass will be renamed to AddDebugInfo Pass. The
+information mentioned in the line info section above will be passed to it from
+the driver. This pass will run quite late in the pipeline but before
+<code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> is removed.</p>
+<p>In this pass, we will iterate through the <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code>, <code class="docutils literal notranslate"><span class="pre">TypeInfoOp</span></code>, <code class="docutils literal notranslate"><span class="pre">FuncOp</span></code>
+and <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> to extract the source information and build the MLIR
+attributes. A class will be added to handle conversion of MLIR and FIR types to
+<code class="docutils literal notranslate"><span class="pre">DITypeAttr</span></code>.</p>
+<p>Following sections provide details of how various language constructs will be
+handled. In these sections, the LLVM IR metadata and MLIR attributes have been
+used interchangeably. As an example, <code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> is an MLIR attribute
+which gets translated to LLVM IR’s <code class="docutils literal notranslate"><span class="pre">DILocalVariable</span></code>.</p>
+<section id="variables">
+<h3>Variables<a class="headerlink" href="#variables" title="Link to this heading">¶</a></h3>
+<section id="local-variables">
+<h4>Local Variables<a class="headerlink" href="#local-variables" title="Link to this heading">¶</a></h4>
+<p>In MLIR, local variables are represented by <code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> which
+stores information like source location and type. They also require a
+<code class="docutils literal notranslate"><span class="pre">DbgDeclareOp</span></code> which binds <code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> with a location.</p>
+<p>In FIR, <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> has source information about the variable. The
+<code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> will be processed to create <code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code>. This attr is
+attached to the memref op of the <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> using a <code class="docutils literal notranslate"><span class="pre">FusedLoc</span></code> approach.</p>
+<p>During conversion to LLVM dialect, when an op is encountered that has a
+<code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> in its <code class="docutils literal notranslate"><span class="pre">FusedLoc</span></code>, a <code class="docutils literal notranslate"><span class="pre">DbgDeclareOp</span></code> is created which
+binds the attr with its location.</p>
+<p>The change in the IR look like as follows:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">original</span> <span class="n">fir</span>
+  <span class="o">%</span><span class="mi">2</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">alloca</span> <span class="n">i32</span>  <span class="n">loc</span><span class="p">(</span><span class="c1">#loc4)</span>
+  <span class="o">%</span><span class="mi">3</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">declare</span> <span class="o">%</span><span class="mi">2</span> <span class="p">{</span><span class="n">uniq_name</span> <span class="o">=</span> <span class="s2">&quot;_QMhelperFchangeEi&quot;</span><span class="p">}</span>
+
+  <span class="n">Fir</span> <span class="k">with</span> <span class="n">FusedLoc</span><span class="o">.</span>
+
+  <span class="o">%</span><span class="mi">2</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">alloca</span> <span class="n">i32</span>  <span class="n">loc</span><span class="p">(</span><span class="c1">#loc38)</span>
+  <span class="o">%</span><span class="mi">3</span> <span class="o">=</span> <span class="n">fir</span><span class="o">.</span><span class="n">declare</span> <span class="o">%</span><span class="mi">2</span> <span class="p">{</span><span class="n">uniq_name</span> <span class="o">=</span> <span class="s2">&quot;_QMhelperFchangeEi&quot;</span><span class="p">}</span>
+  <span class="c1">#di_local_variable5 = #llvm.di_local_variable&lt;name = &quot;i&quot;, line = 5, type = #di_basic_type ... &gt;</span>
+  <span class="c1">#loc38 = loc(fused&lt;#di_local_variable5&gt;[#loc4])</span>
+
+  <span class="n">After</span> <span class="n">conversion</span> <span class="n">to</span> <span class="n">llvm</span> <span class="n">dialect</span>
+
+  <span class="c1">#di_local_variable = #llvm.di_local_variable&lt;name = &quot;i&quot;, line = 5, type = #di_basic_type ...&gt;</span>
+  <span class="o">%</span><span class="mi">1</span> <span class="o">=</span> <span class="n">llvm</span><span class="o">.</span><span class="n">alloca</span> <span class="o">%</span><span class="mi">0</span> <span class="n">x</span> <span class="n">i64</span>
+  <span class="n">llvm</span><span class="o">.</span><span class="n">intr</span><span class="o">.</span><span class="n">dbg</span><span class="o">.</span><span class="n">declare</span> <span class="c1">#di_local_variable = %1</span>
+</pre></div>
+</div>
+</section>
+<section id="function-arguments">
+<h4>Function Arguments<a class="headerlink" href="#function-arguments" title="Link to this heading">¶</a></h4>
+<p>Arguments work in similar way, but they present a difficulty that <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code>’s
+memref points to <code class="docutils literal notranslate"><span class="pre">BlockArgument</span></code>. Unlike the op in local variable case,
+the <code class="docutils literal notranslate"><span class="pre">BlockArgument</span></code> are not handled by the FIRToLLVMLowering. This can easily
+be handled by adding after conversion to LLVM dialect either in FIRToLLVMLowering
+or in a separate pass.</p>
+</section>
+</section>
+<section id="module">
+<h3>Module<a class="headerlink" href="#module" title="Link to this heading">¶</a></h3>
+<p>In debug metadata, the Fortran module will be represented by <code class="docutils literal notranslate"><span class="pre">DIModuleAttr</span></code>.
+The variables or functions inside module will have scope pointing to the parent module.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>module helper
+   real glr
+   ...
+end module helper
+
+!1 = !DICompileUnit(language: DW_LANG_Fortran90 ...)
+!2 = !DIModule(scope: !1, name: &quot;helper&quot; ...)
+!3 = !DIGlobalVariable(scope: !2, name: &quot;glr&quot; ...)
+
+Use of a module results in the following metadata.
+!4 = !DIImportedEntity(tag: DW_TAG_imported_module, entity: !2)
+</pre></div>
+</div>
+<p>Modules are not first class entities in the FIR. So there is no way to get
+the location where they are declared in source file.</p>
+<p>But the information that a variable or function is part of a module
+can be extracted from its mangled name along with name of the module. There is
+a <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code> generated for each module variable in FIR and there is also a
+<code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> in each function where the module variable is used.</p>
+<p>We will use the <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code> to generate the <code class="docutils literal notranslate"><span class="pre">DIModuleAttr</span></code> and associated
+<code class="docutils literal notranslate"><span class="pre">DIGlobalVariableAttr</span></code>. A <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> for module variable will be used
+to generate <code class="docutils literal notranslate"><span class="pre">DIImportedEntityAttr</span></code>. Care will be taken to avoid generating
+duplicate <code class="docutils literal notranslate"><span class="pre">DIImportedEntityAttr</span></code> entries in same function.</p>
+</section>
+<section id="derived-types">
+<h3>Derived Types<a class="headerlink" href="#derived-types" title="Link to this heading">¶</a></h3>
+<p>A derived type will be represented in metadata by <code class="docutils literal notranslate"><span class="pre">DICompositeType</span></code> with a tag of
+<code class="docutils literal notranslate"><span class="pre">DW_TAG_structure_type</span></code>. It will have elements which point to the components.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  type :: t_pair
+    integer :: i
+    real :: x
+  end type
+!1 = !DICompositeType(tag: DW_TAG_structure_type, name: &quot;t_pair&quot;, elements: !2 ...)
+!2 = !{!3, !4}
+!3 = !DIDerivedType(tag: DW_TAG_member, scope: !1, name: &quot;i&quot;, size: 32, offset: 0, baseType: !5 ...)
+!4 = !DIDerivedType(tag: DW_TAG_member, scope: !1, name: &quot;x&quot;, size: 32, offset: 32, baseType: !6 ...)
+!5 = !DIBasicType(tag: DW_TAG_base_type, name: &quot;integer&quot; ...)
+!6 = !DIBasicType(tag: DW_TAG_base_type, name: &quot;real&quot; ...)
+</pre></div>
+</div>
+<p>In FIR, <code class="docutils literal notranslate"><span class="pre">RecordType</span></code> and <code class="docutils literal notranslate"><span class="pre">TypeInfoOp</span></code> can be used to get information about the
+location of the derived type and the types of its components. We may also use
+<code class="docutils literal notranslate"><span class="pre">FusedLoc</span></code> on <code class="docutils literal notranslate"><span class="pre">TypeInfoOp</span></code> to encode location information for all the components
+of the derived type.</p>
+</section>
+<section id="commonblocks">
+<h3>CommonBlocks<a class="headerlink" href="#commonblocks" title="Link to this heading">¶</a></h3>
+<p>A common block will be represented in metadata by <code class="docutils literal notranslate"><span class="pre">DICommonBlockAttr</span></code> which
+will be used as scope by the variable inside common block. <code class="docutils literal notranslate"><span class="pre">DIExpression</span></code>
+can be used to give the offset of any given variable inside the global storage
+for common block.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>integer a, b
+common /test/ a, b
+
+;@test_ = common global [8 x i8] zeroinitializer, !dbg !5, !dbg !6
+!1 = !DISubprogram()
+!2 = !DICommonBlock(scope: !1, name: &quot;test&quot; ...)
+!3 = !DIGlobalVariable(scope: !2, name: &quot;a&quot; ...)
+!4 = !DIExpression()
+!5 = !DIGlobalVariableExpression(var: !3, expr: !4)
+!6 = !DIGlobalVariable(scope: !2, name: &quot;b&quot; ...)
+!7 = !DIExpression(DW_OP_plus_uconst, 4)
+!8 = !DIGlobalVariableExpression(var: !6, expr: !7)
+</pre></div>
+</div>
+<p>In FIR, a common block results in a <code class="docutils literal notranslate"><span class="pre">GlobalOp</span></code> with common linkage. Every
+function where the common block is used has <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> for that variable.
+This <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> will point to global storage through
+<code class="docutils literal notranslate"><span class="pre">CoordinateOp</span></code> and <code class="docutils literal notranslate"><span class="pre">AddrOfOp</span></code>. The <code class="docutils literal notranslate"><span class="pre">CoordinateOp</span></code> has the offset of the
+location of this variable in global storage. There is enough information to
+generate the required metadata. Although it requires walking up the chain from
+<code class="docutils literal notranslate"><span class="pre">DeclaredOp</span></code> to locate <code class="docutils literal notranslate"><span class="pre">CoordinateOp</span></code> and <code class="docutils literal notranslate"><span class="pre">AddrOfOp</span></code>.</p>
+</section>
+<section id="arrays">
+<h3>Arrays<a class="headerlink" href="#arrays" title="Link to this heading">¶</a></h3>
+<p>The type of fixed size array is represented using <code class="docutils literal notranslate"><span class="pre">DICompositeType</span></code>. The
+<code class="docutils literal notranslate"><span class="pre">DISubrangeAttr</span></code> is used to provide bounds in any given dimensions.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>integer abc(4,5)
+
+!1 = !DICompositeType(tag: DW_TAG_array_type, baseType: !5, elements: !2 ...)
+!2 = !{ !3, !4 }
+!3 = !DISubrange(lowerBound: 1, upperBound: 4 ...)
+!4 = !DISubrange(lowerBound: 1, upperBound: 5 ...)
+!5 = !DIBasicType(tag: DW_TAG_base_type, name: &quot;integer&quot; ...)
+
+</pre></div>
+</div>
+<section id="adjustable">
+<h4>Adjustable<a class="headerlink" href="#adjustable" title="Link to this heading">¶</a></h4>
+<p>The debug metadata for the adjustable array looks similar to fixed sized array
+with one change. The bounds are not constant values but point to a
+<code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code>.</p>
+<p>In FIR, the <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> points to a <code class="docutils literal notranslate"><span class="pre">ShapeOp</span></code> and we can walk the chain
+to get the value that represents the array bound in any dimension. We will
+create a <code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> that will point to that location. This
+variable will be used in the <code class="docutils literal notranslate"><span class="pre">DISubrangeAttr</span></code>. Note that this
+<code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> does not correspond to any source variable.</p>
+</section>
+<section id="assumed-size">
+<h4>Assumed Size<a class="headerlink" href="#assumed-size" title="Link to this heading">¶</a></h4>
+<p>This is treated as raw array. Debug information will not provide any upper bound
+information for the last dimension.</p>
+</section>
+<section id="assumed-shape">
+<h4>Assumed Shape<a class="headerlink" href="#assumed-shape" title="Link to this heading">¶</a></h4>
+<p>The assumed shape array will use the similar representation as fixed size
+array but there will be 2 differences.</p>
+<ol class="arabic simple">
+<li><p>There will be a <code class="docutils literal notranslate"><span class="pre">datalocation</span></code> field which will be an expression. This will
+enable debugger to get the data pointer from array descriptor.</p></li>
+<li><p>The field in <code class="docutils literal notranslate"><span class="pre">DISubrangeAttr</span></code> for array bounds will be expression which will
+allow the debugger to get the bounds from descriptor.</p></li>
+</ol>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>integer(4), intent(out) :: a(:,:)
+
+!1 = !DICompositeType(tag: DW_TAG_array_type, baseType: !8, elements: !2, dataLocation: !3)
+!2 = !{!5, !7}
+!3 = !DIExpression(DW_OP_push_object_address, DW_OP_deref)
+!4 = !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 32, DW_OP_deref)
+!5 = !DISubrange(lowerBound: !1, upperBound: !4 ...)
+!6 = !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 56, DW_OP_deref)
+!7 = !DISubrange(lowerBound: !1, upperBound: !6, ...)
+!8 = !DIBasicType(tag: DW_TAG_base_type, name: &quot;integer&quot; ...)
+</pre></div>
+</div>
+<p>In assumed shape case, the rank can be determined from the FIR’s <code class="docutils literal notranslate"><span class="pre">SequenceType</span></code>.
+This allows us to generate a <code class="docutils literal notranslate"><span class="pre">DISubrangeAttr</span></code> in each dimension.</p>
+</section>
+<section id="assumed-rank">
+<h4>Assumed Rank<a class="headerlink" href="#assumed-rank" title="Link to this heading">¶</a></h4>
+<p>This is currently unsupported in flang. Its representation will be similar to
+array representation for assumed shape array with the following difference.</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">DICompositeTypeAttr</span></code> will have a rank field which will be an expression.
+It will be used to get the rank value from descriptor.</p></li>
+<li><p>Instead of <code class="docutils literal notranslate"><span class="pre">DISubrangeType</span></code> for each dimension, there will be a single
+<code class="docutils literal notranslate"><span class="pre">DIGenericSubrange</span></code> which will allow debuggers to calculate bounds in any
+dimension.</p></li>
+</ol>
+</section>
+</section>
+<section id="pointers-and-allocatables">
+<h3>Pointers and Allocatables<a class="headerlink" href="#pointers-and-allocatables" title="Link to this heading">¶</a></h3>
+<p>The pointer and allocatable will be represented using <code class="docutils literal notranslate"><span class="pre">DICompositeTypeAttr</span></code>. It
+is quirk of DWARF that scalar allocatable or pointer variables will show up in
+the debug info as pointer to scalar while array pointer or allocatable
+variables show up as arrays. The behavior is same in gfortran and classic flang.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  integer, allocatable :: ar(:)
+  integer, pointer :: sc
+
+!1 = !DILocalVariable(name: &quot;sc&quot;, type: !2)
+!2 = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !3, associated: !9 ...)
+!3 = !DIBasicType(tag: DW_TAG_base_type, name: &quot;integer&quot;, ...)
+!4 = !DILocalVariable(name: &quot;ar&quot;, type: !5 ...)
+!5 = !DICompositeType(tag: DW_TAG_array_type, baseType: !3, elements: !6, dataLocation: !8, allocated: !9)
+!6 = !{!7}
+!7 = !DISubrange(lowerBound: !10, upperBound: !11 ...)
+!8 = !DIExpression(DW_OP_push_object_address, DW_OP_deref)
+!9 = !DIExpression(DW_OP_push_object_address, DW_OP_deref, DW_OP_lit0, DW_OP_ne)
+!10 = !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 24, DW_OP_deref)
+!11 = !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 32, DW_OP_deref)
+
+</pre></div>
+</div>
+<p>IN FIR, these variable are represent as &lt;!fir.box&lt;!fir.heap&lt;&gt;&gt; or
+fir.box&lt;!fir.ptr&lt;&gt;&gt;. There is also <code class="docutils literal notranslate"><span class="pre">allocatable</span></code> or <code class="docutils literal notranslate"><span class="pre">pointer</span></code> attribute on
+the <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code>. This allows us to generate allocated/associated status of
+these variables. The metadata to get the information from the descriptor is
+similar to arrays.</p>
+</section>
+<section id="strings">
+<h3>Strings<a class="headerlink" href="#strings" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">DIStringTypeAttr</span></code> can represent both fixed size and allocatable strings. For
+the allocatable case, the <code class="docutils literal notranslate"><span class="pre">stringLengthExpression</span></code> and <code class="docutils literal notranslate"><span class="pre">stringLocationExpression</span></code>
+are used to provide the length and the location of the string respectively.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  character(len=:), allocatable :: var
+  character(len=20) :: fixed
+
+!1 = !DILocalVariable(name: &quot;var&quot;, type: !2)
+!2 = !DIStringType(name: &quot;character(*)&quot;, stringLengthExpression: !4, stringLocationExpression: !3 ...)
+!3 = !DIExpression(DW_OP_push_object_address, DW_OP_deref)
+!4 = !DIExpression(DW_OP_push_object_address, DW_OP_plus_uconst, 8)
+
+!5 = !DILocalVariable(name: &quot;fixed&quot;, type: !6)
+!6 = !DIStringType(name: &quot;character (20)&quot;, size: 160)
+
+</pre></div>
+</div>
+</section>
+<section id="association">
+<h3>Association<a class="headerlink" href="#association" title="Link to this heading">¶</a></h3>
+<p>They will be treated like normal variables. Although we may require to handle
+the case where the <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> of one variable points to the <code class="docutils literal notranslate"><span class="pre">DeclareOp</span></code> of
+another variable (e.g. a =&gt; b).</p>
+</section>
+<section id="namelists">
+<h3>Namelists<a class="headerlink" href="#namelists" title="Link to this heading">¶</a></h3>
+<p>FIR does not seem to have a way to extract information about namelists.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>namelist /abc/ x3, y3
+
+(gdb) p abc
+$1 = ( x3 = 100, y3 = 500 )
+(gdb) p x3
+$2 = 100
+(gdb) p y3
+$3 = 500
+</pre></div>
+</div>
+<p>Even without namelist support, we should be able to see the value of the
+individual variables like <code class="docutils literal notranslate"><span class="pre">x3</span></code> and <code class="docutils literal notranslate"><span class="pre">y3</span></code> in the above example. But we would not
+be able to evaluate the namelist and have the debugger prints the value of all
+the variables in it as shown above for <code class="docutils literal notranslate"><span class="pre">abc</span></code>.</p>
+</section>
+</section>
+<section id="missing-metadata-in-mlir">
+<h2>Missing metadata in MLIR<a class="headerlink" href="#missing-metadata-in-mlir" title="Link to this heading">¶</a></h2>
+<p>Some metadata types that are needed for fortran are present in LLVM IR but are
+absent from MLIR. A non comprehensive list is given below.</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">DICommonBlockAttr</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DIGenericSubrangeAttr</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DISubrangeAttr</span></code> in MLIR takes IntegerAttr at the moment so only works
+with fixed sizes arrays. It needs to also accept <code class="docutils literal notranslate"><span class="pre">DIExpressionAttr</span></code> or
+<code class="docutils literal notranslate"><span class="pre">DILocalVariableAttr</span></code> to support assumed shape and adjustable arrays.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">DICompositeTypeAttr</span></code> will need to have field for <code class="docutils literal notranslate"><span class="pre">datalocation</span></code>,
+<code class="docutils literal notranslate"><span class="pre">rank</span></code>, <code class="docutils literal notranslate"><span class="pre">allocated</span></code> and <code class="docutils literal notranslate"><span class="pre">associated</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DIStringTypeAttr</span></code></p></li>
+</ol>
+</section>
+</section>
+<section id="testing">
+<h1>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h1>
+<ul class="simple">
+<li><p>LLVM LIT tests will be added to test:</p>
+<ul>
+<li><p>the driver and ensure that it passes the line table and full debug
+info generation appropriately.</p></li>
+<li><p>that the pass works as expected and generates debug info. Test will be
+with <code class="docutils literal notranslate"><span class="pre">fir-opt</span></code>.</p></li>
+<li><p>with <code class="docutils literal notranslate"><span class="pre">flang</span> <span class="pre">-fc1</span></code> that end-to-end debug info generation works.</p></li>
+</ul>
+</li>
+<li><p>Manual external tests will be written to ensure that the following works
+in debug tools</p>
+<ul>
+<li><p>Break at lines.</p></li>
+<li><p>Break at functions.</p></li>
+<li><p>print type (ptype) of function names.</p></li>
+<li><p>print values and types (ptype) of various type of variables</p></li>
+</ul>
+</li>
+<li><p>Manually run <code class="docutils literal notranslate"><span class="pre">GDB</span></code>’s gdb.fortran testsuite with llvm-flang.</p></li>
+</ul>
+</section>
+<section id="resources">
+<h1>Resources<a class="headerlink" href="#resources" title="Link to this heading">¶</a></h1>
+<ul class="simple">
+<li><p>[1] https://dwarfstd.org/doc/DWARF5.pdf</p></li>
+<li><p>[2] https://llvm.org/docs/LangRef.html#metadata</p></li>
+<li><p>[3] https://archive.fosdem.org/2022/schedule/event/llvm_fortran_debug/</p></li>
+<li><p>[4] https://github.com/llvm/llvm-project/blob/main/mlir/lib/Target/LLVMIR/DebugTranslation.cpp</p></li>
+<li><p>[5] https://github.com/llvm/llvm-project/pull/84202</p></li>
+</ul>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ControlFlowGraph.html">Control Flow Graph</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Directives.html">Compiler directives supported by Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2025, The Flang Team.
+      Last updated on Nov 20, 2025.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
