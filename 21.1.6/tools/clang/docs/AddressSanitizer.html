@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>AddressSanitizer &#8212; Clang 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="ThreadSanitizer" href="ThreadSanitizer.html" />
+    <link rel="prev" title="Function Effect Analysis" href="FunctionEffectAnalysis.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 21.1.6 documentation</span></a></h1>
+        <h2 class="heading"><span>AddressSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="FunctionEffectAnalysis.html">Function Effect Analysis</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ThreadSanitizer.html">ThreadSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="addresssanitizer">
+<h1>AddressSanitizer<a class="headerlink" href="#addresssanitizer" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#how-to-build" id="id2">How to build</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id3">Usage</a></p></li>
+<li><p><a class="reference internal" href="#symbolizing-the-reports" id="id4">Symbolizing the Reports</a></p></li>
+<li><p><a class="reference internal" href="#additional-checks" id="id5">Additional Checks</a></p>
+<ul>
+<li><p><a class="reference internal" href="#initialization-order-checking" id="id6">Initialization order checking</a></p></li>
+<li><p><a class="reference internal" href="#stack-use-after-return-uar" id="id7">Stack Use After Return (UAR)</a></p></li>
+<li><p><a class="reference internal" href="#memory-leak-detection" id="id8">Memory leak detection</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#issue-suppression" id="id9">Issue Suppression</a></p>
+<ul>
+<li><p><a class="reference internal" href="#suppressing-reports-in-external-libraries" id="id10">Suppressing Reports in External Libraries</a></p></li>
+<li><p><a class="reference internal" href="#conditional-compilation-with-has-feature-address-sanitizer" id="id11">Conditional Compilation with <code class="docutils literal notranslate"><span class="pre">__has_feature(address_sanitizer)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#disabling-instrumentation-with-attribute-no-sanitize-address" id="id12">Disabling Instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;address&quot;)))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#suppressing-errors-in-recompiled-code-ignorelist" id="id13">Suppressing Errors in Recompiled Code (Ignorelist)</a></p></li>
+<li><p><a class="reference internal" href="#suppressing-memory-leaks" id="id14">Suppressing memory leaks</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#code-generation-control" id="id15">Code generation control</a></p>
+<ul>
+<li><p><a class="reference internal" href="#instrumentation-code-outlining" id="id16">Instrumentation code outlining</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#limitations" id="id17">Limitations</a></p></li>
+<li><p><a class="reference internal" href="#security-considerations" id="id18">Security Considerations</a></p></li>
+<li><p><a class="reference internal" href="#supported-platforms" id="id19">Supported Platforms</a></p></li>
+<li><p><a class="reference internal" href="#current-status" id="id20">Current Status</a></p></li>
+<li><p><a class="reference internal" href="#more-information" id="id21">More Information</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>AddressSanitizer is a fast memory error detector. It consists of a compiler
+instrumentation module and a run-time library. The tool can detect the
+following types of bugs:</p>
+<ul class="simple">
+<li><p>Out-of-bounds accesses to heap, stack and globals</p></li>
+<li><p>Use-after-free</p></li>
+<li><dl class="simple">
+<dt>Use-after-return (clang flag <code class="docutils literal notranslate"><span class="pre">-fsanitize-address-use-after-return=(never|runtime|always)</span></code> default: <code class="docutils literal notranslate"><span class="pre">runtime</span></code>)</dt><dd><ul>
+<li><p>Enable with: <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=detect_stack_use_after_return=1</span></code> (already enabled on Linux).</p></li>
+<li><p>Disable with: <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=detect_stack_use_after_return=0</span></code>.</p></li>
+</ul>
+</dd>
+</dl>
+</li>
+<li><p>Use-after-scope (clang flag <code class="docutils literal notranslate"><span class="pre">-fsanitize-address-use-after-scope</span></code>)</p></li>
+<li><p>Double-free, invalid free</p></li>
+<li><p>Memory leaks (experimental)</p></li>
+</ul>
+<p>Typical slowdown introduced by AddressSanitizer is <strong>2x</strong>.</p>
+</section>
+<section id="how-to-build">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">How to build</a><a class="headerlink" href="#how-to-build" title="Link to this heading">¶</a></h2>
+<p>Build LLVM/Clang with <a class="reference external" href="https://llvm.org/docs/CMake.html">CMake</a> and enable
+the <code class="docutils literal notranslate"><span class="pre">compiler-rt</span></code> runtime. An example CMake configuration that will allow
+for the use/testing of AddressSanitizer:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>-DLLVM_ENABLE_PROJECTS<span class="o">=</span><span class="s2">&quot;clang&quot;</span><span class="w"> </span>-DLLVM_ENABLE_RUNTIMES<span class="o">=</span><span class="s2">&quot;compiler-rt&quot;</span><span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>source&gt;/llvm
+</pre></div>
+</div>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>Simply compile and link your program with <code class="docutils literal notranslate"><span class="pre">-fsanitize=address</span></code> flag.  The
+AddressSanitizer run-time library should be linked to the final executable, so
+make sure to use <code class="docutils literal notranslate"><span class="pre">clang</span></code> (not <code class="docutils literal notranslate"><span class="pre">ld</span></code>) for the final link step.  When linking
+shared libraries, the AddressSanitizer run-time is not linked, so
+<code class="docutils literal notranslate"><span class="pre">-Wl,-z,defs</span></code> may cause link errors (don’t use it with AddressSanitizer).  To
+get a reasonable performance add <code class="docutils literal notranslate"><span class="pre">-O1</span></code> or higher.  To get nicer stack traces
+in error messages add <code class="docutils literal notranslate"><span class="pre">-fno-omit-frame-pointer</span></code>.  To get perfect stack traces
+you may need to disable inlining (just use <code class="docutils literal notranslate"><span class="pre">-O1</span></code>) and tail call elimination
+(<code class="docutils literal notranslate"><span class="pre">-fno-optimize-sibling-calls</span></code>).</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>cat<span class="w"> </span>example_UseAfterFree.cc
+<span class="go">int main(int argc, char **argv) {</span>
+<span class="go">  int *array = new int[100];</span>
+<span class="go">  delete [] array;</span>
+<span class="go">  return array[argc];  // BOOM</span>
+<span class="go">}</span>
+
+<span class="gp"># </span>Compile<span class="w"> </span>and<span class="w"> </span>link
+<span class="gp">% </span>clang++<span class="w"> </span>-O1<span class="w"> </span>-g<span class="w"> </span>-fsanitize<span class="o">=</span>address<span class="w"> </span>-fno-omit-frame-pointer<span class="w"> </span>example_UseAfterFree.cc
+</pre></div>
+</div>
+<p>or:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp"># </span>Compile
+<span class="gp">% </span>clang++<span class="w"> </span>-O1<span class="w"> </span>-g<span class="w"> </span>-fsanitize<span class="o">=</span>address<span class="w"> </span>-fno-omit-frame-pointer<span class="w"> </span>-c<span class="w"> </span>example_UseAfterFree.cc
+<span class="gp"># </span>Link
+<span class="gp">% </span>clang++<span class="w"> </span>-g<span class="w"> </span>-fsanitize<span class="o">=</span>address<span class="w"> </span>example_UseAfterFree.o
+</pre></div>
+</div>
+<p>If a bug is detected, the program will print an error message to stderr and
+exit with a non-zero exit code. AddressSanitizer exits on the first detected error.
+This is by design:</p>
+<ul class="simple">
+<li><p>This approach allows AddressSanitizer to produce faster and smaller generated code
+(both by ~5%).</p></li>
+<li><p>Fixing bugs becomes unavoidable. AddressSanitizer does not produce
+false alarms. Once a memory corruption occurs, the program is in an inconsistent
+state, which could lead to confusing results and potentially misleading
+subsequent reports.</p></li>
+</ul>
+<p>If your process is sandboxed and you are running on OS X 10.10 or earlier, you
+will need to set <code class="docutils literal notranslate"><span class="pre">DYLD_INSERT_LIBRARIES</span></code> environment variable and point it to
+the ASan library that is packaged with the compiler used to build the
+executable. (You can find the library by searching for dynamic libraries with
+<code class="docutils literal notranslate"><span class="pre">asan</span></code> in their name.) If the environment variable is not set, the process will
+try to re-exec. Also keep in mind that when moving the executable to another machine,
+the ASan library will also need to be copied over.</p>
+</section>
+<section id="symbolizing-the-reports">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Symbolizing the Reports</a><a class="headerlink" href="#symbolizing-the-reports" title="Link to this heading">¶</a></h2>
+<p>To make AddressSanitizer symbolize its output
+you need to set the <code class="docutils literal notranslate"><span class="pre">ASAN_SYMBOLIZER_PATH</span></code> environment variable to point to
+the <code class="docutils literal notranslate"><span class="pre">llvm-symbolizer</span></code> binary (or make sure <code class="docutils literal notranslate"><span class="pre">llvm-symbolizer</span></code> is in your
+<code class="docutils literal notranslate"><span class="pre">$PATH</span></code>):</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span><span class="nv">ASAN_SYMBOLIZER_PATH</span><span class="o">=</span>/usr/local/bin/llvm-symbolizer<span class="w"> </span>./a.out
+<span class="go">==9442== ERROR: AddressSanitizer heap-use-after-free on address 0x7f7ddab8c084 at pc 0x403c8c bp 0x7fff87fb82d0 sp 0x7fff87fb82c8</span>
+<span class="go">READ of size 4 at 0x7f7ddab8c084 thread T0</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x403c8c<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>example_UseAfterFree.cc:4
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x7f7ddabcac4d<span class="w"> </span><span class="k">in</span><span class="w"> </span>__libc_start_main<span class="w"> </span>??:0
+<span class="go">0x7f7ddab8c084 is located 4 bytes inside of 400-byte region [0x7f7ddab8c080,0x7f7ddab8c210)</span>
+<span class="go">freed by thread T0 here:</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x404704<span class="w"> </span><span class="k">in</span><span class="w"> </span>operator<span class="w"> </span>delete<span class="o">[](</span>void*<span class="o">)</span><span class="w"> </span>??:0
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x403c53<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>example_UseAfterFree.cc:4
+<span class="gp">    #</span><span class="m">2</span><span class="w"> </span>0x7f7ddabcac4d<span class="w"> </span><span class="k">in</span><span class="w"> </span>__libc_start_main<span class="w"> </span>??:0
+<span class="go">previously allocated by thread T0 here:</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x404544<span class="w"> </span><span class="k">in</span><span class="w"> </span>operator<span class="w"> </span>new<span class="o">[](</span>unsigned<span class="w"> </span>long<span class="o">)</span><span class="w"> </span>??:0
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x403c43<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>example_UseAfterFree.cc:2
+<span class="gp">    #</span><span class="m">2</span><span class="w"> </span>0x7f7ddabcac4d<span class="w"> </span><span class="k">in</span><span class="w"> </span>__libc_start_main<span class="w"> </span>??:0
+<span class="go">==9442== ABORTING</span>
+</pre></div>
+</div>
+<p>If that does not work for you (e.g. your process is sandboxed), you can use a
+separate script to symbolize the result offline (online symbolization can be
+force disabled by setting <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=symbolize=0</span></code>):</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span><span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="nv">symbolize</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>./a.out<span class="w"> </span><span class="m">2</span>&gt;<span class="w"> </span>log
+<span class="gp">% </span>projects/compiler-rt/lib/asan/scripts/asan_symbolize.py<span class="w"> </span>/<span class="w"> </span>&lt;<span class="w"> </span>log<span class="w"> </span><span class="p">|</span><span class="w"> </span>c++filt
+<span class="go">==9442== ERROR: AddressSanitizer heap-use-after-free on address 0x7f7ddab8c084 at pc 0x403c8c bp 0x7fff87fb82d0 sp 0x7fff87fb82c8</span>
+<span class="go">READ of size 4 at 0x7f7ddab8c084 thread T0</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x403c8c<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>example_UseAfterFree.cc:4
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x7f7ddabcac4d<span class="w"> </span><span class="k">in</span><span class="w"> </span>__libc_start_main<span class="w"> </span>??:0
+<span class="go">...</span>
+</pre></div>
+</div>
+<p>Note that on macOS you may need to run <code class="docutils literal notranslate"><span class="pre">dsymutil</span></code> on your binary to have the
+file:line info in the AddressSanitizer reports.</p>
+</section>
+<section id="additional-checks">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Additional Checks</a><a class="headerlink" href="#additional-checks" title="Link to this heading">¶</a></h2>
+<section id="initialization-order-checking">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Initialization order checking</a><a class="headerlink" href="#initialization-order-checking" title="Link to this heading">¶</a></h3>
+<p>AddressSanitizer can optionally detect dynamic initialization order problems,
+when initialization of globals defined in one translation unit uses
+globals defined in another translation unit. To enable this check at runtime,
+you should set environment variable
+<code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=check_initialization_order=1</span></code>.</p>
+<p>Note that this option is not supported on macOS.</p>
+</section>
+<section id="stack-use-after-return-uar">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Stack Use After Return (UAR)</a><a class="headerlink" href="#stack-use-after-return-uar" title="Link to this heading">¶</a></h3>
+<p>AddressSanitizer can optionally detect stack use after return problems.
+This is available by default, or explicitly
+(<code class="docutils literal notranslate"><span class="pre">-fsanitize-address-use-after-return=runtime</span></code>).
+To disable this check at runtime, set the environment variable
+<code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=detect_stack_use_after_return=0</span></code>.</p>
+<p>Enabling this check (<code class="docutils literal notranslate"><span class="pre">-fsanitize-address-use-after-return=always</span></code>) will
+reduce code size.  The code size may be reduced further by completely
+eliminating this check (<code class="docutils literal notranslate"><span class="pre">-fsanitize-address-use-after-return=never</span></code>).</p>
+<dl class="simple">
+<dt>To summarize: <code class="docutils literal notranslate"><span class="pre">-fsanitize-address-use-after-return=&lt;mode&gt;</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">never</span></code>: Completely disables detection of UAR errors (reduces code size).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">runtime</span></code>: Adds the code for detection, but it can be disable via the
+runtime environment (<code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=detect_stack_use_after_return=0</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">always</span></code>: Enables detection of UAR errors in all cases. (reduces code
+size, but not as much as <code class="docutils literal notranslate"><span class="pre">never</span></code>).</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="memory-leak-detection">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Memory leak detection</a><a class="headerlink" href="#memory-leak-detection" title="Link to this heading">¶</a></h3>
+<p>For more information on leak detector in AddressSanitizer, see
+<a class="reference internal" href="LeakSanitizer.html"><span class="doc">LeakSanitizer</span></a>. The leak detection is turned on by default on Linux,
+and can be enabled using <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS=detect_leaks=1</span></code> on macOS;
+however, it is not yet supported on other platforms.</p>
+</section>
+</section>
+<section id="issue-suppression">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Issue Suppression</a><a class="headerlink" href="#issue-suppression" title="Link to this heading">¶</a></h2>
+<p>AddressSanitizer is not expected to produce false positives. If you see one,
+look again; most likely it is a true positive!</p>
+<section id="suppressing-reports-in-external-libraries">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Suppressing Reports in External Libraries</a><a class="headerlink" href="#suppressing-reports-in-external-libraries" title="Link to this heading">¶</a></h3>
+<p>Runtime interposition allows AddressSanitizer to find bugs in code that is
+not being recompiled. If you run into an issue in external libraries, we
+recommend immediately reporting it to the library maintainer so that it
+gets addressed. However, you can use the following suppression mechanism
+to unblock yourself and continue on with the testing. This suppression
+mechanism should only be used for suppressing issues in external code; it
+does not work on code recompiled with AddressSanitizer. To suppress errors
+in external libraries, set the <code class="docutils literal notranslate"><span class="pre">ASAN_OPTIONS</span></code> environment variable to point
+to a suppression file. You can either specify the full path to the file or the
+path of the file relative to the location of your executable.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="nv">suppressions</span><span class="o">=</span>MyASan.supp
+</pre></div>
+</div>
+<p>Use the following format to specify the names of the functions or libraries
+you want to suppress. You can see these in the error report. Remember that
+the narrower the scope of the suppression, the more bugs you will be able to
+catch.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>interceptor_via_fun:NameOfCFunctionToSuppress
+interceptor_via_fun:-<span class="o">[</span>ClassName<span class="w"> </span>objCMethodToSuppress:<span class="o">]</span>
+interceptor_via_lib:NameOfTheLibraryToSuppress
+</pre></div>
+</div>
+</section>
+<section id="conditional-compilation-with-has-feature-address-sanitizer">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Conditional Compilation with <code class="docutils literal notranslate"><span class="pre">__has_feature(address_sanitizer)</span></code></a><a class="headerlink" href="#conditional-compilation-with-has-feature-address-sanitizer" title="Link to this heading">¶</a></h3>
+<p>In some cases one may need to execute different code depending on whether
+AddressSanitizer is enabled.
+<a class="reference internal" href="LanguageExtensions.html#langext-has-feature-has-extension"><span class="std std-ref">__has_feature</span></a> can be used for
+this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature)</span>
+<span class="cp">#  if __has_feature(address_sanitizer)</span>
+<span class="c1">// code that builds only under AddressSanitizer</span>
+<span class="cp">#  endif</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+<section id="disabling-instrumentation-with-attribute-no-sanitize-address">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Disabling Instrumentation with <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;address&quot;)))</span></code></a><a class="headerlink" href="#disabling-instrumentation-with-attribute-no-sanitize-address" title="Link to this heading">¶</a></h3>
+<p>Some code should not be instrumented by AddressSanitizer. One may use
+the attribute <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;address&quot;)))</span></code> (which has
+deprecated synonyms <cite>no_sanitize_address</cite> and
+<cite>no_address_safety_analysis</cite>) to disable instrumentation of a
+particular function. This attribute may not be supported by other
+compilers, so we suggest to use it together with
+<code class="docutils literal notranslate"><span class="pre">__has_feature(address_sanitizer)</span></code>.</p>
+<p>The same attribute used on a global variable prevents AddressSanitizer
+from adding redzones around it and detecting out of bounds accesses.</p>
+<p>AddressSanitizer also supports
+<code class="docutils literal notranslate"><span class="pre">__attribute__((disable_sanitizer_instrumentation))</span></code>. This attribute
+works similar to <code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;address&quot;)))</span></code>, but it also
+prevents instrumentation performed by other sanitizers.</p>
+</section>
+<section id="suppressing-errors-in-recompiled-code-ignorelist">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Suppressing Errors in Recompiled Code (Ignorelist)</a><a class="headerlink" href="#suppressing-errors-in-recompiled-code-ignorelist" title="Link to this heading">¶</a></h3>
+<p>AddressSanitizer supports <code class="docutils literal notranslate"><span class="pre">src</span></code> and <code class="docutils literal notranslate"><span class="pre">fun</span></code> entity types in
+<a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>, that can be used to suppress error reports
+in the specified source files or functions. Additionally, AddressSanitizer
+introduces <code class="docutils literal notranslate"><span class="pre">global</span></code> and <code class="docutils literal notranslate"><span class="pre">type</span></code> entity types that can be used to
+suppress error reports for out-of-bound access to globals with certain
+names and types (you may only specify class or struct types).</p>
+<p>You may use an <code class="docutils literal notranslate"><span class="pre">init</span></code> category to suppress reports about initialization-order
+problems happening in certain source files or with certain global variables.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Suppress error reports for code in a file or in a function:</span>
+src:bad_file.cpp
+<span class="c1"># Ignore all functions with names containing MyFooBar:</span>
+fun:*MyFooBar*
+<span class="c1"># Disable out-of-bound checks for global:</span>
+global:bad_array
+<span class="c1"># Disable out-of-bound checks for global instances of a given class ...</span>
+type:Namespace::BadClassName
+<span class="c1"># ... or a given struct. Use wildcard to deal with anonymous namespace.</span>
+type:Namespace2::*::BadStructName
+<span class="c1"># Disable initialization-order checks for globals:</span>
+global:bad_init_global<span class="o">=</span>init
+type:*BadInitClassSubstring*<span class="o">=</span>init
+src:bad/init/files/*<span class="o">=</span>init
+</pre></div>
+</div>
+</section>
+<section id="suppressing-memory-leaks">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Suppressing memory leaks</a><a class="headerlink" href="#suppressing-memory-leaks" title="Link to this heading">¶</a></h3>
+<p>Memory leak reports produced by <a class="reference internal" href="LeakSanitizer.html"><span class="doc">LeakSanitizer</span></a> (if it is run as a part
+of AddressSanitizer) can be suppressed by a separate file passed as</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">LSAN_OPTIONS</span><span class="o">=</span><span class="nv">suppressions</span><span class="o">=</span>MyLSan.supp
+</pre></div>
+</div>
+<p>which contains lines of the form <cite>leak:&lt;pattern&gt;</cite>. Memory leak will be
+suppressed if pattern matches any function name, source file name, or
+library name in the symbolized stack trace of the leak report. See
+<a class="reference external" href="https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer#suppressions">full documentation</a>
+for more details.</p>
+</section>
+</section>
+<section id="code-generation-control">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">Code generation control</a><a class="headerlink" href="#code-generation-control" title="Link to this heading">¶</a></h2>
+<section id="instrumentation-code-outlining">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Instrumentation code outlining</a><a class="headerlink" href="#instrumentation-code-outlining" title="Link to this heading">¶</a></h3>
+<p>By default AddressSanitizer inlines the instrumentation code to improve the
+run-time performance, which leads to increased binary size. Using the
+(clang flag <code class="docutils literal notranslate"><span class="pre">-fsanitize-address-outline-instrumentation`</span> <span class="pre">default:</span> <span class="pre">``false</span></code>)
+flag forces all code instrumentation to be outlined, which reduces the size
+of the generated code, but also reduces the run-time performance.</p>
+</section>
+</section>
+<section id="limitations">
+<h2><a class="toc-backref" href="#id17" role="doc-backlink">Limitations</a><a class="headerlink" href="#limitations" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>AddressSanitizer uses more real memory than a native run. Exact overhead
+depends on the allocations sizes. The smaller the allocations you make the
+bigger the overhead is.</p></li>
+<li><p>AddressSanitizer uses more stack memory. We have seen up to 3x increase.</p></li>
+<li><p>On 64-bit platforms AddressSanitizer maps (but not reserves) 16+ Terabytes of
+virtual address space. This means that tools like <code class="docutils literal notranslate"><span class="pre">ulimit</span></code> may not work as
+usually expected.</p></li>
+<li><p>Static linking of executables is not supported.</p></li>
+</ul>
+</section>
+<section id="security-considerations">
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">Security Considerations</a><a class="headerlink" href="#security-considerations" title="Link to this heading">¶</a></h2>
+<p>AddressSanitizer is a bug detection tool and its runtime is not meant to be
+linked against production executables. While it may be useful for testing,
+AddressSanitizer’s runtime was not developed with security-sensitive
+constraints in mind and may compromise the security of the resulting executable.</p>
+</section>
+<section id="supported-platforms">
+<h2><a class="toc-backref" href="#id19" role="doc-backlink">Supported Platforms</a><a class="headerlink" href="#supported-platforms" title="Link to this heading">¶</a></h2>
+<p>AddressSanitizer is supported on:</p>
+<ul class="simple">
+<li><p>Linux</p></li>
+<li><p>macOS</p></li>
+<li><p>iOS Simulator</p></li>
+<li><p>Android</p></li>
+<li><p>NetBSD</p></li>
+<li><p>FreeBSD</p></li>
+<li><p>Windows 8.1+</p></li>
+</ul>
+</section>
+<section id="current-status">
+<h2><a class="toc-backref" href="#id20" role="doc-backlink">Current Status</a><a class="headerlink" href="#current-status" title="Link to this heading">¶</a></h2>
+<p>AddressSanitizer is fully functional on supported platforms starting from LLVM
+3.1. The test suite is integrated into CMake build and can be run with <code class="docutils literal notranslate"><span class="pre">make</span>
+<span class="pre">check-asan</span></code> command.</p>
+<p>The Windows port is functional and is used by Chrome and Firefox, but it is not
+as well supported as the other ports.</p>
+</section>
+<section id="more-information">
+<h2><a class="toc-backref" href="#id21" role="doc-backlink">More Information</a><a class="headerlink" href="#more-information" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://github.com/google/sanitizers/wiki/AddressSanitizer">https://github.com/google/sanitizers/wiki/AddressSanitizer</a></p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="FunctionEffectAnalysis.html">Function Effect Analysis</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ThreadSanitizer.html">ThreadSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - bugprone-unchecked-optional-access &#8212; Extra Clang Tools 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="bugprone-undefined-memory-manipulation" href="undefined-memory-manipulation.html" />
+    <link rel="prev" title="bugprone-too-small-loop-variable" href="too-small-loop-variable.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 21.1.6 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - bugprone-unchecked-optional-access</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="too-small-loop-variable.html">bugprone-too-small-loop-variable</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="undefined-memory-manipulation.html">bugprone-undefined-memory-manipulation</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="bugprone-unchecked-optional-access">
+<h1>bugprone-unchecked-optional-access<a class="headerlink" href="#bugprone-unchecked-optional-access" title="Link to this heading">¶</a></h1>
+<p><em>Note</em>: This check uses a flow-sensitive static analysis to produce its
+results. Therefore, it may be more resource intensive (RAM, CPU) than the
+average clang-tidy check.</p>
+<p>This check identifies unsafe accesses to values contained in
+<code class="docutils literal notranslate"><span class="pre">std::optional&lt;T&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">absl::optional&lt;T&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">base::Optional&lt;T&gt;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">folly::Optional&lt;T&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">bsl::optional</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">BloombergLP::bdlb::NullableValue</span></code> objects. Below we will refer to all these
+types collectively as <code class="docutils literal notranslate"><span class="pre">optional&lt;T&gt;</span></code>.</p>
+<p>An access to the value of an <code class="docutils literal notranslate"><span class="pre">optional&lt;T&gt;</span></code> occurs when one of its <code class="docutils literal notranslate"><span class="pre">value</span></code>,
+<code class="docutils literal notranslate"><span class="pre">operator*</span></code>, or <code class="docutils literal notranslate"><span class="pre">operator-&gt;</span></code> member functions is invoked.  To align with
+common misconceptions, the check considers these member functions as equivalent,
+even though there are subtle differences related to exceptions versus undefined
+behavior. See <em>Additional notes</em>, below, for more information on this topic.</p>
+<p>An access to the value of an <code class="docutils literal notranslate"><span class="pre">optional&lt;T&gt;</span></code> is considered safe if and only if
+code in the local scope (for example, a function body) ensures that the
+<code class="docutils literal notranslate"><span class="pre">optional&lt;T&gt;</span></code> has a value in all possible execution paths that can reach the
+access. That should happen either through an explicit check, using the
+<code class="docutils literal notranslate"><span class="pre">optional&lt;T&gt;::has_value</span></code> member function, or by constructing the
+<code class="docutils literal notranslate"><span class="pre">optional&lt;T&gt;</span></code> in a way that shows that it unambiguously holds a value (e.g
+using <code class="docutils literal notranslate"><span class="pre">std::make_optional</span></code> which always returns a populated
+<code class="docutils literal notranslate"><span class="pre">std::optional&lt;T&gt;</span></code>).</p>
+<p>Below we list some examples, starting with unsafe optional access patterns,
+followed by safe access patterns.</p>
+<section id="unsafe-access-patterns">
+<h2>Unsafe access patterns<a class="headerlink" href="#unsafe-access-patterns" title="Link to this heading">¶</a></h2>
+<section id="access-the-value-without-checking-if-it-exists">
+<h3>Access the value without checking if it exists<a class="headerlink" href="#access-the-value-without-checking-if-it-exists" title="Link to this heading">¶</a></h3>
+<p>The check flags accesses to the value that are not locally guarded by
+existence check:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">opt</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether `opt` has a value.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="access-the-value-in-the-wrong-branch">
+<h3>Access the value in the wrong branch<a class="headerlink" href="#access-the-value-in-the-wrong-branch" title="Link to this heading">¶</a></h3>
+<p>The check is aware of the state of an optional object in different
+branches of the code. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">value</span><span class="p">());</span><span class="w"> </span><span class="c1">// unsafe: it is clear that `opt` does *not* have a value.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="assume-a-function-result-to-be-stable">
+<h3>Assume a function result to be stable<a class="headerlink" href="#assume-a-function-result-to-be-stable" title="Link to this heading">¶</a></h3>
+<p>The check is aware that function results might not be stable. That is,
+consecutive calls to the same function might return different values.
+For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">foo</span><span class="p">.</span><span class="n">take</span><span class="p">().</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">.</span><span class="n">take</span><span class="p">());</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether `foo.take()` has a value.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<section id="exception-accessor-methods">
+<h4>Exception: accessor methods<a class="headerlink" href="#exception-accessor-methods" title="Link to this heading">¶</a></h4>
+<p>The check assumes <em>accessor</em> methods of a class are stable, with a heuristic to
+determine which methods are accessors. Specifically, parameter-free <code class="docutils literal notranslate"><span class="pre">const</span></code>
+methods and smart pointer-like APIs (non <code class="docutils literal notranslate"><span class="pre">const</span></code> overloads of <code class="docutils literal notranslate"><span class="pre">*</span></code> when
+there is a parallel <code class="docutils literal notranslate"><span class="pre">const</span></code> overload) are treated as accessors. Note that
+this is not guaranteed to be safe – but, it is widely used (safely) in
+practice. Calls to non <code class="docutils literal notranslate"><span class="pre">const</span></code> methods are assumed to modify the state of
+the object and affect the stability of earlier accessor calls.</p>
+</section>
+</section>
+<section id="rely-on-invariants-of-uncommon-apis">
+<h3>Rely on invariants of uncommon APIs<a class="headerlink" href="#rely-on-invariants-of-uncommon-apis" title="Link to this heading">¶</a></h3>
+<p>The check is unaware of invariants of uncommon APIs. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">foo</span><span class="p">.</span><span class="n">HasProperty</span><span class="p">(</span><span class="s">&quot;bar&quot;</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">.</span><span class="n">GetProperty</span><span class="p">(</span><span class="s">&quot;bar&quot;</span><span class="p">));</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether `foo.GetProperty(&quot;bar&quot;)` has a value.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="check-if-a-value-exists-then-pass-the-optional-to-another-function">
+<h3>Check if a value exists, then pass the optional to another function<a class="headerlink" href="#check-if-a-value-exists-then-pass-the-optional-to-another-function" title="Link to this heading">¶</a></h3>
+<p>The check relies on local reasoning. The check and value access must
+both happen in the same function. An access is considered unsafe even if
+the caller of the function performing the access ensures that the
+optional has a value. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">opt</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether `opt` has a value.</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">g</span><span class="p">(</span><span class="n">opt</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="safe-access-patterns">
+<h2>Safe access patterns<a class="headerlink" href="#safe-access-patterns" title="Link to this heading">¶</a></h2>
+<section id="check-if-a-value-exists-then-access-the-value">
+<h3>Check if a value exists, then access the value<a class="headerlink" href="#check-if-a-value-exists-then-access-the-value" title="Link to this heading">¶</a></h3>
+<p>The check recognizes all straightforward ways for checking if a value
+exists and accessing the value contained in an optional object. For
+example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">opt</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="check-if-a-value-exists-then-access-the-value-from-a-copy">
+<h3>Check if a value exists, then access the value from a copy<a class="headerlink" href="#check-if-a-value-exists-then-access-the-value-from-a-copy" title="Link to this heading">¶</a></h3>
+<p>The criteria that the check uses is semantic, not syntactic. It
+recognizes when a copy of the optional object being accessed is known to
+have a value. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">opt1</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">opt1</span><span class="p">;</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">opt2</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="ensure-that-a-value-exists-using-common-macros">
+<h3>Ensure that a value exists using common macros<a class="headerlink" href="#ensure-that-a-value-exists-using-common-macros" title="Link to this heading">¶</a></h3>
+<p>The check is aware of common macros like <code class="docutils literal notranslate"><span class="pre">CHECK</span></code> and <code class="docutils literal notranslate"><span class="pre">DCHECK</span></code>. Those can be
+used to ensure that an optional object has a value. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">DCHECK</span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">());</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">opt</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="ensure-that-a-value-exists-then-access-the-value-in-a-correlated-branch">
+<h3>Ensure that a value exists, then access the value in a correlated branch<a class="headerlink" href="#ensure-that-a-value-exists-then-access-the-value-in-a-correlated-branch" title="Link to this heading">¶</a></h3>
+<p>The check is aware of correlated branches in the code and can figure out
+when an optional object is ensured to have a value on all execution
+paths that lead to an access. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">bool</span><span class="w"> </span><span class="n">safe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">()</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">SomeOtherCondition</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">safe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c1">// ... more code...</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">safe</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">opt</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="stabilize-function-results">
+<h2>Stabilize function results<a class="headerlink" href="#stabilize-function-results" title="Link to this heading">¶</a></h2>
+<p>Function results are not assumed to be stable across calls, except for
+const accessor methods. For more complex accessors (non-const, or depend on
+multiple params) it is best to store the result of the function call in a
+local variable and use that variable to access the value. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">foo_opt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">foo</span><span class="p">.</span><span class="n">take</span><span class="p">();</span><span class="w"> </span><span class="n">foo_opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo_opt</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="do-not-rely-on-uncommon-api-invariants">
+<h2>Do not rely on uncommon-API invariants<a class="headerlink" href="#do-not-rely-on-uncommon-api-invariants" title="Link to this heading">¶</a></h2>
+<p>When uncommon APIs guarantee that an optional has contents, do not rely on it –
+instead, check explicitly that the optional object has a value. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">property</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">foo</span><span class="p">.</span><span class="n">GetProperty</span><span class="p">(</span><span class="s">&quot;bar&quot;</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">property</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>instead of the <cite>HasProperty</cite>, <cite>GetProperty</cite> pairing we saw above.</p>
+</section>
+<section id="do-not-rely-on-caller-performed-checks">
+<h2>Do not rely on caller-performed checks<a class="headerlink" href="#do-not-rely-on-caller-performed-checks" title="Link to this heading">¶</a></h2>
+<p>If you know that all of a function’s callers have checked that an optional
+argument has a value, either change the function to take the value directly or
+check the optional again in the local scope of the callee. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">val</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">g</span><span class="p">(</span><span class="o">*</span><span class="n">opt</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>and</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">S</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">opt</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">S</span><span class="w"> </span><span class="o">&amp;</span><span class="n">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">()</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">s</span><span class="p">.</span><span class="n">opt</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">f</span><span class="p">(</span><span class="n">S</span><span class="w"> </span><span class="n">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">opt</span><span class="p">.</span><span class="n">has_value</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">g</span><span class="p">(</span><span class="n">s</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="additional-notes">
+<h2>Additional notes<a class="headerlink" href="#additional-notes" title="Link to this heading">¶</a></h2>
+<section id="aliases-created-via-using-declarations">
+<h3>Aliases created via <code class="docutils literal notranslate"><span class="pre">using</span></code> declarations<a class="headerlink" href="#aliases-created-via-using-declarations" title="Link to this heading">¶</a></h3>
+<p>The check is aware of aliases of optional types that are created via
+<code class="docutils literal notranslate"><span class="pre">using</span></code> declarations. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="n">OptionalInt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">OptionalInt</span><span class="w"> </span><span class="n">opt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">opt</span><span class="p">.</span><span class="n">value</span><span class="p">());</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether `opt` has a value.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="lambdas">
+<h3>Lambdas<a class="headerlink" href="#lambdas" title="Link to this heading">¶</a></h3>
+<p>The check does not currently report unsafe optional accesses in lambdas.
+A future version will expand the scope to lambdas, following the rules
+outlined above. It is best to follow the same principles when using
+optionals in lambdas.</p>
+</section>
+<section id="access-with-operator-vs-value">
+<h3>Access with <code class="docutils literal notranslate"><span class="pre">operator*()</span></code> vs. <code class="docutils literal notranslate"><span class="pre">value()</span></code><a class="headerlink" href="#access-with-operator-vs-value" title="Link to this heading">¶</a></h3>
+<p>Given that <code class="docutils literal notranslate"><span class="pre">value()</span></code> has well-defined behavior (either throwing an exception
+or terminating the program), why treat it the same as <code class="docutils literal notranslate"><span class="pre">operator*()</span></code> which
+causes undefined behavior (UB)? That is, why is it considered unsafe to access
+an optional with <code class="docutils literal notranslate"><span class="pre">value()</span></code>, if it’s not provably populated with a value?  For
+that matter, why is <code class="docutils literal notranslate"><span class="pre">CHECK()</span></code> followed by <code class="docutils literal notranslate"><span class="pre">operator*()</span></code> any better than
+<code class="docutils literal notranslate"><span class="pre">value()</span></code>, given that they are semantically equivalent (on configurations that
+disable exceptions)?</p>
+<p>The answer is that we assume most users do not realize the difference between
+<code class="docutils literal notranslate"><span class="pre">value()</span></code> and <code class="docutils literal notranslate"><span class="pre">operator*()</span></code>. Shifting to <code class="docutils literal notranslate"><span class="pre">operator*()</span></code> and some form of
+explicit value-presence check or explicit program termination has two
+advantages:</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>Readability. The check, and any potential side effects like program
+shutdown, are very clear in the code. Separating access from checks can
+actually make the checks more obvious.</p></li>
+<li><p>Performance. A single check can cover many or even all accesses within
+scope. This gives the user the best of both worlds – the safety of a
+dynamic check, but without incurring redundant costs.</p></li>
+</ul>
+</div></blockquote>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="too-small-loop-variable.html">bugprone-too-small-loop-variable</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="undefined-memory-manipulation.html">bugprone-undefined-memory-manipulation</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

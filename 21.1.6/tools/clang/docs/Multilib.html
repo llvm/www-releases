@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Multilib &#8212; Clang 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Offloading Design &amp; Internals" href="OffloadingDesign.html" />
+    <link rel="prev" title="Driver Design &amp; Internals" href="DriverInternals.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 21.1.6 documentation</span></a></h1>
+        <h2 class="heading"><span>Multilib</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="DriverInternals.html">Driver Design &amp; Internals</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OffloadingDesign.html">Offloading Design &amp; Internals</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="multilib">
+<h1>Multilib<a class="headerlink" href="#multilib" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>This document describes how multilib is implemented in Clang.</p>
+<p>What is multilib and why might you care?
+If you’re <a class="reference internal" href="CrossCompilation.html"><span class="doc">cross compiling</span></a> then you can’t use native
+system headers and libraries. To address this, you can use a combination of
+<code class="docutils literal notranslate"><span class="pre">--sysroot</span></code>, <code class="docutils literal notranslate"><span class="pre">-isystem</span></code> and <code class="docutils literal notranslate"><span class="pre">-L</span></code> options to point Clang at suitable
+directories for your target.
+However, when there are many possible directories to choose from, it’s not
+necessarily obvious which one to pick.
+Multilib allows a toolchain designer to imbue the toolchain with the ability to
+pick a suitable directory automatically, based on the options the user provides
+to Clang. For example, if the user specifies
+<code class="docutils literal notranslate"><span class="pre">--target=arm-none-eabi</span> <span class="pre">-mcpu=cortex-m4</span></code> the toolchain can choose a directory
+containing headers and libraries suitable for Armv7E-M, because it knows that’s
+a suitable architecture for Arm Cortex-M4.
+Multilib can also choose between libraries for the same architecture based on
+other options. For example if the user specifies <code class="docutils literal notranslate"><span class="pre">-fno-exceptions</span></code> then a
+toolchain could select libraries built without exception support, thereby
+reducing the size of the resulting binary.</p>
+</section>
+<section id="design">
+<h2>Design<a class="headerlink" href="#design" title="Link to this heading">¶</a></h2>
+<p>Clang supports GCC’s <code class="docutils literal notranslate"><span class="pre">-print-multi-lib</span></code> and <code class="docutils literal notranslate"><span class="pre">-print-multi-directory</span></code>
+options. These are described in
+<a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc-12.2.0/gcc/Developer-Options.html">GCC Developer Options</a>.</p>
+<p>There are two ways to configure multilib in Clang: hard-coded or via a
+configuration file.</p>
+</section>
+<section id="hard-coded-multilib">
+<h2>Hard-coded Multilib<a class="headerlink" href="#hard-coded-multilib" title="Link to this heading">¶</a></h2>
+<p>The available libraries can be hard-coded in Clang. Typically this is done
+using the <code class="docutils literal notranslate"><span class="pre">MultilibBuilder</span></code> interface in
+<code class="docutils literal notranslate"><span class="pre">clang/include/clang/Driver/MultilibBuilder.h</span></code>.
+There are many examples of this in <code class="docutils literal notranslate"><span class="pre">lib/Driver/ToolChains/Gnu.cpp</span></code>.
+The remainder of this document will not focus on this type of multilib.</p>
+</section>
+<section id="experimental-multilib-via-configuration-file">
+<h2>EXPERIMENTAL Multilib via configuration file<a class="headerlink" href="#experimental-multilib-via-configuration-file" title="Link to this heading">¶</a></h2>
+<p>Some Clang toolchains support loading multilib configuration from a
+<code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code> configuration file.</p>
+<p>A <code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code> configuration file specifies which multilib variants are
+available, their relative location, what compilation options were used to build
+them, and the criteria by which they are selected.</p>
+</section>
+<section id="multilib-processing">
+<h2>Multilib processing<a class="headerlink" href="#multilib-processing" title="Link to this heading">¶</a></h2>
+<p>Clang goes through the following steps to use multilib from a configuration
+file:</p>
+<ol class="arabic simple">
+<li><p>Normalize command line options. Clang can accept the same
+information via different options - for example,
+<code class="docutils literal notranslate"><span class="pre">--target=arm-none-eabi</span> <span class="pre">-march=armv7-m</span></code> and
+<code class="docutils literal notranslate"><span class="pre">--target=armv7m-none-eabi</span></code> are equivalent.
+Clang normalizes the command line before passing them to the multilib system.
+To see what flags are emitted for a given set of command line options, use
+the <code class="docutils literal notranslate"><span class="pre">-print-multi-flags-experimental</span></code> command line option
+along with the rest of the options you want to use.</p></li>
+<li><p>Load <code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code> from sysroot.</p></li>
+<li><p>Generate additional flags. <code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code> contains a <code class="docutils literal notranslate"><span class="pre">Mappings</span></code> section,
+which specifies how to generate additional flags based on the flags derived
+from command line options. Flags are matched using regular expressions.
+These regular expressions shall use the POSIX extended regular expression
+syntax.</p></li>
+<li><p>Match flags against multilib variants. If the generated flags are a superset
+of the flags specified for a multilib variant then the variant is considered
+a match.
+If more than one variant matches then a toolchain may opt to either use only
+the <em>last</em> matching multilib variant, or may use all matching variants,
+thereby <a class="reference internal" href="#multilib-layering"><span class="std std-ref">layering</span></a> them.</p></li>
+<li><p>Generate <code class="docutils literal notranslate"><span class="pre">-isystem</span></code> and <code class="docutils literal notranslate"><span class="pre">-L</span></code> options. Iterate in reverse order over
+the matching multilib variants, and generate <code class="docutils literal notranslate"><span class="pre">-isystem</span></code> and <code class="docutils literal notranslate"><span class="pre">-L</span></code>
+options based on the multilib variant’s directory.</p></li>
+</ol>
+</section>
+<section id="multilib-layering">
+<span id="id1"></span><h2>Multilib layering<a class="headerlink" href="#multilib-layering" title="Link to this heading">¶</a></h2>
+<p>When Clang selects multilib variants, it may find that more than one variant
+matches.</p>
+<p>It is up to the ToolChain subclass to decide what to do in this case.
+There are two options permitted:</p>
+<ol class="arabic simple">
+<li><p>Use only the <em>last</em> matching multilib variant. This option exists primarily
+for compatibility with the previous multilib design.</p></li>
+<li><p>Use all matching variants, thereby layering them.</p></li>
+</ol>
+<p>This decision is hard-coded per ToolChain subclass. The latter option is
+preferred for ToolChain subclasses without backwards compatibility
+requirements.</p>
+<p>If the latter option is chosen then <code class="docutils literal notranslate"><span class="pre">-isystem</span></code> and <code class="docutils literal notranslate"><span class="pre">-L</span></code> options will be
+generated for each matching multilib variant, in reverse order.</p>
+<p>This means that the compiler or linker will find files in the last matching
+multilib variant that has the given file.
+This behaviour permits multilib variants with only a partial set of files.
+This means a toolchain can be distributed with one base multilib variant
+containing all system headers and includes, and more specialised multilib
+variants containing only files that are different to those in the base variant.</p>
+<p>For example, a multilib variant could be compiled with <code class="docutils literal notranslate"><span class="pre">-fno-exceptions</span></code>.
+This option doesn’t affect the content of header files, nor does it affect the
+C libraries. Therefore if multilib layering is supported by the ToolChain
+subclass and a suitable base multilib variant is present then the
+<code class="docutils literal notranslate"><span class="pre">-fno-exceptions</span></code> multilib variant need only contain C++ libraries.</p>
+<p>It is the responsibility of layered multilib authors to ensure that headers and
+libraries in each layer are complete enough to mask any incompatibilities.</p>
+</section>
+<section id="multilib-custom-flags">
+<h2>Multilib custom flags<a class="headerlink" href="#multilib-custom-flags" title="Link to this heading">¶</a></h2>
+<section id="id2">
+<h3>Introduction<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<p>The multilib mechanism supports library variants that correspond to target,
+code generation or language command-line flags. Examples include <code class="docutils literal notranslate"><span class="pre">--target</span></code>,
+<code class="docutils literal notranslate"><span class="pre">-mcpu</span></code>, <code class="docutils literal notranslate"><span class="pre">-mfpu</span></code>, <code class="docutils literal notranslate"><span class="pre">-mbranch-protection</span></code>, <code class="docutils literal notranslate"><span class="pre">-fno-rtti</span></code>. However, some library
+variants are particular to features that do not correspond to any command-line
+option. Multithreading and semihosting, for instance, have no associated
+compiler option.</p>
+<p>In order to support the selection of variants for which no compiler option
+exists, the multilib specification includes the concept of <em>custom flags</em>.
+These flags have no impact on code generation and are only used in the multilib
+processing.</p>
+<p>Multilib custom flags follow this format in the driver invocation:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">-</span><span class="n">fmultilib</span><span class="o">-</span><span class="n">flag</span><span class="o">=&lt;</span><span class="n">value</span><span class="o">&gt;</span>
+</pre></div>
+</div>
+<p>They are fed into the multilib system alongside the remaining flags.</p>
+</section>
+<section id="custom-flag-declarations">
+<h3>Custom flag declarations<a class="headerlink" href="#custom-flag-declarations" title="Link to this heading">¶</a></h3>
+<p>Custom flags can be declared in the YAML file under the <em>Flags</em> section.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">Flags</span><span class="p">:</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multithreaded</span>
+<span class="w">  </span><span class="nt">Values</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">no-multithreaded</span>
+<span class="w">    </span><span class="nt">MacroDefines</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">__SINGLE_THREAD__</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multithreaded</span>
+<span class="w">  </span><span class="nt">Default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">no-multithreaded</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>Name: the name to categorize a flag.</p></li>
+<li><p>Values: a list of flag Values (defined below).</p></li>
+<li><p>Default: it specifies the name of the value this flag should take if not
+specified in the command-line invocation. It must be one value from the Values
+field.</p></li>
+</ul>
+<p>Each flag <em>Value</em> is defined as:</p>
+<ul class="simple">
+<li><p>Name: name of the value. This is the string to be used in
+<code class="docutils literal notranslate"><span class="pre">-fmultilib-flag=&lt;string&gt;</span></code>.</p></li>
+<li><p>MacroDefines: a list of strings to be used as macro definitions. Each string
+is fed into the driver as <code class="docutils literal notranslate"><span class="pre">-D&lt;string&gt;</span></code>.</p></li>
+</ul>
+<p>The namespace of flag values is common across all flags. This means that flag
+value names must be unique.</p>
+</section>
+<section id="usage-of-custom-flags-in-the-variants-specifications">
+<h3>Usage of custom flags in the <em>Variants</em> specifications<a class="headerlink" href="#usage-of-custom-flags-in-the-variants-specifications" title="Link to this heading">¶</a></h3>
+<p>Library variants should list their requirement on one or more custom flags like
+they do for any other flag. Each requirement must be listed as
+<code class="docutils literal notranslate"><span class="pre">-fmultilib-flag=&lt;value&gt;</span></code>.</p>
+<p>A variant that does not specify a requirement on one particular flag can be
+matched against any value of that flag.</p>
+</section>
+</section>
+<section id="stability">
+<h2>Stability<a class="headerlink" href="#stability" title="Link to this heading">¶</a></h2>
+<p>Multilib via configuration file shall be considered an experimental feature
+until LLVM 18, at which point <code class="docutils literal notranslate"><span class="pre">-print-multi-flags-experimental</span></code>
+should be renamed to <code class="docutils literal notranslate"><span class="pre">-print-multi-flags</span></code>.
+A toolchain can opt in to using this feature by including a <code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code>
+file in its distribution, once support for it is added in relevant ToolChain
+subclasses.
+Once stability is reached, flags emitted by <code class="docutils literal notranslate"><span class="pre">-print-multi-flags</span></code>
+should not be removed or changed, although new flags may be added.</p>
+</section>
+<section id="restrictions">
+<h2>Restrictions<a class="headerlink" href="#restrictions" title="Link to this heading">¶</a></h2>
+<p>Despite the name, multilib is used to locate both <code class="docutils literal notranslate"><span class="pre">include</span></code> and <code class="docutils literal notranslate"><span class="pre">lib</span></code>
+directories. Therefore it is important that consistent options are passed to
+the Clang driver when both compiling and linking. Otherwise inconsistent
+<code class="docutils literal notranslate"><span class="pre">include</span></code> and <code class="docutils literal notranslate"><span class="pre">lib</span></code> directories may be used, and the results will be
+undefined.</p>
+</section>
+<section id="experimental-multilib-yaml">
+<h2>EXPERIMENTAL multilib.yaml<a class="headerlink" href="#experimental-multilib-yaml" title="Link to this heading">¶</a></h2>
+<p>The below example serves as a small of a possible multilib, and documents
+the available options.</p>
+<p>For a more comprehensive example see
+<code class="docutils literal notranslate"><span class="pre">clang/test/Driver/baremetal-multilib.yaml</span></code> in the <code class="docutils literal notranslate"><span class="pre">llvm-project</span></code> sources.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># multilib.yaml</span>
+
+<span class="c1"># This format is experimental and is likely to change!</span>
+
+<span class="c1"># Syntax is YAML 1.2</span>
+
+<span class="c1"># This required field defines the version of the multilib.yaml format.</span>
+<span class="c1"># Clang will emit an error if this number is greater than its current multilib</span>
+<span class="c1"># version or if its major version differs, but will accept lesser minor</span>
+<span class="c1"># versions.</span>
+<span class="nt">MultilibVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span>
+
+<span class="c1"># The rest of this file is in two parts:</span>
+<span class="c1"># 1. A list of multilib variants.</span>
+<span class="c1"># 2. A list of regular expressions that may match flags generated from</span>
+<span class="c1">#    command line options, and further flags that shall be added if the</span>
+<span class="c1">#    regular expression matches.</span>
+<span class="c1"># It is acceptable for the file to contain properties not documented here,</span>
+<span class="c1"># and these will be ignored by Clang.</span>
+
+<span class="c1"># List of multilib variants. Required.</span>
+<span class="c1"># The ordering of items in the variants list is important if more than one</span>
+<span class="c1"># variant can match the same set of flags. See the docs on multilib layering</span>
+<span class="c1"># for more info.</span>
+<span class="nt">Variants</span><span class="p">:</span>
+
+<span class="c1"># Example of a multilib variant targeting Arm v6-M.</span>
+<span class="c1"># Dir is the relative location of the directory containing the headers</span>
+<span class="c1"># and/or libraries.</span>
+<span class="c1"># Exactly how Dir is used is left up to the ToolChain subclass to define, but</span>
+<span class="c1"># typically it will be joined to the sysroot.</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">thumb/v6-m</span>
+<span class="w">  </span><span class="c1"># List of one or more normalized command line options, as generated by Clang</span>
+<span class="w">  </span><span class="c1"># from the command line options or from Mappings below.</span>
+<span class="w">  </span><span class="c1"># Here, if the flags are a superset of {target=thumbv6m-unknown-none-eabi}</span>
+<span class="w">  </span><span class="c1"># then this multilib variant will be considered a match.</span>
+<span class="w">  </span><span class="nt">Flags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">--target=thumbv6m-unknown-none-eabi</span><span class="p p-Indicator">]</span>
+
+<span class="c1"># Similarly, a multilib variant targeting Arm v7-M with an FPU (floating</span>
+<span class="c1"># point unit).</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">thumb/v7-m</span>
+<span class="w">  </span><span class="c1"># Here, the flags generated by Clang must be a superset of</span>
+<span class="w">  </span><span class="c1"># {--target=thumbv7m-none-eabi, -mfpu=fpv4-sp-d16} for this multilib variant</span>
+<span class="w">  </span><span class="c1"># to be a match.</span>
+<span class="w">  </span><span class="nt">Flags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">--target=thumbv7m-none-eabi</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-mfpu=fpv4-sp-d16</span><span class="p p-Indicator">]</span>
+
+<span class="c1"># If there is no multilib available for a particular set of flags, and the</span>
+<span class="c1"># other multilibs are not adequate fallbacks, then you can define a variant</span>
+<span class="c1"># record with an Error key in place of the Dir key.</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Error</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">this multilib collection has no hard-float ABI support</span>
+<span class="w">  </span><span class="nt">Flags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">--target=thumbv7m-none-eabi</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-mfloat-abi=hard</span><span class="p p-Indicator">]</span>
+
+
+<span class="c1"># The second section of the file is a list of regular expressions that are</span>
+<span class="c1"># used to map from flags generated from command line options to custom flags.</span>
+<span class="c1"># This is optional.</span>
+<span class="c1"># Each regular expression must match a whole flag string.</span>
+<span class="c1"># Flags in the &quot;Flags&quot; list will be added if any flag generated from command</span>
+<span class="c1"># line options matches the regular expression.</span>
+<span class="nt">Mappings</span><span class="p">:</span>
+
+<span class="c1"># Set a &quot;--target=thumbv7m-none-eabi&quot; flag if the regular expression matches</span>
+<span class="c1"># any of the flags generated from the command line options.</span>
+<span class="c1"># Match is a POSIX extended regular expression string.</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Match</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--target=thumbv([7-9]|[1-9][0-9]+).*</span>
+<span class="w">  </span><span class="c1"># Flags is a list of one or more strings.</span>
+<span class="w">  </span><span class="nt">Flags</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">--target=thumbv7m-none-eabi</span><span class="p p-Indicator">]</span>
+
+<span class="c1"># Custom flag declarations. Each item is a different declaration.</span>
+<span class="nt">Flags</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># Name of the flag</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multithreaded</span>
+<span class="w">  </span><span class="c1"># List of custom flag values</span>
+<span class="w">  </span><span class="nt">Values</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># Name of the custom flag value. To be used in -fmultilib-flag=&lt;string&gt;.</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">no-multithreaded</span>
+<span class="w">    </span><span class="c1"># Macro definitions. Useful for defining extra macros for building the</span>
+<span class="w">    </span><span class="c1"># associated library variant(s).</span>
+<span class="w">    </span><span class="nt">MacroDefines</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">__SINGLE_THREAD__</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">multithreaded</span>
+<span class="w">  </span><span class="c1"># Default flag value. If no value for this flag declaration is used in the</span>
+<span class="w">  </span><span class="c1"># command-line, the multilib system will use this one. Must be equal to one</span>
+<span class="w">  </span><span class="c1"># of the flag value names from this flag declaration.</span>
+<span class="w">  </span><span class="nt">Default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">no-multithreaded</span>
+</pre></div>
+</div>
+</section>
+<section id="design-principles">
+<h2>Design principles<a class="headerlink" href="#design-principles" title="Link to this heading">¶</a></h2>
+<section id="stable-interface">
+<h3>Stable interface<a class="headerlink" href="#stable-interface" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code> and <code class="docutils literal notranslate"><span class="pre">-print-multi-flags-experimental</span></code> are new
+interfaces to Clang. In order for them to be usable over time and across LLVM
+versions their interfaces should be stable.
+The new multilib system will be considered experimental in LLVM 17, but in
+LLVM 18 it will be stable. In particular this is important to which multilib
+selection flags Clang generates from command line options. Once a flag is
+generated by a released version of Clang it may be used in <code class="docutils literal notranslate"><span class="pre">multilib.yaml</span></code>
+files that exist independently of the LLVM release cycle, and therefore
+ceasing to generate the flag would be a breaking change and should be
+avoided.</p>
+<p>However, an exception is the normalization of <code class="docutils literal notranslate"><span class="pre">-march</span></code>.
+<code class="docutils literal notranslate"><span class="pre">-march</span></code> for Arm architectures contains a list of enabled and disabled
+extensions and this list is likely to grow. Therefore <code class="docutils literal notranslate"><span class="pre">-march</span></code> flags are
+unstable.</p>
+</section>
+<section id="incomplete-interface">
+<h3>Incomplete interface<a class="headerlink" href="#incomplete-interface" title="Link to this heading">¶</a></h3>
+<p>The new multilib system does multilib selection based on only a limited set of
+command line options, and limits which flags can be used for multilib
+selection. This is in order to avoid committing to too large an interface.
+Later LLVM versions can add support for multilib selection from more command
+line options as needed.</p>
+</section>
+<section id="extensible">
+<h3>Extensible<a class="headerlink" href="#extensible" title="Link to this heading">¶</a></h3>
+<p>It is likely that the configuration format will need to evolve in future to
+adapt to new requirements.
+Using a format like YAML that supports key-value pairs helps here as it’s
+trivial to add new keys alongside existing ones.</p>
+</section>
+<section id="backwards-compatibility">
+<h3>Backwards compatibility<a class="headerlink" href="#backwards-compatibility" title="Link to this heading">¶</a></h3>
+<p>New versions of Clang should be able to use configuration written for earlier
+Clang versions.
+To avoid behaving in a way that may be subtly incorrect, Clang should be able
+to detect if the configuration is too new and emit an error.</p>
+</section>
+<section id="forwards-compatibility">
+<h3>Forwards compatibility<a class="headerlink" href="#forwards-compatibility" title="Link to this heading">¶</a></h3>
+<p>As an author of a multilib configuration, it should be possible to design the
+configuration in such a way that it is likely to work well with future Clang
+versions. For example, if a future version of Clang is likely to add support
+for newer versions of an architecture and the architecture is known to be
+designed for backwards compatibility then it should be possible to express
+compatibility for such architecture versions in the multilib configuration.</p>
+</section>
+<section id="not-gnu-spec-files">
+<h3>Not GNU spec files<a class="headerlink" href="#not-gnu-spec-files" title="Link to this heading">¶</a></h3>
+<p>The GNU spec files standard is large and complex and there’s little desire to
+import that complexity to LLVM. It’s also heavily oriented towards processing
+command line argument strings which is hard to do correctly, hence the large
+amount of logic dedicated to that task in the Clang driver. While compatibility
+with GNU would bring benefits, the cost in this case is deemed too high.</p>
+</section>
+<section id="avoid-re-inventing-feature-detection-in-the-configuration">
+<h3>Avoid re-inventing feature detection in the configuration<a class="headerlink" href="#avoid-re-inventing-feature-detection-in-the-configuration" title="Link to this heading">¶</a></h3>
+<p>A large amount of logic in the Clang driver is dedicated to inferring which
+architectural features are available based on the given command line options.
+It is neither desirable nor practical to repeat such logic in each multilib
+configuration. Instead the configuration should be able to benefit from the
+heavy lifting Clang already does to detect features.</p>
+</section>
+<section id="low-maintenance">
+<h3>Low maintenance<a class="headerlink" href="#low-maintenance" title="Link to this heading">¶</a></h3>
+<p>Multilib is a relatively small feature in the scheme of things so supporting it
+should accordingly take little time. Where possible this should be achieved by
+implementing it in terms of existing features in the LLVM codebase.</p>
+</section>
+<section id="minimal-additional-api-surface">
+<h3>Minimal additional API surface<a class="headerlink" href="#minimal-additional-api-surface" title="Link to this heading">¶</a></h3>
+<p>The greater the API surface, the greater the difficulty of keeping it stable.
+Where possible the additional API surface should be kept small by defining it
+in relation to existing APIs. An example of this is keeping a simple
+relationship between flag names and command line options where possible.
+Since the command line options are part of a stable API they are unlikely
+to change, and therefore the flag names get the same stability.</p>
+</section>
+<section id="low-compile-time-overhead">
+<h3>Low compile-time overhead<a class="headerlink" href="#low-compile-time-overhead" title="Link to this heading">¶</a></h3>
+<p>If the process of selecting multilib directories must be done on every
+invocation of the Clang driver then it must have a negligible impact on
+overall compile time.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="DriverInternals.html">Driver Design &amp; Internals</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OffloadingDesign.html">Offloading Design &amp; Internals</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
