@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Parameterized Derived Types (PDTs) &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Parser Combinators" href="ParserCombinators.html" />
+    <link rel="prev" title="Multi-Image Parallel Fortran Runtime" href="ParallelMultiImageFortranRuntime.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Parameterized Derived Types (PDTs)</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ParallelMultiImageFortranRuntime.html">Multi-Image Parallel Fortran Runtime</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ParserCombinators.html">Parser Combinators</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="parameterized-derived-types-pdts">
+<h1>Parameterized Derived Types (PDTs)<a class="headerlink" href="#parameterized-derived-types-pdts" title="Link to this heading">¶</a></h1>
+<p>Derived types can be parameterized with type parameters. A type parameter is
+either a kind type parameter or a length type parameter. Both kind and length
+type parameters are of integer type.</p>
+<p>This document aims to give insights at the representation of PDTs in FIR and how
+PDTs related constructs and features are lowered to FIR.</p>
+<section id="fortran-standard">
+<h2>Fortran standard<a class="headerlink" href="#fortran-standard" title="Link to this heading">¶</a></h2>
+<p>Here is a list of the sections and constraints of the Fortran standard involved
+for parameterized derived types.</p>
+<ul class="simple">
+<li><p>7.2 Type parameters</p>
+<ul>
+<li><p>C701</p></li>
+<li><p>C702</p></li>
+</ul>
+</li>
+<li><p>9.4.5: Type parameter inquiry</p></li>
+<li><p>9.7.1: ALLOCATE statement</p></li>
+<li><p>9.7.2: NULLIFY</p></li>
+<li><p>9.7.3: DEALLOCATE</p></li>
+</ul>
+<p>The constraints are implemented and tested in flang.</p>
+<section id="the-two-types-of-pdts">
+<h3>The two types of PDTs<a class="headerlink" href="#the-two-types-of-pdts" title="Link to this heading">¶</a></h3>
+<section id="pdt-with-kind-type-parameter">
+<h4>PDT with kind type parameter<a class="headerlink" href="#pdt-with-kind-type-parameter" title="Link to this heading">¶</a></h4>
+<p>PDTs with kind type parameter are already implemented in flang. Since the kind
+type parameter shall be a constant expression, it can be determined at
+compile-time and is folded in the type itself. Kind type parameters also play
+a role in determining a specific type instance according to the Fortran
+standard.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">kind</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">k</span>
+<span class="k">end type</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">tk1</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">tk2</span>
+</pre></div>
+</div>
+<p>In the example above, <code class="docutils literal notranslate"><span class="pre">tk1</span></code> and <code class="docutils literal notranslate"><span class="pre">tk2</span></code> have distinct types.</p>
+<p>Lowering makes the distinction between the two types by giving them different
+names <code class="docutils literal notranslate"><span class="pre">&#64;_QFE.kp.t.1</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;_QFE.kp.t.2</span></code>. More information about the unique names
+can be found here: <code class="docutils literal notranslate"><span class="pre">flang/docs/BijectiveInternalNameUniquing.md</span></code></p>
+</section>
+<section id="pdt-with-length-type-parameter">
+<h4>PDT with length type parameter<a class="headerlink" href="#pdt-with-length-type-parameter" title="Link to this heading">¶</a></h4>
+<p>Two PDTs with the same derived type and the same kind type parameters but
+different length type parameters are not distinct types. Unlike the kind type
+parameter, the length type parameters do not play a role in determining a
+specific type instance.
+PDTs with length type parameter can be seen as dependent types[1].</p>
+<p>In the example below, <code class="docutils literal notranslate"><span class="pre">tk1</span></code> and <code class="docutils literal notranslate"><span class="pre">tk2</span></code> have the same type but may have different
+layout in memory. They have different value for the length type parameter <code class="docutils literal notranslate"><span class="pre">l</span></code>.
+<code class="docutils literal notranslate"><span class="pre">tk1</span></code> and <code class="docutils literal notranslate"><span class="pre">tk2</span></code> are not convertible unlike <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> types.
+Assigning <code class="docutils literal notranslate"><span class="pre">tk2</span></code> to <code class="docutils literal notranslate"><span class="pre">tk1</span></code> is not a valid program.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t</span><span class="p">(</span><span class="n">k</span><span class="p">,</span><span class="n">l</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">kind</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">k</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l</span>
+<span class="k">end type</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">tk1</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="o">+</span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">tk2</span>
+
+<span class="c">! This is invalid</span>
+<span class="n">tk2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tk1</span>
+</pre></div>
+</div>
+<p>Components with length type parameters cannot be folded into the type at
+compile-time like the one with kind type parameters since their size is not
+known. There are multiple ways to implement length type parameters and here are
+two possibilities.</p>
+<ol class="arabic simple">
+<li><p>Directly encapsulate the components in the derived type. This will be referred
+as the “inlined” solution in the rest of the document. The size of the
+descriptor will not be fixed and be computed at runtime. Size, offset need
+to be computed at runtime as well.</p></li>
+<li><p>Use a level of indirection for the components outside of the descriptor. This
+will be referred as the “outlined” solution in the rest of the document.
+The descriptor size will then remain the same.</p></li>
+</ol>
+<p>These solutions have pros and cons and more details are given in the next few
+sections.</p>
+<section id="implementing-pdt-with-inlined-components">
+<h5>Implementing PDT with inlined components<a class="headerlink" href="#implementing-pdt-with-inlined-components" title="Link to this heading">¶</a></h5>
+<p>In case of <code class="docutils literal notranslate"><span class="pre">len_type1</span></code>, the size, offset, etc. of <code class="docutils literal notranslate"><span class="pre">fld1</span></code> and <code class="docutils literal notranslate"><span class="pre">fld2</span></code> depend on
+the runtime values of <code class="docutils literal notranslate"><span class="pre">i</span></code> and <code class="docutils literal notranslate"><span class="pre">j</span></code> when the components are inlined into the
+derived type. At runtime, this information needs to be computed to be retrieved.
+While lowering the PDT, compiler generated functions can be created in order to
+compute this information.</p>
+<p>Note: The type description tables generated by semantics and used throughout the
+runtime have component offsets as constants. Inlining component would require
+this representation to be extended.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="c">! PDT with one level of inlined components.</span>
+<span class="k">type </span><span class="n">len_type1</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">i</span><span class="o">+</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fld1</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">j</span><span class="o">-</span><span class="n">i</span><span class="o">+</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fld2</span>
+<span class="k">end type</span>
+</pre></div>
+</div>
+</section>
+<section id="implementing-pdt-with-outlined-components">
+<h5>Implementing PDT with outlined components<a class="headerlink" href="#implementing-pdt-with-outlined-components" title="Link to this heading">¶</a></h5>
+<p>A level of indirection can be used and <code class="docutils literal notranslate"><span class="pre">fld1</span></code> and <code class="docutils literal notranslate"><span class="pre">fld2</span></code> are then outlined
+as shown in <code class="docutils literal notranslate"><span class="pre">len_type2</span></code>. <em>compiler_allocatable</em> is here only to show which
+components have an indirection.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="c">! PDT with one level of indirection.</span>
+<span class="k">type </span><span class="n">len_type2</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="c">! The two following components are not directly stored in the type but</span>
+<span class="w">  </span><span class="c">! allocatable components managed by the compiler. The</span>
+<span class="w">  </span><span class="c">! `compiler_managed_allocatable` is not a proper keyword but just added here</span>
+<span class="w">  </span><span class="c">! to have a better understanding.</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">i</span><span class="o">+</span><span class="n">j</span><span class="p">),</span><span class="w"> </span><span class="n">compiler_managed_allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fld1</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">j</span><span class="o">-</span><span class="n">i</span><span class="o">+</span><span class="mi">2</span><span class="p">),</span><span class="w"> </span><span class="n">compiler_managed_allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">fld2</span>
+<span class="k">end type</span>
+</pre></div>
+</div>
+<p>This solution has performance drawback because of the added indirections. It
+also has to deal with compiler managed allocation/deallocation of the components
+pointed by the indirections.</p>
+<p>These indirections are more problematic when we deal with array slice of derived
+types as it could require temporaries depending how the memory is allocated.</p>
+<p>The outlined solution is also problematic for unformatted I/O as the
+indirections need to be followed correctly when reading or writing records.</p>
+</section>
+<section id="example-of-nested-pdts">
+<h5>Example of nested PDTs<a class="headerlink" href="#example-of-nested-pdts" title="Link to this heading">¶</a></h5>
+<p>PDTs can be nested. Here are some example used later in the document.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="c">! PDT with second level of inlined components.</span>
+<span class="k">type </span><span class="n">len_type3</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="mi">2</span><span class="o">*</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">name</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">len_type1</span><span class="p">(</span><span class="n">i</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="o">+</span><span class="mi">4</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">field</span>
+<span class="k">end type</span>
+
+<span class="c">! PDT with second level of indirection</span>
+<span class="k">type </span><span class="n">len_type4</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="mi">2</span><span class="o">*</span><span class="n">j</span><span class="p">),</span><span class="w"> </span><span class="n">compiler_allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">name</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">len_type2</span><span class="p">(</span><span class="n">i</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="o">**</span><span class="n">j</span><span class="p">)),</span><span class="w"> </span><span class="n">compiler_allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">field</span>
+<span class="k">end type</span>
+</pre></div>
+</div>
+</section>
+<section id="example-with-array-slice">
+<h5>Example with array slice<a class="headerlink" href="#example-with-array-slice" title="Link to this heading">¶</a></h5>
+<p>Let’s take an example with an array slice to see the advantages and
+disadvantages of the two solutions.</p>
+<p>For all derived types that do not have LEN type parameter (only have
+compile-time constants) a standard descriptor can be set with the correct offset
+and strides such that <code class="docutils literal notranslate"><span class="pre">array%field%fld2</span></code> can be encoded in the descriptor, is
+not contiguous, and does not require a copy. This is what is implemented in
+flang.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="c">! Declare arrays of PDTs</span>
+<span class="k">type</span><span class="p">(</span><span class="n">len_type3</span><span class="p">(</span><span class="n">exp1</span><span class="p">,</span><span class="n">exp2</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pdt_inlined_array</span><span class="p">(</span><span class="n">exp3</span><span class="p">)</span>
+<span class="k">type</span><span class="p">(</span><span class="n">len_type4</span><span class="p">(</span><span class="n">exp1</span><span class="p">,</span><span class="n">exp2</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pdt_outlined_array</span><span class="p">(</span><span class="n">exp3</span><span class="p">)</span>
+
+<span class="c">! Passing/accessing a slice of PDTs array</span>
+<span class="n">pdt_inlined_array</span><span class="p">%</span><span class="n">field</span><span class="p">%</span><span class="n">fld2</span>
+</pre></div>
+</div>
+<p>For a derived type with length type parameters inlined the expression
+<code class="docutils literal notranslate"><span class="pre">pdt_inlined_array%field%fld2</span></code> can be encoded in the standard descriptor because
+the components of <code class="docutils literal notranslate"><span class="pre">pdt_inlined_array</span></code> are inlined such that the array is laid
+out with all its subcomponents in a contiguous range of memory.</p>
+<p>For the <code class="docutils literal notranslate"><span class="pre">pdt_outlined_array</span></code> array, the implementation has to insert several
+level of indirections and therefore cannot be encoded in the standard
+descriptor.
+The different indirections levels break the property of the large contiguous
+block in memory if the allocation is done for each components. This would make
+the <code class="docutils literal notranslate"><span class="pre">pdt_outlined_array</span></code> a ragged array. The memory can also be allocated for
+components with length type parameters while allocating the base object (in this
+case the <code class="docutils literal notranslate"><span class="pre">pdt_outlined_array</span></code>).</p>
+<p>For each non-allocatable/non-pointer leaf automatic component of a PDT base
+entity (<code class="docutils literal notranslate"><span class="pre">pdt_outlined_array</span></code> here) or a base entity containing PDTs, the
+initialization will allocate a single block in memory for all the leaf
+components reachable in the base entity (<code class="docutils literal notranslate"><span class="pre">pdt_outlined_array(i)%field%fld1</span></code>).
+The size of this block will be <code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">*</span> <span class="pre">sizeof(leaf-component)</span></code> where <code class="docutils literal notranslate"><span class="pre">N</span></code> is the
+multiplication of the size of each part-ref from the base entity to the leaf
+component. The descriptor for each leaf component can then point to the correct
+location in the block <code class="docutils literal notranslate"><span class="pre">block[i*sizeof(leaf-component)]</span></code>.</p>
+<p>Outlining the components has the advantage that the size of the PDTs are
+compile-time constant as each field is encoded as a descriptor pointing to the
+data. It has a disadvantage to require non-standard descriptors and comes with
+additional runtime cost.</p>
+<p>With components inlining, the size of the PDTs are not compile-time constant.
+This solution has the advantage to not add a performance drawback with
+additional indirections but requires to compute the size of the descriptor
+at runtime.
+The size of the PDTs need to be computed at runtime. This is already the case
+for dynamic allocation sizes since it is possible for arrays to have dynamic
+shapes, etc.</p>
+</section>
+</section>
+<section id="support-of-pdts-in-other-compilers">
+<h4>Support of PDTs in other compilers<a class="headerlink" href="#support-of-pdts-in-other-compilers" title="Link to this heading">¶</a></h4>
+<ol class="arabic simple">
+<li><p>Nested PDTs</p></li>
+<li><p>Array of PDTs</p></li>
+<li><p>Allocatable array of PDTs</p></li>
+<li><p>Pointer to array section</p></li>
+<li><p>Formatted I/O</p></li>
+<li><p>Unformatted I/O</p></li>
+<li><p>User-defined I/O</p></li>
+<li><p>FINAL subroutine</p></li>
+<li><p>ELEMENTAL FINAL subroutine</p></li>
+</ol>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Compiler</p></th>
+<th class="head"><p>1</p></th>
+<th class="head"><p>2</p></th>
+<th class="head"><p>3</p></th>
+<th class="head"><p>4</p></th>
+<th class="head"><p>5</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>7</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>9</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>gfortran</p></td>
+<td><p>crash</p></td>
+<td><p>ok</p></td>
+<td><p>crash</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>no</p></td>
+<td><p>no</p></td>
+<td><p>no</p></td>
+</tr>
+<tr class="row-odd"><td><p>nag</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>crash</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>no</p></td>
+<td><p>no</p></td>
+</tr>
+<tr class="row-even"><td><p>nvfortran</p></td>
+<td><p>crash</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>no</p></td>
+</tr>
+<tr class="row-odd"><td><p>xlf</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>wrong</p></td>
+<td><p>ok</p></td>
+<td><p>wrong</p></td>
+<td><p>no</p></td>
+<td><p>no</p></td>
+</tr>
+<tr class="row-even"><td><p>ifort</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>ok</p></td>
+<td><p>crash</p></td>
+<td><p>crash</p></td>
+</tr>
+</tbody>
+</table>
+<p><em>Legends of results in the table</em></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ok</span> <span class="o">=</span> <span class="nb">compile</span> <span class="o">+</span> <span class="n">run</span> <span class="o">+</span> <span class="n">good</span> <span class="n">result</span>
+<span class="n">wrong</span> <span class="o">=</span> <span class="nb">compile</span> <span class="o">+</span> <span class="n">run</span> <span class="o">+</span> <span class="n">wrong</span> <span class="n">result</span>
+<span class="n">crash</span> <span class="o">=</span> <span class="n">compiler</span> <span class="n">crash</span> <span class="ow">or</span> <span class="n">runtime</span> <span class="n">crash</span>
+<span class="n">no</span> <span class="o">=</span> <span class="n">doesn</span><span class="s1">&#39;t compile with no crash</span>
+</pre></div>
+</div>
+<section id="field-inlining-in-lowering">
+<h5>Field inlining in lowering<a class="headerlink" href="#field-inlining-in-lowering" title="Link to this heading">¶</a></h5>
+<p>A PDT with length type parameters has a list of 1 or more type parameters that
+are runtime values. These length type parameter values can be present in
+specification of other type parameters, array bounds expressions, etc.
+All these expressions are integer specifications expressions and can be
+evaluated at any given point with the length type parameters value of the PDT
+instance. This is possible because constraints C750 and C754 from Fortran 2018
+standard that restrict what can appear in the specification expression.</p>
+<p><em>note: C750 and C754 are partially enforced in the semantic at the moment.</em></p>
+<p>These expressions can be lowered into small simple functions. For example,
+the offset of <code class="docutils literal notranslate"><span class="pre">fld1</span></code> in <code class="docutils literal notranslate"><span class="pre">len_type1</span></code> could be 0; its size would be computed as
+<code class="docutils literal notranslate"><span class="pre">sizeof(char)</span> <span class="pre">*</span> <span class="pre">(i+j)</span></code>. <code class="docutils literal notranslate"><span class="pre">size</span></code> can be lowered into a compiler generated
+function.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>// Example of compiler generated functions to compute offsets, size, etc.
+// This is just an example and actual implementation might have more functions.
+
+// name field offset.
+func.func @_len_type3.offset.name() -&gt; index {
+  %0 = arith.constant 0 : index
+  return %0 : index
+}
+
+// size for `name`: sizeof(char) * (2 * i) + padding
+func.func @_len_type3.memsize.name(%i: index, %j: index) -&gt; index {
+  %0 = arith.constant 2 : index
+  %1 = arith.constant 8 : index
+  %2 = arith.muli %0, %i : index
+  %3 = arith.muli %1, %2 : index
+  // padding not added here
+  return %3 : index
+}
+
+// `fld` field offset.
+func.func @_len_type3.offset.field(%i: index, %j: index) -&gt; index {
+  %0 = call @_len_type3.offset.name() : () -&gt; index
+  %1 = call @_len_type3.memsize.name(%i, %j) : (index, index) -&gt; index
+  %2 = arith.addi %0, %1 : index
+  return %2 : index
+}
+
+// 1st type parameter used for field `fld`: i*2
+func.func @_len_type3.field.typeparam.1(%i : index, %j : index) -&gt; index {
+  %0 = arith.constant 2 : index
+  %1 = arith.muli %0, %i : index
+  return %1 : index
+}
+
+// 2nd type parameter used for field `fld`: j+4
+func.func @_len_type3.field.typeparam.2(%i : index, %j : index) -&gt; index {
+  %0 = arith.constant 4 : index
+  %1 = arith.addi %j, %0 : index
+  return %1 : index
+}
+
+// `fld1` offset in `len_type1`.
+func.func @_len_type1.offset.fld1() -&gt; index {
+  %0 = arith.constant 0 : index
+  return %0 : index
+}
+
+// size for `fld1`.
+func.func @_len_type1.memsize.fld1(%i : index, %j : index) -&gt; index {
+  %0 = arith.constant 8 : index
+  %1 = arith.addi %i, %j : index
+  %2 = arith.muli %0, %1 : index
+  return %2 : index
+}
+
+// `fld2` offset in `len_type1`.
+func.func @_len_type1.offset.fld2(%i : index, %j : index) -&gt; index {
+  %0 = call @_len_type1.offset.fld1() : () -&gt; index
+  %1 = call @_len_type1.memsize.fld1(%i, %j) : (index, index) -&gt; index
+  %2 = arith.addi %0, %1 : index
+  return %2 : index
+}
+</pre></div>
+</div>
+<p>Access a field</p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="n">pdt_inlined_array</span><span class="p">(</span><span class="mi">1</span><span class="p">)%</span><span class="n">field</span><span class="p">%</span><span class="n">fld2</span>
+</pre></div>
+</div>
+<p>Example of offset computation in the PDTs.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">%</span><span class="mi">0</span> <span class="o">=</span> <span class="n">call</span> <span class="nd">@_len_type3</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">typeparam</span><span class="mf">.1</span><span class="p">(</span><span class="o">%</span><span class="n">i</span><span class="p">,</span> <span class="o">%</span><span class="n">j</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">index</span>
+<span class="o">%</span><span class="mi">1</span> <span class="o">=</span> <span class="n">call</span> <span class="nd">@_len_type3</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">typeparam</span><span class="mf">.2</span><span class="p">(</span><span class="o">%</span><span class="n">i</span><span class="p">,</span> <span class="o">%</span><span class="n">j</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">index</span>
+<span class="o">%</span><span class="mi">2</span> <span class="o">=</span> <span class="n">call</span> <span class="nd">@_len_type3</span><span class="o">.</span><span class="n">offset</span><span class="o">.</span><span class="n">fld</span><span class="p">(</span><span class="o">%</span><span class="n">i</span><span class="p">,</span> <span class="o">%</span><span class="n">j</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">index</span>
+<span class="o">%</span><span class="mi">3</span> <span class="o">=</span> <span class="n">call</span> <span class="nd">@_len_type1</span><span class="o">.</span><span class="n">offset</span><span class="o">.</span><span class="n">fld2</span><span class="p">(</span><span class="o">%</span><span class="mi">0</span><span class="p">,</span> <span class="o">%</span><span class="mi">1</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">index</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">index</span>
+<span class="o">%</span><span class="n">offset_of_1st_element</span> <span class="o">=</span> <span class="n">arith</span><span class="o">.</span><span class="n">addi</span> <span class="o">%</span><span class="mi">2</span><span class="p">,</span> <span class="o">%</span><span class="mi">3</span> <span class="p">:</span> <span class="n">index</span>
+<span class="o">//</span> <span class="n">Use</span> <span class="n">the</span> <span class="n">value</span> <span class="n">computed</span> <span class="n">offset_of_1st_element</span>
+</pre></div>
+</div>
+<p>In the case where the length type parameters values <code class="docutils literal notranslate"><span class="pre">(i,j)</span></code> are compile-time
+constants then function inlining and constant folding will transform these
+dependent types into statically defined types with no runtime cost.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+<span class="k">end type</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="n">n</span><span class="p">)),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span><span class="p">(:)</span>
+<span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">a</span><span class="p">(:)%</span><span class="n">i</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>When making a new descriptor like for pointer association, the <code class="docutils literal notranslate"><span class="pre">field_index</span></code>
+operation can take the length type parameters needed for size/offset
+computation.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%5 = fir.field_index i, !fir.type&lt;_QMmod1Tt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;(%n : i32)
+</pre></div>
+</div>
+</section>
+</section>
+<section id="length-type-parameter-with-expression">
+<h4>Length type parameter with expression<a class="headerlink" href="#length-type-parameter-with-expression" title="Link to this heading">¶</a></h4>
+<p>The component of a PDT can be defined with expressions including the length
+type parameters.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t1</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="k">data</span><span class="p">(</span><span class="n">n</span><span class="o">*</span><span class="n">m</span><span class="p">)</span>
+<span class="k">end type</span>
+</pre></div>
+</div>
+<p>The idea would be to replace the expression with an extra length type parameter
+with a compiler generated name and a default value of <code class="docutils literal notranslate"><span class="pre">n*m</span></code>. All instance of the
+expression would then reference the new name.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t1</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t1_n_m_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="c">! hidden extra length type parameter</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="k">data</span><span class="p">(</span><span class="n">t1_n_m_</span><span class="p">)</span>
+<span class="k">end type</span>
+</pre></div>
+</div>
+<p>At any place where the a PDT is initialized, the lowering would make the
+evaluation and their values saved in the addendum and pointed to by the
+descriptor.</p>
+</section>
+<section id="allocate-deallocate-statements">
+<h4><code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code>/<code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> statements<a class="headerlink" href="#allocate-deallocate-statements" title="Link to this heading">¶</a></h4>
+<p>The allocation and deallocation of PDTs are delegated to the runtime.</p>
+<p>The corresponding function can be found in
+<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/allocatable.h</span></code> and
+<code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/pointer.h</span></code> for pointer allocation.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code></p>
+<p>The <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code> statement is lowered to a sequence of function calls as shown in
+the example below.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t1</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">c</span>
+<span class="k">end type</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+
+<span class="k">allocate</span><span class="p">(</span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="kd">::</span><span class="n">t</span><span class="p">)</span>
+<span class="k">allocate</span><span class="p">(</span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="kd">::</span><span class="n">p</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>// For allocatable
+fir.call @_FortranAAllocatableInitDerived(%desc, %type) : (!fir.box&lt;none&gt;, ) -&gt; ()
+// The AllocatableSetDerivedLength functions is called for each length type parameters.
+fir.call @_FortranAAllocatableSetDerivedLength(%desc, %pos, %value) : (!fir.box&lt;none&gt;, i32, i64) -&gt; ()
+fir.call @_FortranAAllocatableAllocate(%3) : (!fir.box&lt;none&gt;) -&gt; ()
+
+// For pointer
+fir.call @_FortranAPointerNullifyDerived(%desc, %type) : (!fir.box&lt;none&gt;, ) -&gt; ()
+// The PointerSetDerivedLength functions is called for each length type parameters.
+fir.call @_FortranAPointerSetDerivedLength(%desc, %pos, %value) : (!fir.box&lt;none&gt;, i32, i64) -&gt; ()
+fir.call @_FortranAPointerAllocate(%3) : (!fir.box&lt;none&gt;) -&gt; ()
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code></p>
+<p>The <code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> statement is lowered to a runtime call to
+<code class="docutils literal notranslate"><span class="pre">AllocatableDeallocate</span></code> and <code class="docutils literal notranslate"><span class="pre">PointerDeallocate</span></code> for pointers.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">deallocate</span><span class="p">(</span><span class="n">pdt1</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>// For allocatable
+%8 = fir.call @_FortranAAllocatableDeallocate(%desc1) : (!fir.box&lt;none&gt;) -&gt; (i32)
+
+// For pointer
+%8 = fir.call @_FortranAPointerDeallocate(%desc1) : (!fir.box&lt;none&gt;) -&gt; (i32)
+</pre></div>
+</div>
+</section>
+</section>
+<section id="nullify">
+<h3><code class="docutils literal notranslate"><span class="pre">NULLIFY</span></code><a class="headerlink" href="#nullify" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">NULLIFY</span></code> statement is lowered to a call to the corresponding runtime
+function <code class="docutils literal notranslate"><span class="pre">PointerNullifyDerived</span></code> in <code class="docutils literal notranslate"><span class="pre">flang/include/flang/Runtime/pointer.h</span></code>.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">NULLIFY</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>fir.call @_FortranAPointerNullifyDerived(%desc, %type) : (!fir.box&lt;none&gt;, !fir.tdesc) -&gt; ()
+</pre></div>
+</div>
+<section id="formatted-i-o">
+<h4>Formatted I/O<a class="headerlink" href="#formatted-i-o" title="Link to this heading">¶</a></h4>
+<p>The I/O runtime internals are described in this file:
+<code class="docutils literal notranslate"><span class="pre">flang/docs/IORuntimeInternals.md</span></code>.</p>
+<p>When an I/O statement with a derived-type is encountered in lowering, the
+derived-type is emboxed in a descriptor if it is not already and a call to the
+runtime library is issued with the descriptor (as shown in the example below).
+The function is <code class="docutils literal notranslate"><span class="pre">_FortranAioOutputDescriptor</span></code>. The call make a call to
+<code class="docutils literal notranslate"><span class="pre">FormattedDerivedTypeIO</span></code> in <code class="docutils literal notranslate"><span class="pre">flang/runtime/descriptor-io.h</span></code> for derived-type.
+This function will need to be updated to support the chosen solution for PDTs.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">(</span><span class="n">l</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span>
+<span class="k">end type</span>
+
+<span class="c">! ...</span>
+
+<span class="k">subroutine </span><span class="n">print_pdt</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">  </span><span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>
+<span class="k">end subroutine</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @_QMpdtPprint_pdt() {
+  %l = arith.constant = 10
+  %0 = fir.alloca !fir.type&lt;_QMpdtTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt; (%l : i32) {bindc_name = &quot;x&quot;, uniq_name = &quot;_QMpdt_initFlocalEx&quot;}
+  %1 = fir.embox %0 : (!fir.ref&lt;!fir.type&lt;_QMpdtTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;) (typeparams %l : i32) -&gt; !fir.box&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;2xi32&gt;}&gt;&gt;
+  %2 = fir.address_of(@_QQcl.2E2F6669725F7064745F6578616D706C652E66393000) : !fir.ref&lt;!fir.char&lt;1,22&gt;&gt;
+  %c8_i32 = arith.constant 8 : i32
+  %3 = fir.convert %1 : (!fir.box&lt;!fir.type&lt;_QMpdtTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;) -&gt; !fir.box&lt;none&gt;
+  %4 = fir.convert %2 : (!fir.ref&lt;!fir.char&lt;1,22&gt;&gt;) -&gt; !fir.ref&lt;i8&gt;
+  fir.call @_FortranAInitialize(%3, %4, %c8_i32) : (!fir.box&lt;none&gt;, !fir.ref&lt;i8&gt;, i32) -&gt; ()
+  %c-1_i32 = arith.constant -1 : i32
+  %6 = fir.address_of(@_QQcl.2E2F6669725F7064745F6578616D706C652E66393000) : !fir.ref&lt;!fir.char&lt;1,22&gt;&gt;
+  %7 = fir.convert %6 : (!fir.ref&lt;!fir.char&lt;1,22&gt;&gt;) -&gt; !fir.ref&lt;i8&gt;
+  %c10_i32 = arith.constant 10 : i32
+  %8 = fir.call @_FortranAioBeginExternalListOutput(%c-1_i32, %7, %c10_i32) : (i32, !fir.ref&lt;i8&gt;, i32) -&gt; !fir.ref&lt;i8&gt;
+  %9 = fir.embox %0 : (!fir.ref&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;) (typeparams %l : i32) -&gt; !fir.box&lt;!fir.type&lt;_QMpdtTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;
+  %10 = fir.convert %9 : (!fir.box&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;) -&gt; !fir.box&lt;none&gt;
+  %11 = fir.call @_FortranAioOutputDescriptor(%8, %10) : (!fir.ref&lt;i8&gt;, !fir.box&lt;none&gt;) -&gt; i1
+  %12 = fir.call @_FortranAioEndIoStatement(%8) : (!fir.ref&lt;i8&gt;) -&gt; i32
+  return
+}
+</pre></div>
+</div>
+</section>
+<section id="unformatted-i-o">
+<h4>Unformatted I/O<a class="headerlink" href="#unformatted-i-o" title="Link to this heading">¶</a></h4>
+<p>The entry point in the runtime for unformatted I/O is similar than the one for
+formatted I/O. A call to <code class="docutils literal notranslate"><span class="pre">_FortranAioOutputDescriptor</span></code> with the correct
+descriptor is also issued by the lowering. For unformatted I/O, the runtime is
+calling <code class="docutils literal notranslate"><span class="pre">UnformattedDescriptorIO</span></code> from <code class="docutils literal notranslate"><span class="pre">flang/runtime/descriptor-io.h</span></code>.
+This function will need to be updated to support the chosen solution for PDTs.</p>
+</section>
+<section id="default-component-initialization-of-local-variables">
+<h4>Default component initialization of local variables<a class="headerlink" href="#default-component-initialization-of-local-variables" title="Link to this heading">¶</a></h4>
+<p>Default initializers for components with length type parameters need to be
+processed as the derived type instance is created.
+The length parameters block must also be created and attached to the addendum.
+See <em>New f18addendum</em> section for more information.</p>
+</section>
+<section id="assignment">
+<h4>Assignment<a class="headerlink" href="#assignment" title="Link to this heading">¶</a></h4>
+<p>As mentioned in 10.2.1.2 (8), for an assignment, each length type parameter of
+the variable shall have the same value as the corresponding type parameter
+unless the lhs is allocatable.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">type </span><span class="n">t</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+<span class="k">end type</span>
+
+<span class="c">! ...</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">c</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(:)),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">d</span>
+<span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="c">! Legal assignment</span>
+<span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="c">! Illegal assignment because `c` does not have the same length type</span>
+<span class="w">      </span><span class="c">! parameter value than `b`.</span>
+<span class="n">d</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="c">! Legal because `d` is allocatable</span>
+</pre></div>
+</div>
+<p>A simple intrinsic assignment without allocatable or pointer follows the same
+path than the traditional derived-type (addressing of component is different)
+since the length type parameter values are identical and do not need to be
+copied or reallocated. The length type parameters values are retrieved when
+copying the data.</p>
+<p>Assignment of PDTs with allocatable or pointer components are done with the help
+of the runtime. A call to <code class="docutils literal notranslate"><span class="pre">_FortranAAssign</span></code> is done with the lhs and rhs
+descriptors. The length type parameters are available in the descriptors.</p>
+<p>For allocatable PDTs, if the rhs side has different length type parameters than
+the lhs, it is deallocated first and allocated with the rhs length type
+parameters information (F’2018 10.2.1.3(3)). There is code in the runtime to
+handle this already. It will need to be updated for the new f18addendum.</p>
+</section>
+<section id="finalization">
+<h4>Finalization<a class="headerlink" href="#finalization" title="Link to this heading">¶</a></h4>
+<p>A final subroutine is called for a PDT if the subroutine has the same kind type
+parameters and rank as the entity to be finalized. The final subroutine is
+called with the entity as the actual argument.
+If there is an elemental final subroutine whose dummy argument has the same kind
+type parameters as the entity to be finalized, or a final subroutine whose dummy
+argument is assumed-rank with the same kind type parameters as the entity to be
+finalized, the subroutine is called with the entity as the actual argument.
+Otherwise, no subroutine is called.</p>
+<p><strong>Example from the F2018 standard</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">m</span>
+
+<span class="w">  </span><span class="k">type </span><span class="n">t</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">kind</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">k</span>
+<span class="w">    </span><span class="kt">real</span><span class="p">(</span><span class="n">k</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">vector</span><span class="p">(:)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="nb">NULL</span><span class="p">()</span>
+<span class="w">  </span><span class="k">contains</span>
+<span class="k">    final</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">finalize_t1s</span><span class="p">,</span><span class="w"> </span><span class="n">finalize_t1v</span><span class="p">,</span><span class="w"> </span><span class="n">finalize_t2e</span>
+<span class="w">  </span><span class="k">end type</span>
+
+<span class="k">contains</span>
+
+<span class="k">  subroutine </span><span class="n">finalize_t1s</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="nb">kind</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)))</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">associated</span><span class="p">(</span><span class="n">x</span><span class="p">%</span><span class="n">vector</span><span class="p">))</span><span class="w"> </span><span class="k">deallocate</span><span class="p">(</span><span class="n">x</span><span class="p">%</span><span class="n">vector</span><span class="p">)</span>
+<span class="w">  </span><span class="k">END subroutine</span>
+
+<span class="k">  subroutine </span><span class="n">finalize_t1v</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="nb">kind</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)))</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">    </span><span class="k">do </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">lbound</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span><span class="w"> </span><span class="nb">ubound</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">associated</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="n">i</span><span class="p">)%</span><span class="n">vector</span><span class="p">))</span><span class="w"> </span><span class="k">deallocate</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="n">i</span><span class="p">)%</span><span class="n">vector</span><span class="p">)</span>
+<span class="w">    </span><span class="k">end do</span>
+<span class="k">  end subroutine</span>
+
+<span class="k">  elemental subroutine </span><span class="n">finalize_t2e</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="nb">kind</span><span class="p">(</span><span class="mf">0.0d0</span><span class="p">))),</span><span class="w"> </span><span class="k">intent</span><span class="p">(</span><span class="n">inout</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nb">associated</span><span class="p">(</span><span class="n">x</span><span class="p">%</span><span class="n">vector</span><span class="p">))</span><span class="w"> </span><span class="k">deallocate</span><span class="p">(</span><span class="n">x</span><span class="p">%</span><span class="n">vector</span><span class="p">)</span>
+<span class="w">  </span><span class="k">end subroutine</span>
+<span class="k">end module</span>
+
+<span class="k">subroutine </span><span class="n">example</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="k">use </span><span class="n">m</span>
+
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="nb">kind</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)))</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">(</span><span class="mi">10</span><span class="p">),</span><span class="w"> </span><span class="n">c</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="nb">kind</span><span class="p">(</span><span class="mf">0.0d0</span><span class="p">)))</span><span class="w"> </span><span class="n">d</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">n</span><span class="p">)</span>
+<span class="p">...</span>
+<span class="c">! Returning from this subroutine will effectively do</span>
+<span class="c">!    call finalize_t1s(a)</span>
+<span class="c">!    call finalize_t1v(b)</span>
+<span class="c">!    call finalize_t2e(d)</span>
+<span class="c">! No final subroutine will be called for variable C because the user</span>
+<span class="c">! omitted to define a suitable specific procedure for it.</span>
+<span class="k">end subroutine</span>
+</pre></div>
+</div>
+</section>
+<section id="type-parameter-inquiry">
+<h4>Type parameter inquiry<a class="headerlink" href="#type-parameter-inquiry" title="Link to this heading">¶</a></h4>
+<p>Type parameter inquiry is used to get the value of a type parameter in a PDT.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">t</span>
+<span class="k">type </span><span class="n">t1</span><span class="p">(</span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<span class="w">  </span><span class="kt">character</span><span class="p">(</span><span class="n">i</span><span class="o">*</span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">c</span>
+<span class="k">end type</span>
+<span class="k">end</span>
+
+<span class="k">program </span><span class="n">main</span>
+<span class="k">use </span><span class="n">t</span>
+<span class="k">type</span><span class="p">(</span><span class="n">t1</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">ti</span>
+<span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">ti</span><span class="p">%</span><span class="n">c</span><span class="p">%</span><span class="nb">len</span>
+<span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">ti</span><span class="p">%</span><span class="n">i</span>
+<span class="k">print</span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">ti</span><span class="p">%</span><span class="n">j</span>
+<span class="k">end</span>
+
+<span class="c">! Should print:</span>
+<span class="c">! 4</span>
+<span class="c">! 2</span>
+<span class="c">! 2</span>
+</pre></div>
+</div>
+<p>These values are present in the <code class="docutils literal notranslate"><span class="pre">f18Addendum</span></code> and can be retrieved from it with
+the correct index. If the length type parameter for a field is an expression,
+a compiler generated function is used to computed its value.
+The length type parameters are indexed in declaration order; i.e., 0 is the
+first length type parameter in the deepest base type.</p>
+</section>
+<section id="pdts-and-polymorphism">
+<h4>PDTs and polymorphism<a class="headerlink" href="#pdts-and-polymorphism" title="Link to this heading">¶</a></h4>
+<p>In some cases with polymorphic entities, it is necessary to copy the length
+type parameters from a descriptor to another. With the current design this is
+not possible since the descriptor cannot be reallocated and the addendum is
+allocated with a fixed number of length type parameters.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="c">! The example below illustrates a case where the number of length type</span>
+<span class="c">! parameters are different and need to be copied to an existing descriptor</span>
+<span class="c">! addendum.</span>
+<span class="k">module </span><span class="n">m1</span>
+<span class="k">type </span><span class="n">t1</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span>
+<span class="k">end type</span>
+
+<span class="c">! This type could be defined in another compilation unit.</span>
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="n">t1</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t2</span><span class="p">(</span><span class="n">l1</span><span class="p">,</span><span class="w"> </span><span class="n">l2</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l1</span><span class="p">,</span><span class="w"> </span><span class="n">l2</span>
+<span class="k">end type</span>
+
+<span class="k">contains</span>
+
+<span class="k">subroutine </span><span class="n">reallocate</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">  </span><span class="k">allocate</span><span class="p">(</span><span class="n">t2</span><span class="p">(</span><span class="n">l1</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">l2</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">)</span>
+<span class="k">end subroutine</span>
+
+<span class="k">end module</span>
+
+<span class="k">program </span><span class="n">p</span>
+<span class="w">  </span><span class="k">use </span><span class="n">m1</span>
+
+<span class="w">  </span><span class="k">class</span><span class="p">(</span><span class="n">t1</span><span class="p">),</span><span class="w"> </span><span class="k">allocatable</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+
+<span class="w">  </span><span class="k">call </span><span class="n">reallocate</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">  </span><span class="c">! The new length type parameters need to be propagated at this point.</span>
+
+<span class="w">  </span><span class="c">! rest of code using `x`</span>
+<span class="k">end program</span>
+</pre></div>
+</div>
+<p>The proposed solution is to add indirection in the <code class="docutils literal notranslate"><span class="pre">f18Addendum</span></code> and store the
+length type parameters in a separate block instead of directly in the addendum.
+At the moment the storage for the length type parameters is allocated once as
+a <code class="docutils literal notranslate"><span class="pre">std::int64_t</span></code> array.</p>
+<p><strong>New f18Addendum</strong></p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="o">*</span><span class="n">derivedType_</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">lenParamValues_</span><span class="p">}</span>
+</pre></div>
+</div>
+<p>Adding the indirection in the descriptor’s addendum requires to manage the
+lifetime of the block holding the length type parameter values.</p>
+<p>Here are some thoughts of how to manage it:</p>
+<ul class="simple">
+<li><p>For allocatables, the space for the LEN parameters can be allocated as part of
+the same malloc as the payload data.</p></li>
+<li><p>For automatics, same thing, if we implement automatics as allocatables.</p></li>
+<li><p>For monomorphic local variables, the LEN parameters would be in a little array
+on the stack. Or we could treat any variable or component with LEN parameters
+as being automatic even when it’s monomorphic.</p></li>
+<li><p>For pointers and dummy arguments, we can just copy the pointer in the addendum
+from the target to the pointer or dummy descriptor.</p></li>
+<li><p>For dynamically allocated descriptors, the LEN parameter values could just
+follow the addendum in the same malloc.</p></li>
+</ul>
+<p>The addendum of an array sections/sub-objects would point to the same block than
+the base object.</p>
+<p>In some special cases, a descriptor needs to be passed between the caller and
+the callee. This includes array of PDTs and derived-type with PDT components.
+The example describe one of the corner case where the length type parameter
+would be lost if the descriptor is not passed.</p>
+</section>
+<section id="example-that-require-a-descriptor">
+<h4>Example that require a descriptor<a class="headerlink" href="#example-that-require-a-descriptor" title="Link to this heading">¶</a></h4>
+<p>Because of the length type parameters store in the addendum, it is required in
+some case to pass the PDT with a descriptor to preserve the length type
+parameters information. The example below illustrates such a case.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">module </span><span class="n">m</span>
+<span class="k">type </span><span class="n">t</span>
+<span class="w"> </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span>
+<span class="k">end type</span>
+
+<span class="k">type</span><span class="p">,</span><span class="w"> </span><span class="k">extends</span><span class="p">(</span><span class="n">t</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">t2</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">l</span>
+<span class="w">  </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+<span class="k">end type</span>
+
+<span class="k">type </span><span class="n">base</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">t2</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pdt_component</span>
+<span class="k">end type</span>
+
+<span class="k">class</span><span class="p">(</span><span class="n">t</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span><span class="p">(:)</span>
+
+<span class="k">contains</span>
+
+<span class="k">subroutine </span><span class="n">foo</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">n</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">base</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="w">  </span><span class="c">! Without descriptor, the actual argument is a zero-sized array. The length</span>
+<span class="w">  </span><span class="c">! type parameters of `x(n)%pdt_component` are not propagated from the caller.</span>
+
+<span class="w">  </span><span class="c">! A descriptor local to this function is created to pass the array section</span>
+<span class="w">  </span><span class="c">! in bar.</span>
+<span class="w">  </span><span class="k">call </span><span class="n">bar</span><span class="p">(</span><span class="n">x</span><span class="p">%</span><span class="n">pdt_component</span><span class="p">)</span>
+<span class="k">end subroutine</span>
+
+<span class="k">subroutine </span><span class="n">bar</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">t2</span><span class="p">(</span><span class="o">*</span><span class="p">)),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(:)</span>
+<span class="w">  </span><span class="n">p</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="k">end subroutine</span>
+
+<span class="k">subroutine </span><span class="n">test</span><span class="p">()</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">base</span><span class="p">),</span><span class="w"> </span><span class="k">target</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo</span><span class="p">(</span><span class="n">x</span><span class="p">(</span><span class="mi">1</span><span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="mi">1</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">  </span><span class="k">select type</span><span class="w"> </span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">   </span><span class="k">type is</span><span class="w"> </span><span class="p">(</span><span class="n">t2</span><span class="p">(</span><span class="o">*</span><span class="p">))</span>
+<span class="w">    </span><span class="c">! This type parameters of x(1:60:3) in foo must still live here</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">%</span><span class="n">l</span>
+<span class="w">   </span><span class="k">class </span><span class="n">default</span>
+<span class="w">     </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;something else&quot;</span>
+<span class="w">  </span><span class="k">end select</span>
+<span class="k">end subroutine</span>
+<span class="k">end module</span>
+
+<span class="k">  use </span><span class="n">m</span>
+<span class="w">  </span><span class="k">call </span><span class="n">test</span><span class="p">()</span>
+<span class="k">end</span>
+</pre></div>
+</div>
+<p>Because of the use case described above, PDTs, array of PDTs or derived-type
+with PDT components will be passed by descriptor.</p>
+</section>
+</section>
+<section id="fir-operations-with-length-type-parameters">
+<h3>FIR operations with length type parameters<a class="headerlink" href="#fir-operations-with-length-type-parameters" title="Link to this heading">¶</a></h3>
+<p>Couple of operations have length type parameters as operands already in their
+design. For some operations, length type parameters are likely needed with
+the two proposed solution. Some other operation like the array operations, the
+operands are not needed when dealing with a descriptor since the length type
+parameters are in it.</p>
+<p>The operations will be updated if needed during the implementation of the
+chosen solution.</p>
+<section id="fir-alloca">
+<h4><code class="docutils literal notranslate"><span class="pre">fir.alloca</span></code><a class="headerlink" href="#fir-alloca" title="Link to this heading">¶</a></h4>
+<p>This primitive operation is used to allocate an object on the stack. When
+allocating a PDT, the length type parameters are passed to the
+operation so its size can be computed accordingly.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%i = arith.constant 10 : i32
+%0 = fir.alloca !fir.type&lt;_QMmod1Tpdt{i:i32,data:!fir.array&lt;?xf32&gt;}&gt; (%i : i32)
+// %i is the ssa value of the length type parameter
+</pre></div>
+</div>
+</section>
+<section id="fir-allocmem">
+<h4><code class="docutils literal notranslate"><span class="pre">fir.allocmem</span></code><a class="headerlink" href="#fir-allocmem" title="Link to this heading">¶</a></h4>
+<p>This operation is used to create a heap memory reference suitable for storing a
+value of the given type. When creating a PDT, the length type parameters are
+passed so the size can be computed accordingly.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%i = arith.constant 10 : i32
+%0 = fir.alloca !fir.type&lt;_QMmod1Tpdt{i:i32,data:!fir.array&lt;?xf32&gt;}&gt; (%i : i32)
+// ...
+fir.freemem %0 : !fir.type&lt;_QMmod1Tpdt{i:i32,data:!fir.array&lt;?xf32&gt;}&gt;
+</pre></div>
+</div>
+</section>
+<section id="fir-embox">
+<h4><code class="docutils literal notranslate"><span class="pre">fir.embox</span></code><a class="headerlink" href="#fir-embox" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">fir.embox</span></code> operation create a boxed reference value. In the case of PDTs
+the length type parameters can be passed as well to the operation.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">local</span><span class="p">()</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">t</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="c">! simple local PDT</span>
+<span class="w">  </span><span class="c">! ...</span>
+<span class="k">end subroutine</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @_QMpdt_initPlocal() {
+  %c2_i32 = arith.constant 2 : i32
+  %0 = fir.alloca !fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt; (%c2 : i32)
+       {bindc_name = &quot;x&quot;, uniq_name = &quot;_QMpdt_initFlocalEx&quot;}
+  // The fir.embox operation is responsible to place the provided length type
+  // parameters in the descriptor addendum so they are available to the runtime
+  // call later.
+  %1 = fir.embox %0 : (!fir.ref&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;) (typeparams %c2 : i32)
+       -&gt; !fir.box&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;
+  %2 = fir.address_of(@_QQcl.2E2F6669725F7064745F6578616D706C652E66393000) : !fir.ref&lt;!fir.char&lt;1,22&gt;&gt;
+  %c8_i32 = arith.constant 8 : i32
+  %3 = fir.convert %1 : (!fir.box&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;) -&gt; !fir.box&lt;none&gt;
+  %4 = fir.convert %2 : (!fir.ref&lt;!fir.char&lt;1,22&gt;&gt;) -&gt; !fir.ref&lt;i8&gt;
+  fir.call @_FortranAInitialize(%3, %4, %c8_i32) : (!fir.box&lt;none&gt;, !fir.ref&lt;i8&gt;, i32) -&gt; ()
+  return
+}
+</pre></div>
+</div>
+</section>
+<section id="fir-field-index">
+<h4><code class="docutils literal notranslate"><span class="pre">fir.field_index</span></code><a class="headerlink" href="#fir-field-index" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">fir.field_index</span></code> operation is used to generate a field offset value from
+a field identifier in a derived-type. The operation takes length type parameter
+values with a PDT so it can compute a correct offset.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>%l = arith.constant 10 : i32
+%1 = fir.field_index i, !fir.type&lt;_QMpdt_initTt{l:i32,i:i32}&gt; (%l : i32)
+%2 = fir.coordinate_of %ref, %1 : (!fir.type&lt;_QMpdt_initTt{l:i32,i:i32}&gt;, !fir.field) -&gt; !fir.ref&lt;i32&gt;
+%3 = fir.load %2 : !fir.ref&lt;i32&gt;
+return %3
+</pre></div>
+</div>
+</section>
+<section id="fir-len-param-index">
+<h4><code class="docutils literal notranslate"><span class="pre">fir.len_param_index</span></code><a class="headerlink" href="#fir-len-param-index" title="Link to this heading">¶</a></h4>
+<p>This operation is used to get the length type parameter offset in from a PDT.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @_QPpdt_len_value(%arg0: !fir.box&lt;!fir.type&lt;t1{l:i32,!fir.array&lt;?xi32&gt;}&gt;&gt;) -&gt; i32 {
+  %0 = fir.len_param_index l, !fir.box&lt;!fir.type&lt;t1{l:i32,!fir.array&lt;?xi32&gt;}&gt;&gt;
+  %1 = fir.coordinate_of %arg0, %0 : (!fir.box&lt;!fir.type&lt;t1{l:i32,!fir.array&lt;?xi32&gt;}&gt;&gt;, !fir.len) -&gt; !fir.ref&lt;i32&gt;
+  %2 = fir.load %1 : !fir.ref&lt;i32&gt;
+  return %2 : i32
+}
+</pre></div>
+</div>
+</section>
+<section id="fir-save-result">
+<h4><code class="docutils literal notranslate"><span class="pre">fir.save_result</span></code><a class="headerlink" href="#fir-save-result" title="Link to this heading">¶</a></h4>
+<p>Save the result of a function returning an array, box, or record type value into
+a memory location given the shape and LEN parameters of the result. Length type
+parameters is passed if the PDT is not boxed.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @return_pdt(%buffer: !fir.ref&lt;!fir.type&lt;t2(l1:i32,l2:i32){x:f32}&gt;&gt;) {
+  %l1 = arith.constant 3 : i32
+  %l2 = arith.constant 5 : i32
+  %res = fir.call @foo() : () -&gt; !fir.type&lt;t2(l1:i32,l2:i32){x:f32}&gt;
+  fir.save_result %res to %buffer typeparams %l1, %l2 : !fir.type&lt;t2(l1:i32,l2:i32){x:f32}&gt;, !fir.ref&lt;!fir.type&lt;t2(l1:i32,l2:i32){x:f32}&gt;&gt;, i32, i32
+  return
+}
+</pre></div>
+</div>
+<section id="fir-array-operations">
+<h5><code class="docutils literal notranslate"><span class="pre">fir.array_*</span></code> operations<a class="headerlink" href="#fir-array-operations" title="Link to this heading">¶</a></h5>
+<p>The current design of the different <code class="docutils literal notranslate"><span class="pre">fir.array_*</span></code> operations include length type
+parameters operands. This is designed to use PDT without descriptor directly in
+FIR.</p>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>// Operation used with a boxed PDT does not need the length type parameters as
+// they are directly retrieved from the box.
+%0 = fir.array_coor %boxed_pdt, %i, %j  (fir.box&lt;fir.array&lt;?x?xfir.type&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;&gt;&gt;, index, index) -&gt; !fir.ref&lt;fir.type&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;&gt;
+
+// In case the PDT would not be boxed, the length type parameters are needed to
+// compute the correct addressing.
+%0 = fir.array_coor %pdt_base, %i, %j typeparams %l  (fir.ref&lt;fir.array&lt;?x?xfir.type&lt;!fir.type&lt;_QMpdt_initTt{l:i32,i:!fir.array&lt;?xi32&gt;}&gt;&gt;&gt;&gt;, index, index, index) -&gt; !fir.ref&lt;fir.type&lt;PDT&gt;&gt;
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+<hr class="docutils" />
+<section id="implementation-choice">
+<h3>Implementation choice<a class="headerlink" href="#implementation-choice" title="Link to this heading">¶</a></h3>
+<p>While both solutions have pros and cons, we want to implement the outlined
+solution.</p>
+<ul class="simple">
+<li><p>The runtime was implemented with this solution in mind.</p></li>
+<li><p>The size of the descriptor does not need to be computed at runtime.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Lowering part is tested with LIT tests in tree</p></li>
+<li><p>PDTs involved a lot of runtime information so executable
+tests will be useful for full testing.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="current-todos">
+<h2>Current TODOs<a class="headerlink" href="#current-todos" title="Link to this heading">¶</a></h2>
+<p>Current list of TODOs in lowering:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/Allocatable.cpp:461</span></code> not yet implement: derived type length parameters in allocate</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/Allocatable.cpp:645</span></code> not yet implement: deferred length type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/Bridge.cpp:454</span></code> not yet implemented: get length parameters from derived type BoxValue</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:341</span></code> not yet implemented: copy derived type with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:993</span></code> not yet implemented: component with length parameters in structure constructor</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:1063</span></code> not yet implemented: component with length parameters in structure constructor</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:1146</span></code> not yet implemented: type parameter inquiry</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:2424</span></code> not yet implemented: creating temporary for derived type with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:3742</span></code> not yet implemented: gather rhs LEN parameters in assignment to allocatable</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:4725</span></code> not yet implemented: derived type array expression temp with LEN parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:6400</span></code> not yet implemented: PDT size</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:6419</span></code> not yet implemented: PDT offset</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:6679</span></code> not yet implemented: array expr type parameter inquiry</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:7135</span></code> not yet implemented: need to adjust type parameter(s) to reflect the final component</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertType.cpp:334</span></code> not yet implemented: parameterized derived types</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertType.cpp:370</span></code> not yet implemented: derived type length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertVariable.cpp:169</span></code> not yet implemented: initial-data-target with derived type length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertVariable.cpp:197</span></code> not yet implemented: initial-data-target with derived type length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/VectorSubscripts.cpp:121</span></code> not yet implemented: threading length parameters in field index op</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/BoxValue.cpp:60</span></code> not yet implemented: box value is missing type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/BoxValue.cpp:67</span></code> not yet implemented: mutable box value is missing type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:688</span></code> not yet implemented: read fir.box with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:746</span></code> not yet implemented: generate code to get LEN type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:779</span></code> not yet implemented: derived type with type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:905</span></code> not yet implemented: allocatable and pointer components non deferred length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:917</span></code> not yet implemented: array component shape depending on length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:924</span></code> not yet implemented: get character component length from length type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:934</span></code> not yet implemented: lower component ref that is a derived type with length parameter</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/FIRBuilder.cpp:956</span></code> not yet implemented: get length parameters from derived type BoxValue</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/MutableBox.cpp:70</span></code> not yet implemented: updating mutablebox of derived type with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/MutableBox.cpp:168</span></code> not yet implemented: read allocatable or pointer derived type LEN parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/MutableBox.cpp:310</span></code> not yet implemented: update allocatable derived type length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/MutableBox.cpp:505</span></code> not yet implemented: pointer assignment to derived with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/MutableBox.cpp:597</span></code> not yet implemented: pointer assignment to derived with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Builder/MutableBox.cpp:740</span></code> not yet implemented: reallocation of derived type entities with length parameters</p></li>
+</ul>
+<p>Current list of TODOs in code generation:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:1034</span></code> not yet implemented: fir.allocmem codegen of derived type with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:1581</span></code> not yet implemented: generate call to calculate size of PDT</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:1708</span></code> not yet implemented: fir.embox codegen of derived with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:1749</span></code> not yet implemented: reboxing descriptor of derived type with length parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:2229</span></code> not yet implemented: derived type with type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:2256</span></code> not yet implemented: compute size of derived type with type parameters</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/TypeConverter.h:257</span></code> not yet implemented: extended descriptor derived with length parameters</p></li>
+</ul>
+<p>Current list of TODOs in optimizations:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/Transforms/ArrayValueCopy.cpp:1007</span></code> not yet implemented: unhandled dynamic type parameters</p></li>
+</ul>
+<hr class="docutils" />
+<p>Resources:</p>
+<ul class="simple">
+<li><p>[0] Fortran standard</p></li>
+<li><p>[1] https://en.wikipedia.org/wiki/Dependent_type</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ParallelMultiImageFortranRuntime.html">Multi-Image Parallel Fortran Runtime</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ParserCombinators.html">Parser Combinators</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Jan 16, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
