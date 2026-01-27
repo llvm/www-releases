@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - performance-unnecessary-value-param &#8212; Extra Clang Tools 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=106f770c"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="portability-avoid-pragma-once" href="../portability/avoid-pragma-once.html" />
+    <link rel="prev" title="performance-unnecessary-copy-initialization" href="unnecessary-copy-initialization.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 22.1.0-rc2 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - performance-unnecessary-value-param</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="unnecessary-copy-initialization.html">performance-unnecessary-copy-initialization</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="../portability/avoid-pragma-once.html">portability-avoid-pragma-once</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="performance-unnecessary-value-param">
+<h1>performance-unnecessary-value-param<a class="headerlink" href="#performance-unnecessary-value-param" title="Link to this heading">¶</a></h1>
+<p>Flags value parameter declarations of expensive to copy types that are copied
+for each invocation but it would suffice to pass them by const reference.</p>
+<p>The check is only applied to parameters of types that are expensive to copy
+which means they are not trivially copyable or have a non-trivial copy
+constructor or destructor.</p>
+<p>To ensure that it is safe to replace the value parameter with a const reference
+the following heuristic is employed:</p>
+<ol class="arabic simple">
+<li><p>the parameter is const qualified;</p></li>
+<li><p>the parameter is not const, but only const methods or operators are invoked
+on it, or it is used as const reference or value argument in constructors or
+function calls.</p></li>
+</ol>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">string</span><span class="w"> </span><span class="n">Value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// The warning will suggest making Value a reference.</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="n">ExpensiveToCopy</span><span class="w"> </span><span class="n">Value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// The warning will suggest making Value a const reference.</span>
+<span class="w">  </span><span class="n">Value</span><span class="p">.</span><span class="n">ConstMethd</span><span class="p">();</span>
+<span class="w">  </span><span class="n">ExpensiveToCopy</span><span class="w"> </span><span class="n">Copy</span><span class="p">(</span><span class="n">Value</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If the parameter is not const, only copied or assigned once and has a
+non-trivial move-constructor or move-assignment operator respectively the check
+will suggest to move it.</p>
+<p>Example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">setValue</span><span class="p">(</span><span class="n">string</span><span class="w"> </span><span class="n">Value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Field</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Value</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Will become:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;utility&gt;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">setValue</span><span class="p">(</span><span class="n">string</span><span class="w"> </span><span class="n">Value</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Field</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">Value</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Because the fix-it needs to change the signature of the function, it may break
+builds if the function is used in multiple translation units or some codes
+depends on function signatures.</p>
+<section id="options">
+<h2>Options<a class="headerlink" href="#options" title="Link to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-IncludeStyle">
+<span class="sig-name descname"><span class="pre">IncludeStyle</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-IncludeStyle" title="Link to this definition">¶</a></dt>
+<dd><p>A string specifying which include-style is used, <cite>llvm</cite> or <cite>google</cite>. Default
+is <cite>llvm</cite>.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-AllowedTypes">
+<span class="sig-name descname"><span class="pre">AllowedTypes</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-AllowedTypes" title="Link to this definition">¶</a></dt>
+<dd><p>A semicolon-separated list of names of types allowed to be passed by value.
+Regular expressions are accepted, e.g. <code class="docutils literal notranslate"><span class="pre">[Rr]ef(erence)?$</span></code> matches every
+type with suffix <code class="docutils literal notranslate"><span class="pre">Ref</span></code>, <code class="docutils literal notranslate"><span class="pre">ref</span></code>, <code class="docutils literal notranslate"><span class="pre">Reference</span></code> and <code class="docutils literal notranslate"><span class="pre">reference</span></code>. The
+default is empty. If a name in the list contains the sequence <cite>::</cite>, it is
+matched against the qualified type name (i.e. <code class="docutils literal notranslate"><span class="pre">namespace::Type</span></code>),
+otherwise it is matched against only the type name (i.e. <code class="docutils literal notranslate"><span class="pre">Type</span></code>).</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-IgnoreCoroutines">
+<span class="sig-name descname"><span class="pre">IgnoreCoroutines</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-IgnoreCoroutines" title="Link to this definition">¶</a></dt>
+<dd><p>A boolean specifying whether the check should suggest passing parameters by
+reference in coroutines. Passing parameters by reference in coroutines may
+not be safe, please see <a class="reference internal" href="../cppcoreguidelines/avoid-reference-coroutine-parameters.html"><span class="doc">cppcoreguidelines-avoid-reference-coroutine-parameters</span></a>
+for more information. Default is <cite>true</cite>.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="unnecessary-copy-initialization.html">performance-unnecessary-copy-initialization</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="../portability/avoid-pragma-once.html">portability-avoid-pragma-once</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

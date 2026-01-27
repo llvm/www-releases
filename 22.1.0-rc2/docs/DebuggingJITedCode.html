@@ -1,0 +1,299 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debugging JIT-ed Code &#8212; LLVM 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=106f770c"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="User Guide for the DirectX Target" href="DirectXUsage.html" />
+    <link rel="prev" title="LLVM Cycle Terminology" href="CycleTerminology.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="DirectXUsage.html" title="User Guide for the DirectX Target"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="CycleTerminology.html" title="LLVM Cycle Terminology"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debugging JIT-ed Code</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/DebuggingJITedCode.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="debugging-jit-ed-code">
+<h1>Debugging JIT-ed Code<a class="headerlink" href="#debugging-jit-ed-code" title="Link to this heading">¶</a></h1>
+<section id="background">
+<h2>Background<a class="headerlink" href="#background" title="Link to this heading">¶</a></h2>
+<p>Without special runtime support, debugging dynamically generated code can be
+quite painful.  Debuggers generally read debug information from object files on
+disk, but for JITed code there is no such file to look for.</p>
+<p>In order to hand over the necessary debug info, <a class="reference external" href="https://sourceware.org/gdb/onlinedocs/gdb/JIT-Interface.html">GDB established an
+interface</a>
+for registering JITed code with debuggers. LLDB implements it in the
+JITLoaderGDB plugin.  On the JIT side, LLVM MCJIT does implement the interface
+for ELF object files.</p>
+<p>At a high level, whenever MCJIT generates new machine code, it does so in an
+in-memory object file that contains the debug information in DWARF format.
+MCJIT then adds this in-memory object file to a global list of dynamically
+generated object files and calls a special function
+<code class="docutils literal notranslate"><span class="pre">__jit_debug_register_code</span></code> that the debugger knows about. When the debugger
+attaches to a process, it puts a breakpoint in this function and associates a
+special handler with it.  Once MCJIT calls the registration function, the
+debugger catches the breakpoint signal, loads the new object file from the
+inferior’s memory and resumes execution.  This way it can obtain debug
+information for pure in-memory object files.</p>
+</section>
+<section id="gdb-version">
+<h2>GDB Version<a class="headerlink" href="#gdb-version" title="Link to this heading">¶</a></h2>
+<p>In order to debug code JIT-ed by LLVM, you need GDB 7.0 or newer, which is
+available on most modern distributions of Linux.  The version of GDB that
+Apple ships with Xcode has been frozen at 6.3 for a while.</p>
+</section>
+<section id="lldb-version">
+<h2>LLDB Version<a class="headerlink" href="#lldb-version" title="Link to this heading">¶</a></h2>
+<p>Due to a regression in release 6.0, LLDB didn’t support JITed code debugging for
+a while.  The bug was fixed in mainline recently, so that debugging JITed ELF
+objects should be possible again from the upcoming release 12.0 on. On macOS the
+feature must be enabled explicitly using the <code class="docutils literal notranslate"><span class="pre">plugin.jit-loader.gdb.enable</span></code>
+setting.</p>
+</section>
+<section id="debugging-mcjit-ed-code">
+<h2>Debugging MCJIT-ed code<a class="headerlink" href="#debugging-mcjit-ed-code" title="Link to this heading">¶</a></h2>
+<p>The emerging MCJIT component of LLVM allows full debugging of JIT-ed code with
+GDB.  This is due to MCJIT’s ability to use the MC emitter to provide full
+DWARF debugging information to GDB.</p>
+<p>Note that lli has to be passed the <code class="docutils literal notranslate"><span class="pre">--jit-kind=mcjit</span></code> flag to JIT the code
+with MCJIT instead of the newer ORC JIT.</p>
+<section id="example">
+<h3>Example<a class="headerlink" href="#example" title="Link to this heading">¶</a></h3>
+<p>Consider the following C code (with line numbers added to make the example
+easier to follow):</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="mi">1</span><span class="w">   </span><span class="kt">int</span><span class="w"> </span><span class="n">compute_factorial</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>
+<span class="mi">2</span><span class="w">   </span><span class="p">{</span>
+<span class="mi">3</span><span class="w">       </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">n</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="mi">4</span><span class="w">           </span><span class="k">return</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="mi">5</span>
+<span class="mi">6</span><span class="w">       </span><span class="kt">int</span><span class="w"> </span><span class="n">f</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span>
+<span class="mi">7</span><span class="w">       </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="o">--</span><span class="n">n</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="mi">8</span><span class="w">           </span><span class="n">f</span><span class="w"> </span><span class="o">*=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span>
+<span class="mi">9</span><span class="w">       </span><span class="k">return</span><span class="w"> </span><span class="n">f</span><span class="p">;</span>
+<span class="mi">10</span><span class="w">  </span><span class="p">}</span>
+<span class="mi">11</span>
+<span class="mi">12</span>
+<span class="mi">13</span><span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="o">**</span><span class="w"> </span><span class="n">argv</span><span class="p">)</span>
+<span class="mi">14</span><span class="w">  </span><span class="p">{</span>
+<span class="mi">15</span><span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">argc</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span>
+<span class="mi">16</span><span class="w">          </span><span class="k">return</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="mi">17</span><span class="w">      </span><span class="kt">char</span><span class="w"> </span><span class="n">firstletter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="mi">0</span><span class="p">];</span>
+<span class="mi">18</span><span class="w">      </span><span class="kt">int</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">compute_factorial</span><span class="p">(</span><span class="n">firstletter</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="sc">&#39;0&#39;</span><span class="p">);</span>
+<span class="mi">19</span>
+<span class="mi">20</span><span class="w">      </span><span class="c1">// Returned result is clipped at 255...</span>
+<span class="mi">21</span><span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="mi">22</span><span class="w">  </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>Here is a sample command line session that shows how to build and run this
+code via <code class="docutils literal notranslate"><span class="pre">lli</span></code> inside LLDB:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>&gt;<span class="w"> </span><span class="nb">export</span><span class="w"> </span><span class="nv">BINPATH</span><span class="o">=</span>/workspaces/llvm-project/build/bin
+&gt;<span class="w"> </span><span class="nv">$BINPATH</span>/clang<span class="w"> </span>-g<span class="w"> </span>-S<span class="w"> </span>-emit-llvm<span class="w"> </span>--target<span class="o">=</span>x86_64-unknown-unknown-elf<span class="w"> </span>showdebug.c
+&gt;<span class="w"> </span>lldb<span class="w"> </span><span class="nv">$BINPATH</span>/lli
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>target<span class="w"> </span>create<span class="w"> </span><span class="s2">&quot;/workspaces/llvm-project/build/bin/lli&quot;</span>
+Current<span class="w"> </span>executable<span class="w"> </span><span class="nb">set</span><span class="w"> </span>to<span class="w"> </span><span class="s1">&#39;/workspaces/llvm-project/build/bin/lli&#39;</span><span class="w"> </span><span class="o">(</span>x86_64<span class="o">)</span>.
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>settings<span class="w"> </span><span class="nb">set</span><span class="w"> </span>plugin.jit-loader.gdb.enable<span class="w"> </span>on
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>b<span class="w"> </span>compute_factorial
+Breakpoint<span class="w"> </span><span class="m">1</span>:<span class="w"> </span>no<span class="w"> </span>locations<span class="w"> </span><span class="o">(</span>pending<span class="o">)</span>.
+WARNING:<span class="w">  </span>Unable<span class="w"> </span>to<span class="w"> </span>resolve<span class="w"> </span>breakpoint<span class="w"> </span>to<span class="w"> </span>any<span class="w"> </span>actual<span class="w"> </span>locations.
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>run<span class="w"> </span>--jit-kind<span class="o">=</span>mcjit<span class="w"> </span>showdebug.ll<span class="w"> </span><span class="m">5</span>
+<span class="m">1</span><span class="w"> </span>location<span class="w"> </span>added<span class="w"> </span>to<span class="w"> </span>breakpoint<span class="w"> </span><span class="m">1</span>
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>stopped
+*<span class="w"> </span>thread<span class="w"> </span><span class="c1">#1, name = &#39;lli&#39;, stop reason = breakpoint 1.1</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#0: 0x00007ffff7fd0007 JIT(0x45c2cb0)`compute_factorial(n=5) at showdebug.c:3:11</span>
+<span class="w">   </span><span class="m">1</span><span class="w">    </span>int<span class="w"> </span>compute_factorial<span class="o">(</span>int<span class="w"> </span>n<span class="o">)</span>
+<span class="w">   </span><span class="m">2</span><span class="w">    </span><span class="o">{</span>
+-&gt;<span class="w"> </span><span class="m">3</span><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="o">(</span>n<span class="w"> </span>&lt;<span class="o">=</span><span class="w"> </span><span class="m">1</span><span class="o">)</span>
+<span class="w">   </span><span class="m">4</span><span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="m">1</span><span class="p">;</span>
+<span class="w">   </span><span class="m">5</span><span class="w">        </span>int<span class="w"> </span><span class="nv">f</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>n<span class="p">;</span>
+<span class="w">   </span><span class="m">6</span><span class="w">        </span><span class="k">while</span><span class="w"> </span><span class="o">(</span>--n<span class="w"> </span>&gt;<span class="w"> </span><span class="m">1</span><span class="o">)</span>
+<span class="w">   </span><span class="m">7</span><span class="w">            </span>f<span class="w"> </span>*<span class="o">=</span><span class="w"> </span>n<span class="p">;</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>n
+<span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">5</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>b<span class="w"> </span>showdebug.c:9
+Breakpoint<span class="w"> </span><span class="m">2</span>:<span class="w"> </span><span class="nv">where</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>JIT<span class="o">(</span>0x45c2cb0<span class="o">)</span><span class="sb">`</span>compute_factorial<span class="w"> </span>+<span class="w"> </span><span class="m">60</span><span class="w"> </span>at<span class="w"> </span>showdebug.c:9:1,<span class="w"> </span><span class="nv">address</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>0x00007ffff7fd003c
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>c
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>resuming
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>stopped
+*<span class="w"> </span>thread<span class="w"> </span><span class="c1">#1, name = &#39;lli&#39;, stop reason = breakpoint 2.1</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#0: 0x00007ffff7fd003c JIT(0x45c2cb0)`compute_factorial(n=1) at showdebug.c:9:1</span>
+<span class="w">   </span><span class="m">6</span><span class="w">        </span><span class="k">while</span><span class="w"> </span><span class="o">(</span>--n<span class="w"> </span>&gt;<span class="w"> </span><span class="m">1</span><span class="o">)</span>
+<span class="w">   </span><span class="m">7</span><span class="w">            </span>f<span class="w"> </span>*<span class="o">=</span><span class="w"> </span>n<span class="p">;</span>
+<span class="w">   </span><span class="m">8</span><span class="w">        </span><span class="k">return</span><span class="w"> </span>f<span class="p">;</span>
+-&gt;<span class="w"> </span><span class="m">9</span><span class="w">    </span><span class="o">}</span>
+<span class="w">   </span><span class="m">10</span>
+<span class="w">   </span><span class="m">11</span><span class="w">   </span>int<span class="w"> </span>main<span class="o">(</span>int<span class="w"> </span>argc,<span class="w"> </span>char**<span class="w"> </span>argv<span class="o">)</span>
+<span class="w">   </span><span class="m">12</span><span class="w">   </span><span class="o">{</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>f
+<span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">120</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>bt
+*<span class="w"> </span>thread<span class="w"> </span><span class="c1">#1, name = &#39;lli&#39;, stop reason = breakpoint 2.1</span>
+*<span class="w"> </span>frame<span class="w"> </span><span class="c1">#0: 0x00007ffff7fd003c JIT(0x45c2cb0)`compute_factorial(n=1) at showdebug.c:9:1</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#1: 0x00007ffff7fd0095 JIT(0x45c2cb0)`main(argc=2, argv=0x00000000046122f0) at showdebug.c:16:18</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#2: 0x0000000002a8306e lli`llvm::MCJIT::runFunction(this=0x000000000458ed10, F=0x0000000004589ff8, ArgValues=ArrayRef&lt;llvm::GenericValue&gt; @ 0x00007fffffffc798) at MCJIT.cpp:554:31</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#3: 0x00000000029bdb45 lli`llvm::ExecutionEngine::runFunctionAsMain(this=0x000000000458ed10, Fn=0x0000000004589ff8, argv=size=0, envp=0x00007fffffffe140) at ExecutionEngine.cpp:467:10</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#4: 0x0000000001f2fc2f lli`main(argc=4, argv=0x00007fffffffe118, envp=0x00007fffffffe140) at lli.cpp:643:18</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#5: 0x00007ffff788c09b libc.so.6`__libc_start_main(main=(lli`main at lli.cpp:387), argc=4, argv=0x00007fffffffe118, init=&lt;unavailable&gt;, fini=&lt;unavailable&gt;, rtld_fini=&lt;unavailable&gt;, stack_end=0x00007fffffffe108) at libc-start.c:308:16</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#6: 0x0000000001f2dc7a lli`_start + 42</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>finish
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>stopped
+*<span class="w"> </span>thread<span class="w"> </span><span class="c1">#1, name = &#39;lli&#39;, stop reason = step out</span>
+Return<span class="w"> </span>value:<span class="w"> </span><span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">120</span>
+
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#0: 0x00007ffff7fd0095 JIT(0x45c2cb0)`main(argc=2, argv=0x00000000046122f0) at showdebug.c:16:9</span>
+<span class="w">   </span><span class="m">13</span><span class="w">       </span><span class="k">if</span><span class="w"> </span><span class="o">(</span>argc<span class="w"> </span>&lt;<span class="w"> </span><span class="m">2</span><span class="o">)</span>
+<span class="w">   </span><span class="m">14</span><span class="w">           </span><span class="k">return</span><span class="w"> </span>-1<span class="p">;</span>
+<span class="w">   </span><span class="m">15</span><span class="w">       </span>char<span class="w"> </span><span class="nv">firstletter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>argv<span class="o">[</span><span class="m">1</span><span class="o">][</span><span class="m">0</span><span class="o">]</span><span class="p">;</span>
+-&gt;<span class="w"> </span><span class="m">16</span><span class="w">       </span>int<span class="w"> </span><span class="nv">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>compute_factorial<span class="o">(</span>firstletter<span class="w"> </span>-<span class="w"> </span><span class="s1">&#39;0&#39;</span><span class="o">)</span><span class="p">;</span>
+<span class="w">   </span><span class="m">17</span>
+<span class="w">   </span><span class="m">18</span><span class="w">       </span>//<span class="w"> </span>Returned<span class="w"> </span>result<span class="w"> </span>is<span class="w"> </span>clipped<span class="w"> </span>at<span class="w"> </span><span class="m">255</span>...
+<span class="w">   </span><span class="m">19</span><span class="w">       </span><span class="k">return</span><span class="w"> </span>result<span class="p">;</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>result
+<span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">73670648</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>n
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>stopped
+*<span class="w"> </span>thread<span class="w"> </span><span class="c1">#1, name = &#39;lli&#39;, stop reason = step over</span>
+<span class="w">   </span>frame<span class="w"> </span><span class="c1">#0: 0x00007ffff7fd0098 JIT(0x45c2cb0)`main(argc=2, argv=0x00000000046122f0) at showdebug.c:19:12</span>
+<span class="w">   </span><span class="m">16</span><span class="w">       </span>int<span class="w"> </span><span class="nv">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>compute_factorial<span class="o">(</span>firstletter<span class="w"> </span>-<span class="w"> </span><span class="s1">&#39;0&#39;</span><span class="o">)</span><span class="p">;</span>
+<span class="w">   </span><span class="m">17</span>
+<span class="w">   </span><span class="m">18</span><span class="w">       </span>//<span class="w"> </span>Returned<span class="w"> </span>result<span class="w"> </span>is<span class="w"> </span>clipped<span class="w"> </span>at<span class="w"> </span><span class="m">255</span>...
+-&gt;<span class="w"> </span><span class="m">19</span><span class="w">       </span><span class="k">return</span><span class="w"> </span>result<span class="p">;</span>
+<span class="w">   </span><span class="m">20</span><span class="w">   </span><span class="o">}</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>result
+<span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">120</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>expr<span class="w"> </span><span class="nv">result</span><span class="o">=</span><span class="m">42</span>
+<span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$5</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">42</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>result
+<span class="o">(</span>int<span class="o">)</span><span class="w"> </span><span class="nv">$6</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">42</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span>c
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>resuming
+Process<span class="w"> </span><span class="m">21340</span><span class="w"> </span>exited<span class="w"> </span>with<span class="w"> </span><span class="nv">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="o">(</span>0x0000002a<span class="o">)</span>
+<span class="o">(</span>lldb<span class="o">)</span><span class="w"> </span><span class="nb">exit</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="DirectXUsage.html" title="User Guide for the DirectX Target"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="CycleTerminology.html" title="LLVM Cycle Terminology"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debugging JIT-ed Code</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-01-27.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
