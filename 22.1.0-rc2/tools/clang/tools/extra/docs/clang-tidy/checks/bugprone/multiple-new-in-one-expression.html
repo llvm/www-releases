@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - bugprone-multiple-new-in-one-expression &#8212; Extra Clang Tools 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=106f770c"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="bugprone-multiple-statement-macro" href="multiple-statement-macro.html" />
+    <link rel="prev" title="bugprone-multi-level-implicit-pointer-conversion" href="multi-level-implicit-pointer-conversion.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 22.1.0-rc2 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - bugprone-multiple-new-in-one-expression</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="multi-level-implicit-pointer-conversion.html">bugprone-multi-level-implicit-pointer-conversion</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="multiple-statement-macro.html">bugprone-multiple-statement-macro</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="bugprone-multiple-new-in-one-expression">
+<h1>bugprone-multiple-new-in-one-expression<a class="headerlink" href="#bugprone-multiple-new-in-one-expression" title="Link to this heading">¶</a></h1>
+<p>Finds multiple <code class="docutils literal notranslate"><span class="pre">new</span></code> operator calls in a single expression, where the
+allocated memory by the first <code class="docutils literal notranslate"><span class="pre">new</span></code> may leak if the second allocation fails
+and throws exception.</p>
+<p>C++ does often not specify the exact order of evaluation of the operands of an
+operator or arguments of a function. Therefore if a first allocation succeeds
+and a second fails, in an exception handler it is not possible to tell which
+allocation has failed and free the memory. Even if the order is fixed the
+result of a first <code class="docutils literal notranslate"><span class="pre">new</span></code> may be stored in a temporary location that is not
+reachable at the time when a second allocation fails. It is best to avoid any
+expression that contains more than one <code class="docutils literal notranslate"><span class="pre">operator</span> <span class="pre">new</span></code> call, if exception
+handling is used to check for allocation errors.</p>
+<p>Different rules apply for are the short-circuit operators <code class="docutils literal notranslate"><span class="pre">||</span></code> and <code class="docutils literal notranslate"><span class="pre">&amp;&amp;</span></code> and
+the <code class="docutils literal notranslate"><span class="pre">,</span></code> operator, where evaluation of one side must be completed before the
+other starts. Expressions of a list-initialization (initialization or
+construction using <code class="docutils literal notranslate"><span class="pre">{</span></code> and <code class="docutils literal notranslate"><span class="pre">}</span></code> characters) are evaluated in fixed order.
+Similarly, condition of a <code class="docutils literal notranslate"><span class="pre">?</span></code> operator is evaluated before the branches are
+evaluated.</p>
+<p>The check reports warning if two <code class="docutils literal notranslate"><span class="pre">new</span></code> calls appear in one expression at
+different sides of an operator, or if <code class="docutils literal notranslate"><span class="pre">new</span></code> calls appear in different
+arguments of a function call (that can be an object construction with <code class="docutils literal notranslate"><span class="pre">()</span></code>
+syntax). These <code class="docutils literal notranslate"><span class="pre">new</span></code> calls can be nested at any level.
+For any warning to be emitted the <code class="docutils literal notranslate"><span class="pre">new</span></code> calls should be in a code block where
+exception handling is used with catch for <code class="docutils literal notranslate"><span class="pre">std::bad_alloc</span></code> or
+<code class="docutils literal notranslate"><span class="pre">std::exception</span></code>. At <code class="docutils literal notranslate"><span class="pre">||</span></code>, <code class="docutils literal notranslate"><span class="pre">&amp;&amp;</span></code>, <code class="docutils literal notranslate"><span class="pre">,</span></code>, <code class="docutils literal notranslate"><span class="pre">?</span></code> (condition and one branch)
+operators no warning is emitted. No warning is emitted if both of the memory
+allocations are not assigned to a variable or not passed directly to a
+function. The reason is that in this case the memory may be intentionally not
+freed or the allocated objects can be self-destructing objects.</p>
+<p>Examples:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">A</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">Var</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">B</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">B</span><span class="p">();</span>
+<span class="w">  </span><span class="n">B</span><span class="p">(</span><span class="n">A</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">Var</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">C</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">X1</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">X2</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">A</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">B</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">f1</span><span class="p">(</span><span class="n">A</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">f1</span><span class="p">(</span><span class="n">B</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+<span class="kt">bool</span><span class="w"> </span><span class="nf">f2</span><span class="p">(</span><span class="n">A</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">A</span><span class="w"> </span><span class="o">*</span><span class="n">PtrA</span><span class="p">;</span>
+<span class="w">  </span><span class="n">B</span><span class="w"> </span><span class="o">*</span><span class="n">PtrB</span><span class="p">;</span>
+<span class="w">  </span><span class="k">try</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Allocation of &#39;B&#39;/&#39;A&#39; may fail after memory for &#39;A&#39;/&#39;B&#39; was allocated.</span>
+<span class="w">    </span><span class="n">f</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">);</span><span class="w"> </span><span class="c1">// warning: memory allocation may leak if an other allocation is sequenced after it and throws an exception; order of these allocations is undefined</span>
+
+<span class="w">    </span><span class="c1">// List (aggregate) initialization is used.</span>
+<span class="w">    </span><span class="n">C</span><span class="w"> </span><span class="n">C1</span><span class="p">{</span><span class="k">new</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="kt">int</span><span class="p">};</span><span class="w"> </span><span class="c1">// no warning</span>
+
+<span class="w">    </span><span class="c1">// Allocation of &#39;B&#39;/&#39;A&#39; may fail after memory for &#39;A&#39;/&#39;B&#39; was allocated but not yet passed to function &#39;f1&#39;.</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">X</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">f1</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">f1</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">);</span><span class="w"> </span><span class="c1">// warning: memory allocation may leak if an other allocation is sequenced after it and throws an exception; order of these allocations is undefined</span>
+
+<span class="w">    </span><span class="c1">// Allocation of &#39;B&#39; may fail after memory for &#39;A&#39; was allocated.</span>
+<span class="w">    </span><span class="c1">// From C++17 on memory for &#39;B&#39; is allocated first but still may leak if allocation of &#39;A&#39; fails.</span>
+<span class="w">    </span><span class="n">PtrB</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">);</span><span class="w"> </span><span class="c1">// warning: memory allocation may leak if an other allocation is sequenced after it and throws an exception</span>
+
+<span class="w">    </span><span class="c1">// &#39;new A&#39; and &#39;new B&#39; may be performed in any order.</span>
+<span class="w">    </span><span class="c1">// &#39;new B&#39;/&#39;new A&#39; may fail after memory for &#39;A&#39;/&#39;B&#39; was allocated but not assigned to &#39;PtrA&#39;/&#39;PtrB&#39;.</span>
+<span class="w">    </span><span class="p">(</span><span class="n">PtrA</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">Var</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">PtrB</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">Var</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: memory allocation may leak if an other allocation is sequenced after it and throws an exception; order of these allocations is undefined</span>
+
+<span class="w">    </span><span class="c1">// Evaluation of &#39;f2(new A)&#39; must be finished before &#39;f1(new B)&#39; starts.</span>
+<span class="w">    </span><span class="c1">// If &#39;new B&#39; fails the allocated memory for &#39;A&#39; is supposedly handled correctly because function &#39;f2&#39; could take the ownership.</span>
+<span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="n">Z</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">f2</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">f1</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">);</span><span class="w"> </span><span class="c1">// no warning</span>
+
+<span class="w">    </span><span class="n">X</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">f2</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">f1</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">f1</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">));</span><span class="w"> </span><span class="c1">// no warning</span>
+
+<span class="w">    </span><span class="c1">// No warning if the result of both allocations is not passed to a function</span>
+<span class="w">    </span><span class="c1">// or stored in a variable.</span>
+<span class="w">    </span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">Var</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">Var</span><span class="p">;</span><span class="w"> </span><span class="c1">// no warning</span>
+
+<span class="w">    </span><span class="c1">// No warning if at least one non-throwing allocation is used.</span>
+<span class="w">    </span><span class="n">f</span><span class="p">(</span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">nothrow</span><span class="p">)</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">);</span><span class="w"> </span><span class="c1">// no warning</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">catch</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">bad_alloc</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="c1">// No warning if the allocation is outside a try block (or no catch handler exists for std::bad_alloc).</span>
+<span class="w">  </span><span class="c1">// (The fact if exceptions can escape from &#39;foo&#39; is not taken into account.)</span>
+<span class="w">  </span><span class="n">f</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">B</span><span class="p">);</span><span class="w"> </span><span class="c1">// no warning</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="multi-level-implicit-pointer-conversion.html">bugprone-multi-level-implicit-pointer-conversion</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="multiple-statement-macro.html">bugprone-multiple-statement-macro</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

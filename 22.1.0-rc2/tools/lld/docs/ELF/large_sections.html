@@ -1,0 +1,156 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Large data sections &#8212; lld 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm.css?v=1cf7c864" />
+    <script src="../_static/documentation_options.js?v=106f770c"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Linker Script implementation notes and policy" href="linker_script.html" />
+    <link rel="prev" title="lld 22.1.0-rc2 Release Notes" href="../ReleaseNotes.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+<a href="../index.html"><img src="../_static/logo.png" alt="LLVM Documentation"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="linker_script.html" title="Linker Script implementation notes and policy"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="../ReleaseNotes.html" title="lld 22.1.0-rc2 Release Notes"
+             accesskey="P">previous</a> |</li>
+  <li><a href="../index.html">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Large data sections</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <div>
+    <h4>Previous topic</h4>
+    <p class="topless"><a href="../ReleaseNotes.html"
+                          title="previous chapter">lld 22.1.0-rc2 Release Notes</a></p>
+  </div>
+  <div>
+    <h4>Next topic</h4>
+    <p class="topless"><a href="linker_script.html"
+                          title="next chapter">Linker Script implementation notes and policy</a></p>
+  </div>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/ELF/large_sections.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="large-data-sections">
+<h1>Large data sections<a class="headerlink" href="#large-data-sections" title="Link to this heading">¶</a></h1>
+<p>When linking very large binaries, lld may report relocation overflows like</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">relocation</span> <span class="n">R_X86_64_PC32</span> <span class="n">out</span> <span class="n">of</span> <span class="nb">range</span><span class="p">:</span> <span class="mi">2158227201</span> <span class="ow">is</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="o">-</span><span class="mi">2147483648</span><span class="p">,</span> <span class="mi">2147483647</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>This happens when running into architectural limitations. For example, in x86-64
+PIC code, a reference to a static global variable is typically done with a
+<code class="docutils literal notranslate"><span class="pre">R_X86_64_PC32</span></code> relocation, which is a 32-bit signed offset from the PC. That
+means if the global variable is laid out further than 2GB (2^31 bytes) from the
+instruction referencing it, we run into a relocation overflow.</p>
+<p>lld normally lays out sections as follows:</p>
+<img alt="../_images/section_layout.png" src="../_images/section_layout.png" />
+<p>The largest relocation pressure is usually from <code class="docutils literal notranslate"><span class="pre">.text</span></code> to the beginning of
+<code class="docutils literal notranslate"><span class="pre">.rodata</span></code> or <code class="docutils literal notranslate"><span class="pre">.text</span></code> to the end of <code class="docutils literal notranslate"><span class="pre">.bss</span></code>.</p>
+<p>Some code models offer a tradeoff between relocation pressure and performance.
+For example, x86-64’s medium code model splits global variables into small and
+large globals depending on if their size is over a certain threshold. Large
+globals are placed further away from text and we use 64-bit references to refer
+to them.</p>
+<p>Large globals are placed in separate sections from small globals, and those
+sections have a “large” section flag, e.g. <code class="docutils literal notranslate"><span class="pre">SHF_X86_64_LARGE</span></code> for x86-64. The
+linker places large sections on the outer edges of the binary, making sure they
+do not affect the distance of small globals to text. The large versions
+of <code class="docutils literal notranslate"><span class="pre">.rodata</span></code>, <code class="docutils literal notranslate"><span class="pre">.bss</span></code>, and <code class="docutils literal notranslate"><span class="pre">.data</span></code> are <code class="docutils literal notranslate"><span class="pre">.lrodata</span></code>, <code class="docutils literal notranslate"><span class="pre">.lbss</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">.ldata</span></code>, and they are laid out as follows:</p>
+<img alt="../_images/large_section_layout_pic.png" src="../_images/large_section_layout_pic.png" />
+<p>We try to keep the number of <code class="docutils literal notranslate"><span class="pre">PT_LOAD</span></code> segments to a minimum, so we place
+large sections next to the small sections with the same RWX permissions when
+possible.</p>
+<p><code class="docutils literal notranslate"><span class="pre">.lbss</span></code> is right after <code class="docutils literal notranslate"><span class="pre">.bss</span></code> so that they are merged together and we
+minimize the number of segments with <code class="docutils literal notranslate"><span class="pre">p_memsz</span> <span class="pre">&gt;</span> <span class="pre">p_filesz</span></code>.</p>
+<p>Note that the above applies to PIC code. For less common non-PIC code with
+absolute relocations instead of relative relocations, 32-bit relocations
+typically assume that symbols are in the lower 2GB of the address space. So for
+non-PIC code, large sections should be placed after all small sections to avoid
+<code class="docutils literal notranslate"><span class="pre">.lrodata</span></code> pushing small symbols out of the lower 2GB of the address space.
+<code class="docutils literal notranslate"><span class="pre">-z</span> <span class="pre">lrodata-after-bss</span></code> changes the layout to be:</p>
+<img alt="../_images/large_section_layout_nopic.png" src="../_images/large_section_layout_nopic.png" />
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="linker_script.html" title="Linker Script implementation notes and policy"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="../ReleaseNotes.html" title="lld 22.1.0-rc2 Release Notes"
+             >previous</a> |</li>
+  <li><a href="../index.html">lld Home</a>&nbsp;|&nbsp;</li>
+
+        <li class="nav-item nav-item-this"><a href="">Large data sections</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2026, LLVM Project.
+      Last updated on 2026-01-27.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
