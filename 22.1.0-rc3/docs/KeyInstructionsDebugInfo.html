@@ -1,0 +1,278 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Key Instructions debug info in LLVM and Clang &#8212; LLVM 22.1.0-rc3 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=b417f315"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Lightweight Fault Isolation (LFI) in LLVM" href="LFI.html" />
+    <link rel="prev" title="Instruction referencing for debug info" href="InstrRefDebugInfo.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="LFI.html" title="Lightweight Fault Isolation (LFI) in LLVM"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="InstrRefDebugInfo.html" title="Instruction referencing for debug info"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Key Instructions debug info in LLVM and Clang</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/KeyInstructionsDebugInfo.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="key-instructions-debug-info-in-llvm-and-clang">
+<h1>Key Instructions debug info in LLVM and Clang<a class="headerlink" href="#key-instructions-debug-info-in-llvm-and-clang" title="Link to this heading">¶</a></h1>
+<p>Key Instructions is an LLVM feature that reduces the jumpiness of optimized code debug stepping by distinguishing the significance of instructions that make up source language statements. This document explains the feature and how it is implemented in <a class="reference internal" href="#llvm">LLVM</a> and <a class="reference internal" href="#clang-and-other-front-ends">Clang</a>.</p>
+<section id="status">
+<h2>Status<a class="headerlink" href="#status" title="Link to this heading">¶</a></h2>
+<p>Feature complete except for coroutines, which fall back to not-key-instructions handling for now but will get support soon (there is no fundamental reason why they cannot be supported, we’ve just not got to it at time of writing).</p>
+<p>Tell Clang [not] to produce Key Instructions metadata with <code class="docutils literal notranslate"><span class="pre">-g[no-]key-instructions</span></code>.</p>
+<p>The feature improves optimized code stepping; it’s intended for the feature to be used with optimisations enabled. Although the feature works at O0 it is not recommended because in some cases the effect of editing variables may not always be immediately realised. In some cases, debuggers may place a breakpoint after parts of an expression have been evaluated, which limits the ability to have variable edits affect expressions. (This is a quirk of the current implementation, rather than fundamental limitation, covered in more detail <a class="reference internal" href="#disabled-at-o0">later</a>.)</p>
+<p>This is a DWARF-based feature. There is currently no plan to support CodeView.</p>
+<p>Set LLVM flag <code class="docutils literal notranslate"><span class="pre">-dwarf-use-key-instructions</span></code> to <code class="docutils literal notranslate"><span class="pre">false</span></code> to ignore Key Instructions metadata when emitting DWARF.</p>
+</section>
+</section>
+<section id="llvm">
+<h1>LLVM<a class="headerlink" href="#llvm" title="Link to this heading">¶</a></h1>
+<section id="problem-statement">
+<h2>Problem statement<a class="headerlink" href="#problem-statement" title="Link to this heading">¶</a></h2>
+<p>A lot of the noise in stepping comes from code motion and instruction scheduling. Consider a long expression on a single line. It may involve multiple operations that optimisations move, re-order, and interleave with other instructions that have different line numbers.</p>
+<p>DWARF provides a helpful tool the compiler can employ to mitigate this jumpiness, the <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> flag, which indicates that an instruction is a recommended breakpoint location. However, LLVM’s current approach to deciding <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> placement essentially reduces down to “is the associated line number different to the previous instruction’s?”.</p>
+<p>(Note: It’s up to the debugger if it wants to interpret <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> or not, and at time of writing LLDB doesn’t; possibly because until now LLVM’s <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code>s convey no information that can’t already be deduced from the rest of the line table.)</p>
+</section>
+<section id="solution-overview">
+<h2>Solution overview<a class="headerlink" href="#solution-overview" title="Link to this heading">¶</a></h2>
+<p>Taking ideas from two papers [1][2] that explore the issue, especially C. Tice’s:</p>
+<p>From the perspective of a source-level debugger user:</p>
+<ul class="simple">
+<li><p>Source code is made up of interesting constructs; the level of granularity for “interesting” while stepping is typically assignments, calls, control flow. We’ll call these interesting constructs Atoms.</p></li>
+<li><p>Atoms usually have one instruction that implements the functionality that a user can observe; once they step “off” that instruction, the atom is finalised. We’ll call that a Key Instruction.</p></li>
+<li><p>Communicating where the key instructions are to the debugger (using DWARF’s is_stmt) avoids jumpiness introduced by scheduling non-key instructions without losing source attribution (because non-key instructions retain an associated source location, they’re just ignored for stepping).</p></li>
+</ul>
+</section>
+<section id="solution-implementation">
+<h2>Solution implementation<a class="headerlink" href="#solution-implementation" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">DILocation</span></code> has 2 new fields, <code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> and <code class="docutils literal notranslate"><span class="pre">atomRank</span></code>. <code class="docutils literal notranslate"><span class="pre">DISubprogram</span></code> has a new field <code class="docutils literal notranslate"><span class="pre">keyInstructions</span></code>.</p></li>
+<li><p>Clang creates <code class="docutils literal notranslate"><span class="pre">DILocations</span></code> using the new fields to communicate which instructions are “interesting”, and sets <code class="docutils literal notranslate"><span class="pre">keyInstructions</span></code> true in <code class="docutils literal notranslate"><span class="pre">DISubprogram</span></code>s to tell LLVM to interpret the new metadata in those functions.</p></li>
+<li><p>There’s some bookkeeping required by optimisations that duplicate control flow.</p></li>
+<li><p>During DWARF emission, the new metadata is collected (linear scan over instructions) to decide <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> placements.</p></li>
+</ol>
+<p>Details:</p>
+<ol class="arabic simple">
+<li><p><em>The metadata</em> - The two new <code class="docutils literal notranslate"><span class="pre">DILocation</span></code> fields are <code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> and <code class="docutils literal notranslate"><span class="pre">atomRank</span></code> and are both are unsigned integers. <code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> is 61 bits and <code class="docutils literal notranslate"><span class="pre">atomRank</span></code> 3 bits. Instructions in the same function with the same <code class="docutils literal notranslate"><span class="pre">(atomGroup,</span> <span class="pre">inlinedAt)</span></code> pair are part of the same source atom. <code class="docutils literal notranslate"><span class="pre">atomRank</span></code> determines <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> preference within that group, where a lower number is higher precedence. Higher rank instructions act as “backup” <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> locations, providing good fallback locations if/when the primary candidate gets optimized away. The default values of 0 indicate the instruction isn’t interesting - it’s not an <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> candidate. If <code class="docutils literal notranslate"><span class="pre">keyInstructions</span></code> in <code class="docutils literal notranslate"><span class="pre">DISubprogram</span></code> is false (default) then the new <code class="docutils literal notranslate"><span class="pre">DILocation</span></code> metadata is ignored for the function (including inlined instances) when emitting DWARF.</p></li>
+<li><p><em>Clang annotates key instructions</em> with the new metadata. Variable assignments (stores, memory intrinsics), control flow (branches and their conditions, some unconditional branches), and exception handling instructions are annotated. Calls are ignored as they’re unconditionally marked <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code>.</p></li>
+<li><p><em>Throughout optimisation</em>, the <code class="docutils literal notranslate"><span class="pre">DILocation</span></code> is propagated normally. Cloned instructions get the original’s <code class="docutils literal notranslate"><span class="pre">DILocation</span></code>, the new fields get merged in <code class="docutils literal notranslate"><span class="pre">getMergedLocation</span></code>, etc. However, pass writers need to intercede in cases where a code path is duplicated, e.g. unrolling, jump-threading. In these cases we want to emit key instructions in both the original and duplicated code, so the duplicated must be assigned new <code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> numbers, in a similar way that instruction operands must get remapped. There are facilities to help this: <code class="docutils literal notranslate"><span class="pre">mapAtomInstance(const</span> <span class="pre">DebugLoc</span> <span class="pre">&amp;DL,</span> <span class="pre">ValueToValueMapTy</span> <span class="pre">&amp;VMap)</span></code> adds an entry to <code class="docutils literal notranslate"><span class="pre">VMap</span></code> which can later be used for remapping using <code class="docutils literal notranslate"><span class="pre">llvm::RemapSourceAtom(Instruction</span> <span class="pre">*I,</span> <span class="pre">ValueToValueMapTy</span> <span class="pre">&amp;VM)</span></code>. <code class="docutils literal notranslate"><span class="pre">mapAtomInstance</span></code> is called from <code class="docutils literal notranslate"><span class="pre">llvm::CloneBasicBlock</span></code> and <code class="docutils literal notranslate"><span class="pre">llvm::RemapSourceAtom</span></code> is called from <code class="docutils literal notranslate"><span class="pre">llvm::RemapInstruction</span></code> so in many cases no additional work is actually needed. <code class="docutils literal notranslate"><span class="pre">mapAtomInstance</span></code> ensures <code class="docutils literal notranslate"><span class="pre">LLVMContextImpl::NextAtomGroup</span></code> is kept up to date, which is the global “next available atom number”.
+The <code class="docutils literal notranslate"><span class="pre">DILocations</span></code> carry over from IR to MIR as normal, without any changes.</p></li>
+<li><p><em>DWARF emission</em> - Iterate over all instructions in a function. For each <code class="docutils literal notranslate"><span class="pre">(atomGroup,</span> <span class="pre">inlinedAt)</span></code> pair we find the set of instructions sharing the lowest rank. Only the last of these instructions in each basic block is included in the set. The instructions in this set get <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> applied to their source locations. That <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> then “floats” to the top of contiguous sequence of instructions with the same line number in the same basic block. That has two benefits when optimisations are enabled. First, this floats <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> to the top of epilogue instructions (rather than applying it to the <code class="docutils literal notranslate"><span class="pre">ret</span></code> instruction itself) which is important to avoid losing variable location coverage at return statements. Second, it reduces the difference in optimized code stepping behaviour between when Key Instructions is enabled and disabled in “uninteresting” cases. I.e., it appears to generally reduce unnecessary changes in stepping.<br />
+We’ve used contiguous line numbers rather than atom membership as the test there because of our choice to represent source atoms with a single integer ID. We can’t have instructions belonging to multiple atom groups or represent any kind of grouping hierarchy. That means we can’t rely on all the call setup instructions being in the same group currently (e.g., if one of the argument expressions contains key functionality such as a store, it will be in its own group).</p></li>
+</ol>
+</section>
+<section id="limitations">
+<h2>Limitations<a class="headerlink" href="#limitations" title="Link to this heading">¶</a></h2>
+<section id="lack-of-multiple-atom-membership">
+<h3>Lack of multiple atom membership<a class="headerlink" href="#lack-of-multiple-atom-membership" title="Link to this heading">¶</a></h3>
+<p>Using a number to represent atom membership is limiting; currently an instruction that belongs to multiple source atoms cannot belong to multiple atom groups. This does occur in practice, both in the front end and during optimisations. Consider this C code:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">c</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>Clang generates this IR:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="nv nv-Anonymous">%0</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%c.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%b.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%a.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+</pre></div>
+</div>
+<p>The load of <code class="docutils literal notranslate"><span class="pre">c</span></code> is used by both stores (which are the Key Instructions for each assignment respectively). We can only use it as a backup location for one of the two atoms.</p>
+<p>Certain optimisations merge source locations, which presents another case where it might make sense to be able to represent an instruction belonging to multiple atoms. Currently we deterministically pick one (choosing to keep the lower rank one if there is one).</p>
+</section>
+<section id="disabled-at-o0">
+<h3>Disabled at O0<a class="headerlink" href="#disabled-at-o0" title="Link to this heading">¶</a></h3>
+<p>Consider the following code without optimisations:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>In the current implementation an <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> won’t be generated for the <code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">+</span> <span class="pre">b</span></code> instruction, meaning debuggers will likely step over the <code class="docutils literal notranslate"><span class="pre">add</span></code> and stop at the <code class="docutils literal notranslate"><span class="pre">store</span></code> of the result into <code class="docutils literal notranslate"><span class="pre">c</span></code> (which does get <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code>). A user might have wished to edit <code class="docutils literal notranslate"><span class="pre">a</span></code> or <code class="docutils literal notranslate"><span class="pre">b</span></code> on the previous line in order to alter the result stored to <code class="docutils literal notranslate"><span class="pre">c</span></code>, which they now won’t have the chance to do (they’d need to edit the variables on a previous line instead). If the expression was all on one line then they would be able to edit the values before the <code class="docutils literal notranslate"><span class="pre">add</span></code>. For these reasons we’re choosing to recommend that the feature should not be enabled at O0.</p>
+<p>It should be possible to fix this case if we make a few changes: add all the instructions in the statement (i.e., including the loads) to the atom, and tweak the DwarfEmission code to understand this situation (same atom, different line). So there is room to pursue this in the future. Though that gets tricky in some cases due to the <a class="reference internal" href="#lack-of-multiple-atom-membership">other limitation mentioned above</a>, e.g.:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">e</span><span class="w"> </span><span class="o">=</span><span class="w">        </span><span class="c1">// atom 1</span>
+<span class="w">    </span><span class="p">(</span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w">    </span><span class="c1">// atom 1</span>
+<span class="w">  </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">d</span><span class="p">);</span><span class="w">   </span><span class="c1">// - atom 2</span>
+</pre></div>
+</div>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="nv nv-Anonymous">%0</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%a.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="w">     </span><span class="c">; atom 1</span>
+<span class="w">  </span><span class="nv nv-Anonymous">%1</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%b.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="w">     </span><span class="c">; atom 1</span>
+<span class="w">  </span><span class="nv">%add</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">add</span><span class="w"> </span><span class="k">nsw</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%1</span><span class="w">               </span><span class="c">; atom 1</span>
+<span class="w">  </span><span class="nv nv-Anonymous">%2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%d.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="w">     </span><span class="c">; - atom 2</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%2</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%c.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="w">      </span><span class="c">; - atom 2</span>
+<span class="w">  </span><span class="nv">%mul</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">mul</span><span class="w"> </span><span class="k">nsw</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%add</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%2</span><span class="w">             </span><span class="c">; atom 1</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%mul</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%e</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="w">         </span><span class="c">; atom 1</span>
+</pre></div>
+</div>
+<p>Without multiple-atom-membership or some kind of atom hierarchy it’s not apparent how to get the <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> to stick to <code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">+</span> <span class="pre">b</span></code>, given the other rules the <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> placement follows.</p>
+<p>O0 isn’t a key use-case so solving this is not a priority for the initial implementation. The trade off, smoother stepping at the cost of not being able to edit variables to affect an expression in some cases (and at particular stop points), becomes more attractive when optimisations are enabled (we find that editing variables in the debugger in optimized code often produces unexpected effects, so it’s not a big concern that Key Instructions makes it harder sometimes).</p>
+</section>
+</section>
+</section>
+<section id="clang-and-other-front-ends">
+<h1>Clang and other front ends<a class="headerlink" href="#clang-and-other-front-ends" title="Link to this heading">¶</a></h1>
+<p>Tell Clang [not] to produce Key Instructions metadata with <code class="docutils literal notranslate"><span class="pre">-g[no-]key-instructions</span></code>.</p>
+<section id="implementation">
+<h2>Implementation<a class="headerlink" href="#implementation" title="Link to this heading">¶</a></h2>
+<p>Clang needs to annotate key instructions with the new metadata. Variable assignments (stores, memory intrinsics), control flow (branches and their conditions, some unconditional branches), and exception handling instructions are annotated. Calls are ignored as they’re unconditionally marked <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code>. This is achieved with a few simple constructs:</p>
+<p>Class <code class="docutils literal notranslate"><span class="pre">ApplyAtomGroup</span></code> - This is a scoped helper similar to <code class="docutils literal notranslate"><span class="pre">ApplyDebugLocation</span></code> that creates a new source atom group which instructions can be added to. It’s used during CodeGen to declare that a new source atom has started, e.g. in <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitBinaryOperatorLValue</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::addInstToCurrentSourceAtom(llvm::Instruction</span> <span class="pre">*KeyInstruction,</span> <span class="pre">llvm::Value</span> <span class="pre">*Backup)</span></code> adds an instruction (and a backup instruction if non-null) to the current “atom group” defined with <code class="docutils literal notranslate"><span class="pre">ApplyAtomGroup</span></code>. The Key Instruction gets rank 1, and backup instructions get higher ranks (the function looks through casts, applying increasing rank as it goes). There are a lot of sites in Clang that need to call this (mostly stores and store-like instructions). Most stores created through <code class="docutils literal notranslate"><span class="pre">CGBuilderTy</span></code> are annotated, but some that don’t need to be key are not. It’s important to remember that if there’s no active atom group, i.e. no active <code class="docutils literal notranslate"><span class="pre">ApplyAtomGroup</span></code> instance, then <code class="docutils literal notranslate"><span class="pre">addInstToCurrentSourceAtom</span></code> does not annotate the instructions.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::addInstToNewSourceAtom(llvm::Instruction</span> <span class="pre">*KeyInstruction,</span> <span class="pre">llvm::Value</span> <span class="pre">*Backup)</span></code> adds an instruction (and a backup instruction if non-null) to a new “atom group”. Currently mostly used in loop handling code.</p>
+<p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::addInstToSpecificSourceAtom(llvm::Instruction</span> <span class="pre">*KeyInstruction,</span> <span class="pre">llvm::Value</span> <span class="pre">*Backup,</span> <span class="pre">uint64_t</span> <span class="pre">Atom)</span></code> adds the instruction (and backup instruction if non-null) to the specific group <code class="docutils literal notranslate"><span class="pre">Atom</span></code>. This is currently only used for <code class="docutils literal notranslate"><span class="pre">rets</span></code> which is explored in the examples below. Special handling is needed due to the fact that an existing atom group needs to be reused in some circumstances, so neither of the other helper functions are appropriate.</p>
+</section>
+<section id="examples">
+<h2>Examples<a class="headerlink" href="#examples" title="Link to this heading">¶</a></h2>
+<p>A simple example walk through:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">fun</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>There are two key instructions here, the assignment and the implicit return. We want to emit metadata that looks like this:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">hidden</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@_Z3funi</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="k">noundef</span><span class="w"> </span><span class="nv">%a</span><span class="p">)</span><span class="w"> </span><span class="vg">#0</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="w"> </span><span class="p">{</span>
+<span class="nl">entry:</span>
+<span class="w">  </span><span class="nv">%a.addr</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">alloca</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+<span class="w">  </span><span class="nv">%b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">alloca</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%a</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%a.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+<span class="w">  </span><span class="nv nv-Anonymous">%0</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%a.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="p">,</span><span class="w"> </span><span class="nl">atomGroup:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">atomRank:</span><span class="w"> </span><span class="m">2</span><span class="p">)</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="nv">%b</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w">       </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="p">,</span><span class="w"> </span><span class="nl">atomGroup:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">atomRank:</span><span class="w"> </span><span class="m">1</span><span class="p">)</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span><span class="p">,</span><span class="w">                            </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">3</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="p">,</span><span class="w"> </span><span class="nl">atomGroup:</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="nl">atomRank:</span><span class="w"> </span><span class="m">1</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The store is the key instruction for the assignment (<code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> 1). The instruction corresponding to the final (and in this case only) RHS value, the load from <code class="docutils literal notranslate"><span class="pre">%a.addr</span></code>, is a good backup location for <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> if the store gets optimized away. It’s part of the same source atom, but has lower <code class="docutils literal notranslate"><span class="pre">is_stmt</span></code> precedence, so it gets a higher <code class="docutils literal notranslate"><span class="pre">atomRank</span></code>. This is achieved by starting an atom group with <code class="docutils literal notranslate"><span class="pre">ApplyAtomGroup</span></code> for the source atom (in this case a variable init) in <code class="docutils literal notranslate"><span class="pre">EmitAutoVarInit</span></code>. The instructions (both key and backup) are then annotated by call to <code class="docutils literal notranslate"><span class="pre">addInstToCurrentSourceAtom</span></code> called from <code class="docutils literal notranslate"><span class="pre">EmitStoreOfScalar</span></code>.</p>
+<p>The implicit return is also key (<code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> 2) so that it’s stepped on, to match existing non-key-instructions behaviour. This is achieved by calling  <code class="docutils literal notranslate"><span class="pre">addInstToNewSourceAtom</span></code> from within <code class="docutils literal notranslate"><span class="pre">EmitFunctionEpilog</span></code>.</p>
+<p>Explicit return statements are handled uniquely. Rather than emit a <code class="docutils literal notranslate"><span class="pre">ret</span></code> for each <code class="docutils literal notranslate"><span class="pre">return</span></code> Clang, in all but the simplest cases (as in the first example) emits a branch to a dedicated block with a single <code class="docutils literal notranslate"><span class="pre">ret</span></code>. That branch is the key instruction for the return statement. If there’s only one branch to that block, because there’s only one <code class="docutils literal notranslate"><span class="pre">return</span></code> (as in this example), Clang folds the block into its only predecessor. Handily <code class="docutils literal notranslate"><span class="pre">EmitReturnBlock</span></code> returns the <code class="docutils literal notranslate"><span class="pre">DebugLoc</span></code> associated with the single branch in that case, which is fed into <code class="docutils literal notranslate"><span class="pre">addInstToSpecificSourceAtom</span></code> to ensure the <code class="docutils literal notranslate"><span class="pre">ret</span></code> gets the right group.</p>
+</section>
+<section id="supporting-key-instructions-from-another-front-end">
+<h2>Supporting Key Instructions from another front end<a class="headerlink" href="#supporting-key-instructions-from-another-front-end" title="Link to this heading">¶</a></h2>
+<p>Front ends that want to use the feature need to group and rank instructions according to their source atoms and interingness by attaching <code class="docutils literal notranslate"><span class="pre">DILocations</span></code> with the necessary <code class="docutils literal notranslate"><span class="pre">atomGroup</span></code> and <code class="docutils literal notranslate"><span class="pre">atomRank</span></code> values. They also need to set the <code class="docutils literal notranslate"><span class="pre">keyInstructions</span></code> field to <code class="docutils literal notranslate"><span class="pre">true</span></code> in <code class="docutils literal notranslate"><span class="pre">DISubprogram</span></code>s to tell LLVM to interpret the new metadata in those functions.</p>
+<p>The prototype had LLVM annotate instructions (instead of Clang) using simple heuristics (just looking at kind of instructions, e.g., annotating all stores, conditional branches, etc). This doesn’t exist anywhere upstream, but could be shared if there’s interest (e.g., so another front end can try it out before committing to a full implementation), feel free to reach out on Discourse (&#64;OCHyams, &#64;jmorse).</p>
+<hr class="docutils" />
+<p><strong>References</strong></p>
+<ul class="simple">
+<li><p>[1] Key Instructions: Solving the Code Location Problem for Optimized Code (C. Tice, S. L. Graham, 2000)</p></li>
+<li><p>[2] Debugging Optimized Code: Concepts and Implementation on DIGITAL Alpha Systems (R. F. Brender et al)</p></li>
+</ul>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="LFI.html" title="Lightweight Fault Isolation (LFI) in LLVM"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="InstrRefDebugInfo.html" title="Instruction referencing for debug info"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Key Instructions debug info in LLVM and Clang</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-02-10.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

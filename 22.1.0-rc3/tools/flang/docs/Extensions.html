@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Fortran Extensions supported by Flang &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Compiler directives supported by Flang" href="Directives.html" />
+    <link rel="prev" title="Flang Fortran Standards Support" href="FortranStandardsSupport.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Fortran Extensions supported by Flang</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="FortranStandardsSupport.html">Flang Fortran Standards Support</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Directives.html">Compiler directives supported by Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/Extensions.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="fortran-extensions-supported-by-flang">
+<h1>Fortran Extensions supported by Flang<a class="headerlink" href="#fortran-extensions-supported-by-flang" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#intentional-violations-of-the-standard" id="id1">Intentional violations of the standard</a></p></li>
+<li><p><a class="reference internal" href="#extensions-deletions-and-legacy-features-supported-by-default" id="id2">Extensions, deletions, and legacy features supported by default</a></p>
+<ul>
+<li><p><a class="reference internal" href="#extensions-supported-when-enabled-by-options" id="id3">Extensions supported when enabled by options</a></p></li>
+<li><p><a class="reference internal" href="#extensions-and-legacy-features-deliberately-not-supported" id="id4">Extensions and legacy features deliberately not supported</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#preprocessing-behavior" id="id5">Preprocessing behavior</a></p></li>
+<li><p><a class="reference internal" href="#standard-features-not-silently-accepted" id="id6">Standard features not silently accepted</a></p></li>
+<li><p><a class="reference internal" href="#standard-features-that-might-as-well-not-be" id="id7">Standard features that might as well not be</a></p></li>
+<li><p><a class="reference internal" href="#behavior-in-cases-where-the-standard-is-ambiguous-or-indefinite" id="id8">Behavior in cases where the standard is ambiguous or indefinite</a></p></li>
+<li><p><a class="reference internal" href="#behavior-in-cases-where-the-standard-is-clear-but-disputed" id="id9">Behavior in cases where the standard is clear but disputed</a></p></li>
+<li><p><a class="reference internal" href="#de-facto-standard-features" id="id10">De Facto Standard Features</a></p></li>
+</ul>
+</nav>
+<p>As a general principle, this compiler will accept by default and
+without complaint many legacy features, extensions to the standard
+language, and features that have been deleted from the standard,
+so long as the recognition of those features would not cause a
+standard-conforming program to be rejected or misinterpreted.</p>
+<p>Other non-standard features, which do conflict with the current
+standard specification of the Fortran programming language, are
+accepted if enabled by command-line options.</p>
+<section id="intentional-violations-of-the-standard">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Intentional violations of the standard</a><a class="headerlink" href="#intentional-violations-of-the-standard" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Scalar <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> actual argument expressions (not variables!)
+are converted to the kinds of scalar <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> dummy arguments
+when the interface is explicit and the kinds differ.
+This conversion allows the results of the intrinsics like
+<code class="docutils literal notranslate"><span class="pre">SIZE</span></code> that (as mentioned below) may return non-default
+<code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> results by default to be passed.  A warning is
+emitted when truncation is possible.  These conversions
+are not applied in calls to non-intrinsic generic procedures.</p></li>
+<li><p>We are not strict on the contents of <code class="docutils literal notranslate"><span class="pre">BLOCK</span> <span class="pre">DATA</span></code> subprograms
+so long as they contain no executable code, no internal subprograms,
+and allocate no storage outside a named <code class="docutils literal notranslate"><span class="pre">COMMON</span></code> block.  (C1415)</p></li>
+<li><p>Delimited list-directed (and NAMELIST) character output is required
+to emit contiguous doubled instances of the delimiter character
+when it appears in the output value.  When fixed-size records
+are being emitted, as is the case with internal output, this
+is not possible when the problematic character falls on the last
+position of a record.  No two other Fortran compilers do the same
+thing in this situation so there is no good precedent to follow.
+Because it seems least wrong, we emit one copy of the delimiter as
+the last character of the current record and another as the first
+character of the next record.  (The second-least-wrong alternative
+might be to flag a runtime error, but that seems harsh since it’s
+not an explicit error in the standard, and the output may not have
+to be usable later as input anyway.)
+Consequently, the output is not suitable for use as list-directed or
+NAMELIST input.  If a later standard were to clarify this case, this
+behavior will change as needed to conform.</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">character</span><span class="p">(</span><span class="mi">11</span><span class="p">)</span> <span class="p">::</span> <span class="n">buffer</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">character</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span> <span class="p">::</span> <span class="n">quotes</span> <span class="o">=</span> <span class="s1">&#39;&quot;&quot;&quot;&quot;&quot;&quot;&quot;&quot;&quot;&quot;&#39;</span>
+<span class="n">write</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="o">*</span><span class="p">,</span><span class="n">delim</span><span class="o">=</span><span class="s2">&quot;QUOTE&quot;</span><span class="p">)</span> <span class="n">quotes</span>
+<span class="nb">print</span> <span class="s2">&quot;(&#39;&gt;&#39;,a10,&#39;&lt;&#39;)&quot;</span><span class="p">,</span> <span class="n">buffer</span>
+<span class="n">end</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>The name of the control variable in an implied DO loop in an array
+constructor or DATA statement has a scope over the value-list only,
+not the bounds of the implied DO loop.  It is not advisable to use
+an object of the same name as the index variable in a bounds
+expression, but it will work, instead of being needlessly undefined.</p></li>
+<li><p>If both the <code class="docutils literal notranslate"><span class="pre">COUNT=</span></code> and the <code class="docutils literal notranslate"><span class="pre">COUNT_MAX=</span></code> optional arguments are
+present on the same call to the intrinsic subroutine <code class="docutils literal notranslate"><span class="pre">SYSTEM_CLOCK</span></code>,
+we require that their types have the same integer kind, since the
+kind of these arguments is used to select the clock rate.  In common
+with some other compilers, the clock rate varies from tenths of a
+second to nanoseconds depending on argument kind and platform support.</p></li>
+<li><p>If a dimension of a descriptor has zero extent in a call to
+<code class="docutils literal notranslate"><span class="pre">CFI_section</span></code>, <code class="docutils literal notranslate"><span class="pre">CFI_setpointer</span></code> or <code class="docutils literal notranslate"><span class="pre">CFI_allocate</span></code>, the lower
+bound on that dimension will be set to 1 for consistency with
+the <code class="docutils literal notranslate"><span class="pre">LBOUND()</span></code> intrinsic function.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-2147483648_4</span></code> is, strictly speaking, a non-conforming literal
+constant on a machine with 32-bit two’s-complement integers as
+kind 4, because the grammar of Fortran expressions parses it as a
+negation of a literal constant, not a negative literal constant.
+This compiler accepts it with a portability warning.</p></li>
+<li><p>Construct names like <code class="docutils literal notranslate"><span class="pre">loop</span></code> in <code class="docutils literal notranslate"><span class="pre">loop:</span> <span class="pre">do</span> <span class="pre">j=1,n</span></code> are defined to
+be “local identifiers” and should be distinct in the “inclusive
+scope” – i.e., not scoped by <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> constructs.
+As most (but not all) compilers implement <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> scoping of construct
+names, so does Flang, with a portability warning.</p></li>
+<li><p>15.6.4 paragraph 2 prohibits an implicitly typed statement function
+from sharing the same name as a symbol in its scope’s host, if it
+has one.
+We accept this usage with a portability warning.</p></li>
+<li><p>A module name from a <code class="docutils literal notranslate"><span class="pre">USE</span></code> statement can also be used as a
+non-global name in the same scope.  This is not conforming,
+but it is useful and unambiguous.</p></li>
+<li><p>The argument to <code class="docutils literal notranslate"><span class="pre">RANDOM_NUMBER</span></code> may not be an assumed-size array.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NULL()</span></code> without <code class="docutils literal notranslate"><span class="pre">MOLD=</span></code> is not allowed to be associated as an
+actual argument corresponding to an assumed-rank dummy argument;
+its rank in the called procedure would not be well-defined.</p></li>
+<li><p>When an index variable of a <code class="docutils literal notranslate"><span class="pre">FORALL</span></code> or <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code> is present
+in the enclosing scope, and the construct does not have an explicit
+type specification for its index variables, some weird restrictions
+in F’2023 subclause 19.4 paragraphs 6 &amp; 8 should apply.  Since this
+compiler properly scopes these names, violations of these restrictions
+elicit only portability warnings by default.</p></li>
+<li><p>The standard defines the intrinsic functions <code class="docutils literal notranslate"><span class="pre">MOD</span></code> and <code class="docutils literal notranslate"><span class="pre">MODULO</span></code>
+for real arguments using expressions in terms of <code class="docutils literal notranslate"><span class="pre">AINT</span></code> and <code class="docutils literal notranslate"><span class="pre">FLOOR</span></code>.
+These definitions yield fairly poor results due to floating-point
+cancellation, and every Fortran compiler (including this one)
+uses better algorithms.</p></li>
+<li><p>The rules for pairwise distinguishing the specific procedures of a
+generic interface are inadequate, as admitted in note C.11.6 of F’2023.
+Generic interfaces whose specific procedures can be easily proven by
+hand to be pairwise distinct (i.e., no ambiguous reference is possible)
+appear in real applications, but are still non-conforming under the
+incomplete tests in F’2023 15.4.3.4.5.
+These cases are compiled with optional portability warnings.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PROCEDURE(),</span> <span class="pre">BIND(C)</span> <span class="pre">::</span> <span class="pre">PROC</span></code> is not conforming, as there is no
+procedure interface.  This compiler accepts it, since there is otherwise
+no way to declare an interoperable dummy procedure with an arbitrary
+interface like <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">(*)()</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PURE</span></code> functions are allowed to have dummy arguments that are
+neither <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> nor <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>, similar to <code class="docutils literal notranslate"><span class="pre">PURE</span></code> subroutines,
+with a warning.
+This enables atomic memory operations to be naturally represented
+as <code class="docutils literal notranslate"><span class="pre">PURE</span></code> functions, which allows their use in parallel constructs
+and <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>.</p></li>
+<li><p>A non-definable actual argument, including the case of a vector
+subscript, may be associated with an <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> or <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code>
+dummy argument, F’2023 15.5.2.5 p21 notwithstanding.
+The effects of these attributes are scoped over the lifetime of
+the procedure reference, and they can by added by internal subprograms
+and <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> constructs within the procedure.
+Further, a dummy argument can acquire the <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> attribute
+implicitly simply appearing in an asynchronous data transfer statement,
+without the attribute being visible in the procedure’s explicit
+interface.</p></li>
+<li><p>When the name of an extended derived type’s base type is the
+result of <code class="docutils literal notranslate"><span class="pre">USE</span></code> association with renaming, the name of the extended
+derived type’s parent component is the new name by which the base
+is known in the scope of the extended derived type, not the original.
+This interpretation has usability advantages and is what six other
+Fortran compilers do, but is not conforming now that J3 approved an
+“interp” in June 2024 to the contrary.</p></li>
+<li><p>When an Arm processor raises an <code class="docutils literal notranslate"><span class="pre">ieee_overflow</span></code> or <code class="docutils literal notranslate"><span class="pre">ieee_underflow</span></code>
+exception, the <code class="docutils literal notranslate"><span class="pre">ieee_inexact</span></code> exception is also raised. This happens
+for a call to <code class="docutils literal notranslate"><span class="pre">ieee_set_flag</span></code> as well as for floating point expression
+evaluation.</p></li>
+<li><p>Arm has processors that allow a user to control what happens when an
+arithmetic exception is signaled, as well as processors that do not
+have this capability. An Arm executable will run on either type of
+processor, so it is effectively unknown at compile time whether or
+not this support will be available at runtime. The standard requires
+that a call to intrinsic module procedure <code class="docutils literal notranslate"><span class="pre">ieee_support_halting</span></code> with
+a constant argument has a compile time constant result in <code class="docutils literal notranslate"><span class="pre">constant</span> <span class="pre">expression</span></code> and <code class="docutils literal notranslate"><span class="pre">specification</span> <span class="pre">expression</span></code> contexts. In compilations
+where this information is not known at compile time, Flang generates code
+to determine the absence or presence of this capability at runtime.
+A call to <code class="docutils literal notranslate"><span class="pre">ieee_support_halting</span></code> in contexts that the standard requires
+to be constant will generate a compilation error. <code class="docutils literal notranslate"><span class="pre">ieee_support_standard</span></code>
+depends in part on <code class="docutils literal notranslate"><span class="pre">ieee_support_halting</span></code>, so this also applies to
+<code class="docutils literal notranslate"><span class="pre">ieee_support_standard</span></code> calls.</p></li>
+<li><p>F’2023 constraint C7108 prohibits the use of a structure constructor
+that could also be interpreted as a generic function reference.
+No other Fortran compiler enforces C7108 (to our knowledge);
+they all resolve the ambiguity by interpreting the call as a function
+reference.  We do the same, with a portability warning.</p></li>
+<li><p>An override for an inaccessible procedure binding works only within
+the same module; other apparent overrides of inaccessible bindings
+are actually new bindings of the same name.
+In the case of <code class="docutils literal notranslate"><span class="pre">DEFERRED</span></code> bindings in an <code class="docutils literal notranslate"><span class="pre">ABSTRACT</span></code> derived type,
+however, overrides are necessary, so they are permitted for inaccessible
+bindings with an optional warning.</p></li>
+<li><p>Main program name is allowed to be the same as the other symbols used
+in the main program, for example:</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">module</span> <span class="n">m</span>
+<span class="n">end</span>
+<span class="n">program</span> <span class="n">m</span>
+<span class="n">use</span> <span class="n">m</span>
+<span class="n">end</span>
+</pre></div>
+</div>
+<p>Note that internally the main program symbol name is all uppercase, unlike
+the names of all other symbols, which are usually all lowercase. This
+may make a difference in testing/debugging.</p>
+<ul class="simple">
+<li><p>A <code class="docutils literal notranslate"><span class="pre">PROCEDURE()</span></code> with no interface name or type may be called as an
+subroutine with an implicit interface, F’2023 15.4.3.6 paragraph 4 and
+C1525 notwithstanding.
+This is a universally portable feature, and it also applies to
+<code class="docutils literal notranslate"><span class="pre">PROCEDURE(),</span> <span class="pre">POINTER,</span> <span class="pre">NOPASS</span></code> derived type components.
+Such procedures may <em>not</em> be referenced as implicitly typed functions
+without first being associated with a function pointer.</p></li>
+<li><p>Some intrinsic functions (<code class="docutils literal notranslate"><span class="pre">COUNT</span></code>, <code class="docutils literal notranslate"><span class="pre">LBOUND</span></code>, <code class="docutils literal notranslate"><span class="pre">LCOBOUND</span></code>, <code class="docutils literal notranslate"><span class="pre">TRANSFER</span></code>,
+<code class="docutils literal notranslate"><span class="pre">UBOUND</span></code>, and <code class="docutils literal notranslate"><span class="pre">UCOBOUND</span></code>) have arguments (usually <code class="docutils literal notranslate"><span class="pre">DIM=</span></code>) that are documented
+as not allowing <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code> dummy arguments to appear as their values.
+This prohibition appeared on the <code class="docutils literal notranslate"><span class="pre">DIM=</span></code> arguments of more
+intrinsic functions in earlier revisions of the ISO standard.
+(Perhaps these are meant to avoid misunderstanding these arguments,
+which appear in square brackets in the synopses, as if their dynamic
+presence at runtime could affect the semantics of the intrinsic in
+the same way as the static presence or absence of the argument does
+at compilation time, which would not be possible.)
+No compiler seems to enforce this requirement.
+We interpret it
+to mean that an <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code> dummy argument may appear but must be present
+during execution, just as a pointer argument must be associated or an
+allocatable argument must be allocated.</p></li>
+</ul>
+</section>
+<section id="extensions-deletions-and-legacy-features-supported-by-default">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Extensions, deletions, and legacy features supported by default</a><a class="headerlink" href="#extensions-deletions-and-legacy-features-supported-by-default" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Tabs in source</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&lt;&gt;</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">.NE.</span></code> and <code class="docutils literal notranslate"><span class="pre">/=</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">$</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;</span></code> as legal characters in names</p></li>
+<li><p>Initialization in type declaration statements using <code class="docutils literal notranslate"><span class="pre">/values/</span></code></p></li>
+<li><p>Saved variables without explicit or default initializers are zero initialized,
+except for scalar variables from the main program that are not explicitly
+initialized or marked with an explicit SAVE attribute (these variables may be
+placed on the stack by flang and not zero initialized). It is not advised to
+rely on this extension in new code.</p></li>
+<li><p>In a saved entity of a type with a default initializer, components without default
+values are zero initialized.</p></li>
+<li><p>Kind specification with <code class="docutils literal notranslate"><span class="pre">*</span></code>, e.g. <code class="docutils literal notranslate"><span class="pre">REAL*4</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DOUBLE</span> <span class="pre">COMPLEX</span></code> as a synonym for <code class="docutils literal notranslate"><span class="pre">COMPLEX(KIND(0.D0))</span></code> –
+but not when spelled <code class="docutils literal notranslate"><span class="pre">TYPE(DOUBLECOMPLEX)</span></code>.</p></li>
+<li><p>Signed complex literal constants</p></li>
+<li><p>DEC <code class="docutils literal notranslate"><span class="pre">STRUCTURE</span></code>, <code class="docutils literal notranslate"><span class="pre">RECORD</span></code>, with ‘%FILL’; but <code class="docutils literal notranslate"><span class="pre">UNION</span></code>, and <code class="docutils literal notranslate"><span class="pre">MAP</span></code>
+are not yet supported throughout compilation, and elicit a
+“not yet implemented” message.</p></li>
+<li><p>Structure field access with <code class="docutils literal notranslate"><span class="pre">.field</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BYTE</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">INTEGER(KIND=1)</span></code>; but not when spelled <code class="docutils literal notranslate"><span class="pre">TYPE(BYTE)</span></code>.</p></li>
+<li><p>When kind-param is used for REAL literals, allow a matching exponent letter</p></li>
+<li><p>Quad precision REAL literals with <code class="docutils literal notranslate"><span class="pre">Q</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> prefix/suffix as synonym for <code class="docutils literal notranslate"><span class="pre">Z</span></code> on hexadecimal literals</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">B</span></code>, <code class="docutils literal notranslate"><span class="pre">O</span></code>, <code class="docutils literal notranslate"><span class="pre">Z</span></code>, and <code class="docutils literal notranslate"><span class="pre">X</span></code> accepted as suffixes as well as prefixes</p></li>
+<li><p>Support for using bare <code class="docutils literal notranslate"><span class="pre">L</span></code> in FORMAT statement</p></li>
+<li><p>Triplets allowed in array constructors</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">%LOC</span></code>, <code class="docutils literal notranslate"><span class="pre">%VAL</span></code>, and <code class="docutils literal notranslate"><span class="pre">%REF</span></code></p></li>
+<li><p>Leading comma allowed before I/O item list</p></li>
+<li><p>Empty parentheses allowed in <code class="docutils literal notranslate"><span class="pre">PROGRAM</span> <span class="pre">P()</span></code></p></li>
+<li><p>Missing parentheses allowed in <code class="docutils literal notranslate"><span class="pre">FUNCTION</span> <span class="pre">F</span></code></p></li>
+<li><p>Cray based <code class="docutils literal notranslate"><span class="pre">POINTER(p,x)</span></code> and <code class="docutils literal notranslate"><span class="pre">LOC()</span></code> intrinsic (with <code class="docutils literal notranslate"><span class="pre">%LOC()</span></code> as
+an alias)</p></li>
+<li><p>Arithmetic <code class="docutils literal notranslate"><span class="pre">IF</span></code>.  (Which branch should NaN take? Fall through?)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ASSIGN</span></code> statement, assigned <code class="docutils literal notranslate"><span class="pre">GO</span> <span class="pre">TO</span></code>, and assigned format</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PAUSE</span></code> statement</p></li>
+<li><p>Hollerith literals and edit descriptors</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> allowed in the execution part</p></li>
+<li><p>Omitted colons on type declaration statements with attributes</p></li>
+<li><p>COMPLEX constructor expression, e.g. <code class="docutils literal notranslate"><span class="pre">(x+y,z)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">+</span></code> and <code class="docutils literal notranslate"><span class="pre">-</span></code> before all primary expressions, e.g. <code class="docutils literal notranslate"><span class="pre">x*-y</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.NOT.</span> <span class="pre">.NOT.</span></code> accepted</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NAME=</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">FILE=</span></code></p></li>
+<li><p>Data edit descriptors without width or other details</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">D</span></code> lines in fixed form as comments or debug code</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CARRIAGECONTROL=</span></code> on the OPEN and INQUIRE statements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CONVERT=</span></code> on the OPEN and INQUIRE statements</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DISPOSE=</span></code> on the OPEN and INQUIRE statements</p></li>
+<li><p>Leading semicolons are ignored before any statement that
+could have a label</p></li>
+<li><p>The character <code class="docutils literal notranslate"><span class="pre">&amp;</span></code> in column 1 in fixed form source is a variant form
+of continuation line.</p></li>
+<li><p>Character literals as elements of an array constructor without an explicit
+type specifier need not have the same length; the longest literal determines
+the length parameter of the implicit type, not the first.</p></li>
+<li><p>Outside a character literal, a comment after a continuation marker (&amp;)
+need not begin with a comment marker (!).</p></li>
+<li><p>Classic C-style <code class="docutils literal notranslate"><span class="pre">/*comments*/</span></code> are skipped, so multi-language header
+files are easier to write and use.</p></li>
+<li><p>$ and \ edit descriptors are supported in FORMAT to suppress newline
+output on user prompts.</p></li>
+<li><p>Tabs in format strings (not <code class="docutils literal notranslate"><span class="pre">FORMAT</span></code> statements) are allowed on output.</p></li>
+<li><p>REAL and DOUBLE PRECISION variable and bounds in DO loops</p></li>
+<li><p>Integer literals without explicit kind specifiers that are out of range
+for the default kind of INTEGER are assumed to have the least larger kind
+that can hold them, if one exists.</p></li>
+<li><p>BOZ literals can be used as INTEGER values in contexts where the type is
+unambiguous: the right hand sides of assignments and initializations
+of INTEGER entities, as actual arguments to a few intrinsic functions
+(ACHAR, BTEST, CHAR), and as actual arguments of references to
+procedures with explicit interfaces whose corresponding dummy
+argument has a numeric type to which the BOZ literal may be
+converted.  BOZ literals are interpreted as default INTEGER only
+when they appear as the first items of array constructors with no
+explicit type.  Otherwise, they generally cannot be used if the type would
+not be known (e.g., <code class="docutils literal notranslate"><span class="pre">IAND(X'1',X'2')</span></code>, or as arguments of <code class="docutils literal notranslate"><span class="pre">DIM</span></code>, <code class="docutils literal notranslate"><span class="pre">MOD</span></code>,
+<code class="docutils literal notranslate"><span class="pre">MODULO</span></code>, and <code class="docutils literal notranslate"><span class="pre">SIGN</span></code>. Note that while other compilers may accept such usages,
+the type resolution of such BOZ literals usages is highly non portable).</p></li>
+<li><p>BOZ literals can also be used as REAL values in some contexts where the
+type is unambiguous, such as initializations of REAL parameters.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TRANSFER(boz,</span> <span class="pre">MOLD=integer</span> <span class="pre">or</span> <span class="pre">real</span> <span class="pre">scalar)</span></code> is accepted as an alternate
+spelling of <code class="docutils literal notranslate"><span class="pre">INT(boz,</span> <span class="pre">KIND=kind(mold))</span></code> or <code class="docutils literal notranslate"><span class="pre">REAL(boz,</span> <span class="pre">KIND=kind(mold))</span></code>.</p></li>
+<li><p>EQUIVALENCE of numeric and character sequences (a ubiquitous extension),
+as well as of sequences of non-default kinds of numeric types
+with each other.</p></li>
+<li><p>Values for whole anonymous parent components in structure constructors
+(e.g., <code class="docutils literal notranslate"><span class="pre">EXTENDEDTYPE(PARENTTYPE(1,2,3))</span></code> rather than <code class="docutils literal notranslate"><span class="pre">EXTENDEDTYPE(1,2,3)</span></code>
+or <code class="docutils literal notranslate"><span class="pre">EXTENDEDTYPE(PARENTTYPE=PARENTTYPE(1,2,3))</span></code>).</p></li>
+<li><p>Some intrinsic functions are specified in the standard as requiring the
+same type and kind for their arguments (viz., ATAN with two arguments,
+ATAN2, DIM, HYPOT, IAND, IEOR, IOR, MAX, MIN, MOD, and MODULO);
+we allow distinct types to be used, promoting
+the arguments as if they were operands to an intrinsic <code class="docutils literal notranslate"><span class="pre">+</span></code> operator,
+and defining the result type accordingly.</p></li>
+<li><p>DOUBLE COMPLEX intrinsics DREAL, DCMPLX, DCONJG, and DIMAG.</p></li>
+<li><p>The DFLOAT intrinsic function.</p></li>
+<li><p>INT_PTR_KIND intrinsic returns the kind of c_intptr_t.</p></li>
+<li><p>Restricted specific conversion intrinsics FLOAT, SNGL, IDINT, IFIX, DREAL,
+and DCMPLX accept arguments of any kind instead of only the default kind or
+double precision kind. Their result kinds remain as specified.</p></li>
+<li><p>Specific intrinsics AMAX0, AMAX1, AMIN0, AMIN1, DMAX1, DMIN1, MAX0, MAX1,
+MIN0, and MIN1 accept more argument types than specified. They are replaced by
+the related generics followed by conversions to the specified result types.</p></li>
+<li><p>When a scalar CHARACTER actual argument of the same kind is known to
+have a length shorter than the associated dummy argument, it is extended
+on the right with blanks, similar to assignment.</p></li>
+<li><p>When a dummy argument is <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> or <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> and is <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code>, we
+relax enforcement of some requirements on actual arguments that must otherwise
+hold true for definable arguments.</p></li>
+<li><p>We allow a limited polymorphic <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> or <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> actual argument
+to be associated with a compatible monomorphic dummy argument, as
+our implementation, like others, supports a reallocation that would
+change the dynamic type</p></li>
+<li><p>Assignment of <code class="docutils literal notranslate"><span class="pre">LOGICAL</span></code> to <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> and vice versa (but not other types) is
+allowed.  The values are normalized to canonical <code class="docutils literal notranslate"><span class="pre">.TRUE.</span></code>/<code class="docutils literal notranslate"><span class="pre">.FALSE.</span></code>.
+The values are also normalized for assignments of <code class="docutils literal notranslate"><span class="pre">LOGICAL(KIND=K1)</span></code> to
+<code class="docutils literal notranslate"><span class="pre">LOGICAL(KIND=K2)</span></code>, when <code class="docutils literal notranslate"><span class="pre">K1</span> <span class="pre">!=</span> <span class="pre">K2</span></code>.</p></li>
+<li><p>Static initialization of <code class="docutils literal notranslate"><span class="pre">LOGICAL</span></code> with <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> is allowed in <code class="docutils literal notranslate"><span class="pre">DATA</span></code> statements
+and object initializers.
+The results are <em>not</em> normalized to canonical <code class="docutils literal notranslate"><span class="pre">.TRUE.</span></code>/<code class="docutils literal notranslate"><span class="pre">.FALSE.</span></code>.
+Static initialization of <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> with <code class="docutils literal notranslate"><span class="pre">LOGICAL</span></code> is also permitted.</p></li>
+<li><p>An effectively empty source file (no program unit) is accepted and
+produces an empty relocatable output file.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">RETURN</span></code> statement may appear in a main program.</p></li>
+<li><p>DATA statement initialization is allowed for procedure pointers outside
+structure constructors.</p></li>
+<li><p>Nonstandard intrinsic functions: ISNAN, SIZEOF</p></li>
+<li><p>A forward reference to an INTEGER dummy argument is permitted to appear
+in a specification expression, such as an array bound, in a scope with
+IMPLICIT NONE(TYPE).</p></li>
+<li><p>A forward reference to a default INTEGER scalar
+<code class="docutils literal notranslate"><span class="pre">COMMON</span></code> block variable is permitted to appear in a specification
+expression, such as an array bound, in a scope with IMPLICIT NONE(TYPE)
+if the name of the variable would have caused it to be implicitly typed
+as default INTEGER if IMPLICIT NONE(TYPE) were absent.</p></li>
+<li><p>OPEN(ACCESS=’APPEND’) is interpreted as OPEN(POSITION=’APPEND’)
+to ease porting from Sun Fortran.</p></li>
+<li><p>Intrinsic subroutines EXIT([status]) and ABORT()</p></li>
+<li><p>The definition of simple contiguity in 9.5.4 applies only to arrays;
+we also treat scalars as being trivially contiguous, so that they
+can be used in contexts like data targets in pointer assignments
+with bounds remapping.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code> attribute can be redundantly applied to simply
+contiguous objects, including scalars, with a portability warning.</p></li>
+<li><p>We support some combinations of specific procedures in generic
+interfaces that a strict reading of the standard would preclude
+when their calls must nonetheless be distinguishable.
+Specifically, <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy arguments are distinguishing
+if an actual argument acceptable to one could not be passed to
+the other &amp; vice versa because exactly one is polymorphic or
+exactly one is unlimited polymorphic).</p></li>
+<li><p>External unit 0 is predefined and connected to the standard error output,
+and defined as <code class="docutils literal notranslate"><span class="pre">ERROR_UNIT</span></code> in the intrinsic <code class="docutils literal notranslate"><span class="pre">ISO_FORTRAN_ENV</span></code> module.</p></li>
+<li><p>Objects in blank COMMON may be initialized.</p></li>
+<li><p>Initialization of COMMON blocks outside of BLOCK DATA subprograms.</p></li>
+<li><p>Multiple specifications of the SAVE attribute on the same object
+are allowed, with a warning.</p></li>
+<li><p>Specific intrinsic functions BABS, IIABS, JIABS, KIABS, ZABS, and CDABS.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> component’s type need not be a sequence type when
+the component appears in a derived type with <code class="docutils literal notranslate"><span class="pre">SEQUENCE</span></code>.
+(This case should probably be an exception to constraint C740 in
+the standard.)</p></li>
+<li><p>Format expressions that have type but are not character and not
+integer scalars are accepted so long as they are simply contiguous.
+This legacy extension supports pre-Fortran’77 usage in which
+variables initialized in DATA statements with Hollerith literals
+as modifiable formats.</p></li>
+<li><p>At runtime, <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> input will skip over <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> groups
+with other names, and will treat text before and between groups
+as if they were comment lines, even if not begun with <code class="docutils literal notranslate"><span class="pre">!</span></code>.</p></li>
+<li><p>Commas are required in FORMAT statements and character variables
+only when they prevent ambiguity.</p></li>
+<li><p>Legacy names <code class="docutils literal notranslate"><span class="pre">AND</span></code>, <code class="docutils literal notranslate"><span class="pre">OR</span></code>, and <code class="docutils literal notranslate"><span class="pre">XOR</span></code> are accepted as aliases for
+the standard intrinsic functions <code class="docutils literal notranslate"><span class="pre">IAND</span></code>, <code class="docutils literal notranslate"><span class="pre">IOR</span></code>, and <code class="docutils literal notranslate"><span class="pre">IEOR</span></code>
+respectively.</p></li>
+<li><p>A digit count of d=0 is accepted in Ew.0, Dw.0, and Gw.0 output
+editing if no nonzero scale factor (kP) is in effect.</p></li>
+<li><p>The name <code class="docutils literal notranslate"><span class="pre">IMAG</span></code> is accepted as an alias for the generic intrinsic
+function <code class="docutils literal notranslate"><span class="pre">AIMAG</span></code>.</p></li>
+<li><p>The legacy extension intrinsic functions <code class="docutils literal notranslate"><span class="pre">IZEXT</span></code> and <code class="docutils literal notranslate"><span class="pre">JZEXT</span></code>
+are supported; <code class="docutils literal notranslate"><span class="pre">ZEXT</span></code> has different behavior with various older
+compilers, so it is not supported.</p></li>
+<li><p>Flang doesn’t impose a limit on the number of continuation lines
+allowed for a single statement.</p></li>
+<li><p>When a type-bound procedure declaration statement has neither interface
+nor attributes, the “::” before the bindings is optional, even
+if a binding has renaming with “=&gt; proc”.
+The colons are not necessary for an unambiguous parse, C768
+notwithstanding.</p></li>
+<li><p>A type-bound procedure binding can be passed as an actual
+argument corresponding to a dummy procedure and can be used as
+the target of a procedure pointer assignment statement.</p></li>
+<li><p>An explicit <code class="docutils literal notranslate"><span class="pre">INTERFACE</span></code> can declare the interface of a
+procedure pointer even if it is not a dummy argument.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">NOPASS</span></code> type-bound procedure binding is required by C1529
+to apply only to a scalar data-ref, but most compilers don’t
+enforce it and the constraint is not necessary for a correct
+implementation.</p></li>
+<li><p>A label may follow a semicolon in fixed form source.</p></li>
+<li><p>A logical dummy argument to a <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code> procedure, or a logical
+component to a <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code> derived type does not have to have
+<code class="docutils literal notranslate"><span class="pre">KIND=C_BOOL</span></code> since it can be converted to/from <code class="docutils literal notranslate"><span class="pre">_Bool</span></code> without
+loss of information.</p></li>
+<li><p>The character length of the <code class="docutils literal notranslate"><span class="pre">SOURCE=</span></code> or <code class="docutils literal notranslate"><span class="pre">MOLD=</span></code> in <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code>
+may be distinct from the constant character length, if any,
+of an allocated object.</p></li>
+<li><p>When a name is brought into a scope by multiple ways,
+such as USE-association as well as an <code class="docutils literal notranslate"><span class="pre">IMPORT</span></code> from its host,
+it’s an error only if the resolution is ambiguous.</p></li>
+<li><p>An entity may appear in a <code class="docutils literal notranslate"><span class="pre">DATA</span></code> statement before its explicit
+type declaration under <code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">NONE(TYPE)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">INCLUDE</span></code> lines can start in any column, can be preceded in
+fixed form source by a ‘0’ in column 6, can contain spaces
+between the letters of the word INCLUDE, and can have a
+numeric character literal kind prefix on the file name.</p></li>
+<li><p>Intrinsic procedures SIND, COSD, TAND and ATAND. Constant folding
+is currently not supported for these procedures but this is planned.</p></li>
+<li><p>When a pair of quotation marks in a character literal are split
+by a line continuation in free form, the second quotation mark
+may appear at the beginning of the continuation line without an
+ampersand, althought one is required by the standard.</p></li>
+<li><p>Unrestricted <code class="docutils literal notranslate"><span class="pre">INTRINSIC</span></code> functions are accepted for use in
+<code class="docutils literal notranslate"><span class="pre">PROCEDURE</span></code> statements in generic interfaces, as in some other
+compilers.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">NULL()</span></code> pointer is treated as an unallocated allocatable
+when associated with an <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> allocatable dummy argument.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">READ(...,</span> <span class="pre">SIZE=n)</span></code> is accepted with <code class="docutils literal notranslate"><span class="pre">NML=</span></code> and <code class="docutils literal notranslate"><span class="pre">FMT=*</span></code> with
+a portability warning.
+The Fortran standard doesn’t allow <code class="docutils literal notranslate"><span class="pre">SIZE=</span></code> with formatted input
+modes that might require look-ahead, perhaps to ease implementations.</p></li>
+<li><p>When a file included via an <code class="docutils literal notranslate"><span class="pre">INCLUDE</span></code> line or <code class="docutils literal notranslate"><span class="pre">#include</span></code> directive
+has a continuation marker at the end of its last line in free form,
+Fortran line continuation works.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> input group may omit its trailing <code class="docutils literal notranslate"><span class="pre">/</span></code> character if
+it is followed by another <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> input group.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> input group may begin with either <code class="docutils literal notranslate"><span class="pre">&amp;</span></code> or <code class="docutils literal notranslate"><span class="pre">$</span></code>.</p></li>
+<li><p>A comma (or semicolon in <code class="docutils literal notranslate"><span class="pre">DECIMAL='COMMA'</span></code> or <code class="docutils literal notranslate"><span class="pre">DC</span></code> mode) in a
+fixed-width numeric input field terminates the field rather than
+signaling an invalid character error.</p></li>
+<li><p>Arguments to the intrinsic functions <code class="docutils literal notranslate"><span class="pre">MAX</span></code> and <code class="docutils literal notranslate"><span class="pre">MIN</span></code> are converted
+when necessary to the type of the result.
+An <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code>, <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, or <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> argument after
+the first two cannot be converted, as it may not be present.</p></li>
+<li><p>A derived type that meets (most of) the requirements of an interoperable
+derived type can be used as such where an interoperable type is
+required, with warnings, even if it lacks the BIND(C) attribute.</p></li>
+<li><p>A “mult-operand” in an expression can be preceded by a unary
+<code class="docutils literal notranslate"><span class="pre">+</span></code> or <code class="docutils literal notranslate"><span class="pre">-</span></code> operator.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BIND(C,</span> <span class="pre">NAME=&quot;...&quot;,</span> <span class="pre">CDEFINED)</span></code> signifies that the storage for an
+interoperable variable will be allocated outside of Fortran,
+probably by a C or C++ external definition.</p></li>
+<li><p>An automatic data object may be declared in the specification part
+of the main program.</p></li>
+<li><p>A local data object may appear in a specification expression, even
+when it is not a dummy argument or in COMMON, so long as it is
+has the SAVE attribute and was initialized.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PRINT</span> <span class="pre">namelistname</span></code> is accepted and interpreted as
+<code class="docutils literal notranslate"><span class="pre">WRITE(*,NML=namelistname)</span></code>, a near-universal extension.</p></li>
+<li><p>A character length specifier in a component or entity declaration
+is accepted before an array specification (<code class="docutils literal notranslate"><span class="pre">ch*3(2)</span></code>) as well
+as afterwards.</p></li>
+<li><p>A zero field width is allowed for logical formatted output (<code class="docutils literal notranslate"><span class="pre">L0</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OPEN(...,</span> <span class="pre">FORM='BINARY')</span></code> is accepted as a legacy synonym for
+the standard <code class="docutils literal notranslate"><span class="pre">OPEN(...,</span> <span class="pre">FORM='UNFORMATTED',</span> <span class="pre">ACCESS='STREAM')</span></code>.</p></li>
+<li><p>A character string edit descriptor is allowed in an input format
+with an optional compilation-time warning.  When executed, it
+is treated as an ‘nX’ positioning control descriptor that skips
+over the same number of characters, without comparison.</p></li>
+<li><p>A passed-object dummy argument for a procedure binding is allowed
+to be a pointer so long as it is <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code>.
+(This extension is not yet supported for procedure pointer component
+interfaces.)</p></li>
+</ul>
+<section id="extensions-supported-when-enabled-by-options">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Extensions supported when enabled by options</a><a class="headerlink" href="#extensions-supported-when-enabled-by-options" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>C-style backslash escape sequences in quoted CHARACTER literals
+(but not Hollerith) [-fbackslash], including Unicode escapes
+with <code class="docutils literal notranslate"><span class="pre">\U</span></code>.</p></li>
+<li><p>Logical abbreviations <code class="docutils literal notranslate"><span class="pre">.T.</span></code>, <code class="docutils literal notranslate"><span class="pre">.F.</span></code>, <code class="docutils literal notranslate"><span class="pre">.N.</span></code>, <code class="docutils literal notranslate"><span class="pre">.A.</span></code>, <code class="docutils literal notranslate"><span class="pre">.O.</span></code>, and <code class="docutils literal notranslate"><span class="pre">.X.</span></code>
+[-flogical-abbreviations]</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">.XOR.</span></code> as a synonym for <code class="docutils literal notranslate"><span class="pre">.NEQV.</span></code> [-fxor-operator]</p></li>
+<li><p>The default <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code> type is required by the standard to occupy
+the same amount of storage as the default <code class="docutils literal notranslate"><span class="pre">REAL</span></code> type.  Default
+<code class="docutils literal notranslate"><span class="pre">REAL</span></code> is of course 32-bit IEEE-754 floating-point today.  This legacy
+rule imposes an artificially small constraint in some cases
+where Fortran mandates that something have the default <code class="docutils literal notranslate"><span class="pre">INTEGER</span></code>
+type: specifically, the results of references to the intrinsic functions
+<code class="docutils literal notranslate"><span class="pre">SIZE</span></code>, <code class="docutils literal notranslate"><span class="pre">STORAGE_SIZE</span></code>,<code class="docutils literal notranslate"><span class="pre">LBOUND</span></code>, <code class="docutils literal notranslate"><span class="pre">UBOUND</span></code>, <code class="docutils literal notranslate"><span class="pre">SHAPE</span></code>, and the location reductions
+<code class="docutils literal notranslate"><span class="pre">FINDLOC</span></code>, <code class="docutils literal notranslate"><span class="pre">MAXLOC</span></code>, and <code class="docutils literal notranslate"><span class="pre">MINLOC</span></code> in the absence of an explicit
+<code class="docutils literal notranslate"><span class="pre">KIND=</span></code> actual argument.  We return <code class="docutils literal notranslate"><span class="pre">INTEGER(KIND=8)</span></code> by default in
+these cases when the <code class="docutils literal notranslate"><span class="pre">-flarge-sizes</span></code> option is enabled.
+<code class="docutils literal notranslate"><span class="pre">SIZEOF</span></code> and <code class="docutils literal notranslate"><span class="pre">C_SIZEOF</span></code> always return <code class="docutils literal notranslate"><span class="pre">INTEGER(KIND=8)</span></code>.</p></li>
+<li><p>Treat each specification-part like is has <code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">NONE</span></code>
+[-fimplicit-none-type-always]</p></li>
+<li><p>Ignore occurrences of <code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">NONE</span></code> and <code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">NONE(TYPE)</span></code>
+[-fimplicit-none-type-never]</p></li>
+<li><p>Old-style <code class="docutils literal notranslate"><span class="pre">PARAMETER</span> <span class="pre">pi=3.14</span></code> statement without parentheses
+[-falternative-parameter-statement]</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">UNSIGNED</span></code> type (-funsigned)</p></li>
+<li><p>Default exponent of zero, e.g. <code class="docutils literal notranslate"><span class="pre">3.14159E</span></code>, on a READ from a
+fixed-width input field.  Includes the case with only an
+exponent letter for compatibility with other compilers.</p></li>
+</ul>
+</section>
+<section id="extensions-and-legacy-features-deliberately-not-supported">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Extensions and legacy features deliberately not supported</a><a class="headerlink" href="#extensions-and-legacy-features-deliberately-not-supported" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">.LG.</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">.NE.</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">REDIMENSION</span></code></p></li>
+<li><p>Allocatable <code class="docutils literal notranslate"><span class="pre">COMMON</span></code></p></li>
+<li><p>Expressions in formats</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ACCEPT</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">READ</span> <span class="pre">*</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TYPE</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">PRINT</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ARRAY</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">DIMENSION</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">VIRTUAL</span></code> as synonym for <code class="docutils literal notranslate"><span class="pre">DIMENSION</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ENCODE</span></code> and <code class="docutils literal notranslate"><span class="pre">DECODE</span></code> as synonyms for internal I/O</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">AUTOMATIC</span></code>, <code class="docutils literal notranslate"><span class="pre">IMPLICIT</span> <span class="pre">STATIC</span></code></p></li>
+<li><p>Default exponent of zero, e.g. <code class="docutils literal notranslate"><span class="pre">3.14159E</span></code>, on a literal constant</p></li>
+<li><p>Characters in defined operators that are neither letters nor digits</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">B</span></code> suffix on unquoted octal constants</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Z</span></code> prefix on unquoted hexadecimal constants (dangerous)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T</span></code> and <code class="docutils literal notranslate"><span class="pre">F</span></code> as abbreviations for <code class="docutils literal notranslate"><span class="pre">.TRUE.</span></code> and <code class="docutils literal notranslate"><span class="pre">.FALSE.</span></code> in DATA (PGI/XLF)</p></li>
+<li><p>Use of host FORMAT labels in internal subprograms (PGI-only feature)</p></li>
+<li><p>ALLOCATE(TYPE(derived)::…) as variant of correct ALLOCATE(derived::…) (PGI only)</p></li>
+<li><p>Defining an explicit interface for a subprogram within itself (PGI only)</p></li>
+<li><p>USE association of a procedure interface within that same procedure’s definition</p></li>
+<li><p>NULL() as a structure constructor expression for an ALLOCATABLE component (PGI).</p></li>
+<li><p>Conversion of LOGICAL to INTEGER in expressions.</p></li>
+<li><p>Use of INTEGER data with the intrinsic logical operators <code class="docutils literal notranslate"><span class="pre">.NOT.</span></code>, <code class="docutils literal notranslate"><span class="pre">.AND.</span></code>, <code class="docutils literal notranslate"><span class="pre">.OR.</span></code>,
+and <code class="docutils literal notranslate"><span class="pre">.XOR.</span></code>.</p></li>
+<li><p>IF (integer expression) THEN … END IF  (PGI/Intel)</p></li>
+<li><p>Comparison of LOGICAL with ==/.EQ. rather than .EQV. (also .NEQV.) (PGI/Intel)</p></li>
+<li><p>Procedure pointers in COMMON blocks (PGI/Intel)</p></li>
+<li><p>Underindexing multi-dimensional arrays (e.g., A(1) rather than A(1,1)) (PGI only)</p></li>
+<li><p>Legacy PGI <code class="docutils literal notranslate"><span class="pre">NCHARACTER</span></code> type and <code class="docutils literal notranslate"><span class="pre">NC</span></code> Kanji character literals</p></li>
+<li><p>Using non-integer expressions for array bounds (e.g., REAL A(3.14159)) (PGI/Intel)</p></li>
+<li><p>Mixing INTEGER types as operands to bit intrinsics (e.g., IAND); only two
+compilers support it, and they disagree on sign extension.</p></li>
+<li><p>Module &amp; program names that conflict with an object inside the unit (PGI only).</p></li>
+<li><p>When the same name is brought into scope via USE association from
+multiple modules, the name must refer to a generic interface; PGI
+allows a name to be a procedure from one module and a generic interface
+from another.</p></li>
+<li><p>Type parameter declarations must come first in a derived type definition;
+some compilers allow them to follow <code class="docutils literal notranslate"><span class="pre">PRIVATE</span></code>, or be intermixed with the
+component declarations.</p></li>
+<li><p>Wrong argument types in calls to specific intrinsics that have different names than the
+related generics. Some accepted exceptions are listed above in the allowed extensions.
+PGI, Intel, and XLF support this in ways that are not numerically equivalent.
+PGI converts the arguments while Intel and XLF replace the specific by the related generic.</p></li>
+<li><p>VMS listing control directives (<code class="docutils literal notranslate"><span class="pre">%LIST</span></code>, <code class="docutils literal notranslate"><span class="pre">%NOLIST</span></code>, <code class="docutils literal notranslate"><span class="pre">%EJECT</span></code>)</p></li>
+<li><p>Continuation lines on <code class="docutils literal notranslate"><span class="pre">INCLUDE</span></code> lines</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NULL()</span></code> actual argument corresponding to an <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy data object</p></li>
+<li><p>User (non-intrinsic) <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> procedures may not be passed as actual
+arguments, in accordance with the standard; some Fortran compilers
+permit such usage.</p></li>
+<li><p>Constraint C1406, which prohibits the same module name from being used
+in a scope for both an intrinsic and a non-intrinsic module, is implemented
+as a portability warning only, not a hard error.</p></li>
+<li><p>IBM &#64;PROCESS directive is accepted but ignored.</p></li>
+</ul>
+</section>
+</section>
+<section id="preprocessing-behavior">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Preprocessing behavior</a><a class="headerlink" href="#preprocessing-behavior" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>The preprocessor is always run, whatever the filename extension may be.</p></li>
+<li><p>We respect Fortran comments in macro actual arguments (like GNU, Intel, NAG;
+unlike PGI and XLF) on the principle that macro calls should be treated
+like function references.  Fortran’s line continuation methods also work.</p></li>
+<li><p>We implement the <code class="docutils literal notranslate"><span class="pre">__COUNTER__</span></code> preprocessing extension,
+see <a class="reference internal" href="Preprocessing.html#non-standard-extensions"><span class="std std-ref">Non-standard Extensions</span></a></p></li>
+</ul>
+</section>
+<section id="standard-features-not-silently-accepted">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Standard features not silently accepted</a><a class="headerlink" href="#standard-features-not-silently-accepted" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Fortran explicitly ignores type declaration statements when they
+attempt to type the name of a generic intrinsic function (8.2 p3).
+One can declare <code class="docutils literal notranslate"><span class="pre">CHARACTER::COS</span></code> and still get a real result
+from <code class="docutils literal notranslate"><span class="pre">COS(3.14159)</span></code>, for example.  Flang will complain when a
+generic intrinsic function’s inferred result type does not
+match an explicit declaration.  This message is a warning.</p></li>
+<li><p>There is no restriction in the standard against assigning
+to a whole polymorphic allocatable under control of a <code class="docutils literal notranslate"><span class="pre">WHERE</span></code>
+construct or statement, but there is no good portable
+behavior to implement and the standard isn’t entirely clear
+what it should mean.
+(Other compilers allow it, but the results are never meaningful;
+some never change the type, some change the type according to
+the value of the last mask element, some treat these
+assignment statements as no-ops, and the rest crash during compilation.)
+The compiler flags this case as an error.</p></li>
+</ul>
+</section>
+<section id="standard-features-that-might-as-well-not-be">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Standard features that might as well not be</a><a class="headerlink" href="#standard-features-that-might-as-well-not-be" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Flang supports designators with constant expressions, properly
+constrained, as initial data targets for data pointers in
+initializers of variable and component declarations and in
+<code class="docutils literal notranslate"><span class="pre">DATA</span></code> statements; e.g., <code class="docutils literal notranslate"><span class="pre">REAL,</span> <span class="pre">POINTER</span> <span class="pre">::</span> <span class="pre">P</span> <span class="pre">=&gt;</span> <span class="pre">T(1:10:2)</span></code>.
+This Fortran 2008 feature might as well be viewed like an
+extension; no other compiler that we’ve tested can handle
+it yet.</p></li>
+<li><p>According to 11.1.3.3p1, if a selector of an <code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code> or
+related construct is defined by a variable, it has the <code class="docutils literal notranslate"><span class="pre">TARGET</span></code>
+attribute if the variable was a <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> or <code class="docutils literal notranslate"><span class="pre">TARGET</span></code>.
+We read this to include the case of the variable being a
+pointer-valued function reference.
+No other Fortran compiler seems to handle this correctly for
+<code class="docutils literal notranslate"><span class="pre">ASSOCIATE</span></code>, though NAG gets it right for <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">TYPE</span></code>.</p></li>
+<li><p>The standard doesn’t explicitly require that a named constant that
+appears as part of a complex-literal-constant be a scalar, but
+most compilers emit an error when an array appears.
+Flang supports them with a portability warning.</p></li>
+<li><p>Flang does not enforce a blanket prohibition against generic
+interfaces containing a mixture of functions and subroutines.
+We allow both to appear, unlike several other Fortran compilers.
+This is especially desirable when two generics of the same
+name are combined due to USE association and the mixture may
+be inadvertent.</p></li>
+<li><p>Since Fortran 90, <code class="docutils literal notranslate"><span class="pre">INCLUDE</span></code> lines have been allowed to have
+a numeric kind parameter prefix on the file name.  No other
+Fortran compiler supports them that I can find.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">SEQUENCE</span></code> derived type is required (F’2023 C745) to have
+at least one component.  No compiler enforces this constraint;
+this compiler emits a warning.</p></li>
+<li><p>Many compilers disallow a <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> assumed-length character dummy
+argument, which has been standard since F’2008.
+We accept this usage with an optional portability warning.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> attribute can be implied by usage in data
+transfer I/O statements.  Only one other compiler supports this
+correctly.  This compiler does, apart from objects in asynchronous
+NAMELIST I/O, for which an actual asynchronous runtime implementation
+seems unlikely.</p></li>
+</ul>
+</section>
+<section id="behavior-in-cases-where-the-standard-is-ambiguous-or-indefinite">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Behavior in cases where the standard is ambiguous or indefinite</a><a class="headerlink" href="#behavior-in-cases-where-the-standard-is-ambiguous-or-indefinite" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>When an inner procedure of a subprogram uses the value or an attribute
+of an undeclared name in a specification expression and that name does
+not appear in the host, it is not clear in the standard whether that
+name is an implicitly typed local variable of the inner procedure or a
+host association with an implicitly typed local variable of the host.
+For example:</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>module module
+ contains
+  subroutine host(j)
+    ! Although &quot;m&quot; never appears in the specification or executable
+    ! parts of this subroutine, both of its contained subroutines
+    ! might be accessing it via host association.
+    integer, intent(in out) :: j
+    call inner1(j)
+    call inner2(j)
+   contains
+    subroutine inner1(n)
+      integer(kind(m)), intent(in) :: n
+      m = n + 1
+    end subroutine
+    subroutine inner2(n)
+      integer(kind(m)), intent(out) :: n
+      n = m + 2
+    end subroutine
+  end subroutine
+end module
+
+program demo
+  use module
+  integer :: k
+  k = 0
+  call host(k)
+  print *, k, &quot; should be 3&quot;
+end
+
+</pre></div>
+</div>
+<p>Other Fortran compilers disagree in their interpretations of this example;
+some seem to treat the references to <code class="docutils literal notranslate"><span class="pre">m</span></code> as if they were host associations
+to an implicitly typed variable (and print <code class="docutils literal notranslate"><span class="pre">3</span></code>), while others seem to
+treat them as references to implicitly typed local variables, and
+load uninitialized values.</p>
+<p>In Flang, we chose to emit an error message for this case since the standard
+is unclear, the usage is not portable, and the issue can be easily resolved
+by adding a declaration.</p>
+<ul class="simple">
+<li><p>In subclause 7.5.6.2 of Fortran 2018 the standard defines a partial ordering
+of the final subroutine calls for finalizable objects, their non-parent
+components, and then their parent components.
+(The object is finalized, then the non-parent components of each element,
+and then the parent component.)
+Some have argued that the standard permits an implementation
+to finalize the parent component before finalizing an allocatable component in
+the context of deallocation, and the next revision of the language may codify
+this option.
+In the interest of avoiding needless confusion, this compiler implements what
+we believe to be the least surprising order of finalization.
+Specifically: all non-parent components are finalized before
+the parent, allocatable or not;
+all finalization takes place before any deallocation;
+and no object or subobject will be finalized more than once.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">RECL=</span></code> is set via the <code class="docutils literal notranslate"><span class="pre">OPEN</span></code> statement for a sequential formatted input
+file, it functions as an effective maximum record length.
+Longer records, if any, will appear as if they had been truncated to
+the value of <code class="docutils literal notranslate"><span class="pre">RECL=</span></code>.
+(Other compilers ignore <code class="docutils literal notranslate"><span class="pre">RECL=</span></code>, signal an error, or apply effective truncation
+to some forms of input in this situation.)
+For sequential formatted output, RECL= serves as a limit on record lengths
+that raises an error when it is exceeded.</p></li>
+<li><p>When a <code class="docutils literal notranslate"><span class="pre">DATA</span></code> statement in a <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> construct could be construed as
+either initializing a host-associated object or declaring a new local
+initialized object, Flang interprets the standard’s classification of
+a <code class="docutils literal notranslate"><span class="pre">DATA</span></code> statement as being a “declaration” rather than a “specification”
+construct, and notes that the <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> construct is defined as localizing
+names that have specifications in the <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> construct.
+So this example will elicit an error about multiple initialization:</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">subroutine</span> <span class="n">subr</span>
+  <span class="n">integer</span> <span class="n">n</span> <span class="o">=</span> <span class="mi">1</span>
+  <span class="n">block</span>
+    <span class="n">data</span> <span class="n">n</span><span class="o">/</span><span class="mi">2</span><span class="o">/</span>
+  <span class="n">end</span> <span class="n">block</span>
+<span class="n">end</span> <span class="n">subroutine</span>
+</pre></div>
+</div>
+<p>Other Fortran compilers disagree with each other in their interpretations
+of this example.
+The precedent among the most commonly used compilers
+agrees with Flang’s interpretation: a <code class="docutils literal notranslate"><span class="pre">DATA</span></code> statement without any other
+specification of the name refers to the host-associated object.</p>
+<ul class="simple">
+<li><p>Many Fortran compilers allow a non-generic procedure to be <code class="docutils literal notranslate"><span class="pre">USE</span></code>-associated
+into a scope that also contains a generic interface of the same name
+but does not have the <code class="docutils literal notranslate"><span class="pre">USE</span></code>-associated non-generic procedure as a
+specific procedure.</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">module</span> <span class="n">m1</span>
+ <span class="n">contains</span>
+  <span class="n">subroutine</span> <span class="n">foo</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">integer</span><span class="p">,</span> <span class="n">intent</span><span class="p">(</span><span class="ow">in</span><span class="p">)</span> <span class="p">::</span> <span class="n">n</span>
+  <span class="n">end</span> <span class="n">subroutine</span>
+<span class="n">end</span> <span class="n">module</span>
+
+<span class="n">module</span> <span class="n">m2</span>
+  <span class="n">use</span> <span class="n">m1</span><span class="p">,</span> <span class="n">only</span><span class="p">:</span> <span class="n">foo</span>
+  <span class="n">interface</span> <span class="n">foo</span>
+    <span class="n">module</span> <span class="n">procedure</span> <span class="n">noargs</span>
+  <span class="n">end</span> <span class="n">interface</span>
+ <span class="n">contains</span>
+  <span class="n">subroutine</span> <span class="n">noargs</span>
+  <span class="n">end</span> <span class="n">subroutine</span>
+<span class="n">end</span> <span class="n">module</span>
+</pre></div>
+</div>
+<p>This case elicits a warning from Flang, as it should not be treated
+any differently than the same case with the non-generic procedure of
+the same name being defined in the same scope rather than being
+<code class="docutils literal notranslate"><span class="pre">USE</span></code>-associated into it, which is explicitly non-conforming in the
+standard and not allowed by most other compilers.
+If the <code class="docutils literal notranslate"><span class="pre">USE</span></code>-associated entity of the same name is not a procedure,
+most compilers disallow it as well.</p>
+<ul class="simple">
+<li><p>Fortran 2018 19.3.4p1: “A component name has the scope of its derived-type
+definition.  Outside the type definition, it may also appear …” which
+seems to imply that within its derived-type definition, a component
+name is in its scope, and at least shadows any entity of the same name
+in the enclosing scope and might be read, thanks to the “also”, to mean
+that a “bare” reference to the name could be used in a specification inquiry.
+However, most other compilers do not allow a component to shadow exterior
+symbols, much less appear in specification inquiries, and there are
+application codes that expect exterior symbols whose names match
+components to be visible in a derived-type definition’s default initialization
+expressions, and so Flang follows that precedent.</p></li>
+<li><p>19.3.1p1 “Within its scope, a local identifier of an entity of class (1)
+or class (4) shall not be the same as a global identifier used in that scope…”
+is read so as to allow the name of a module, submodule, main program,
+or <code class="docutils literal notranslate"><span class="pre">BLOCK</span> <span class="pre">DATA</span></code> subprogram to also be the name of an local entity in its
+scope, with a portability warning, since that global name is not actually
+capable of being “used” in its scope.</p></li>
+<li><p>In the definition of the <code class="docutils literal notranslate"><span class="pre">ASSOCIATED</span></code> intrinsic function (16.9.16), its optional
+second argument <code class="docutils literal notranslate"><span class="pre">TARGET=</span></code> is required to be “allowable as the data-target or
+proc-target in a pointer assignment statement (10.2.2) in which POINTER is
+data-pointer-object or proc-pointer-object.”  Some Fortran compilers
+interpret this to require that the first argument (<code class="docutils literal notranslate"><span class="pre">POINTER=</span></code>) be a valid
+left-hand side for a pointer assignment statement – in particular, it
+cannot be <code class="docutils literal notranslate"><span class="pre">NULL()</span></code>, but also it is required to be modifiable.
+As there is  no good reason to disallow (say) an <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> pointer here,
+or even <code class="docutils literal notranslate"><span class="pre">NULL()</span></code> as a well-defined case that is always <code class="docutils literal notranslate"><span class="pre">.FALSE.</span></code>,
+this compiler doesn’t require the <code class="docutils literal notranslate"><span class="pre">POINTER=</span></code> argument to be a valid
+left-hand side for a pointer assignment statement, and we emit a
+portability warning when it is not.</p></li>
+<li><p>Flang allows a <code class="docutils literal notranslate"><span class="pre">USE</span></code> statement to reference a module that is defined later
+in the same compilation unit, so long as mutual dependencies do not form
+a cycle.
+This feature forestalls any risk of such a <code class="docutils literal notranslate"><span class="pre">USE</span></code> statement reading an
+obsolete module file from a previous compilation and then overwriting
+that file later.</p></li>
+<li><p>Flang allows <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code> dummy arguments to interoperable procedures
+unless they are <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> (C865).</p></li>
+<li><p>Flang processes the <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> group declarations in a scope after it
+has resolved all of the names in that scope.  This means that names
+that appear before their local declarations do not resolve to host
+associated objects and do not elicit errors about improper redeclarations
+of implicitly typed entities.</p></li>
+<li><p>Standard Fortran allows forward references to derived types, which
+can lead to ambiguity when combined with host association.
+Some Fortran compilers resolve the type name to the host type,
+others to the forward-referenced local type; this compiler diagnoses
+an error.</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">module</span> <span class="n">m</span>
+  <span class="nb">type</span> <span class="n">ambiguous</span><span class="p">;</span> <span class="n">integer</span> <span class="n">n</span><span class="p">;</span> <span class="n">end</span> <span class="nb">type</span>
+ <span class="n">contains</span>
+  <span class="n">subroutine</span> <span class="n">s</span>
+    <span class="nb">type</span><span class="p">(</span><span class="n">ambiguous</span><span class="p">),</span> <span class="n">pointer</span> <span class="p">::</span> <span class="n">ptr</span>
+    <span class="nb">type</span> <span class="n">ambiguous</span><span class="p">;</span> <span class="n">real</span> <span class="n">a</span><span class="p">;</span> <span class="n">end</span> <span class="nb">type</span>
+  <span class="n">end</span>
+<span class="n">end</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>When an intrinsic procedure appears in the specification part of a module
+only in function references, but not an explicit <code class="docutils literal notranslate"><span class="pre">INTRINSIC</span></code> statement,
+its name is not brought into other scopes by a <code class="docutils literal notranslate"><span class="pre">USE</span></code> statement.</p></li>
+<li><p>The subclause on rounding in formatted I/O (13.7.2.3.8 in F’2023)
+only discusses rounding for decimal-to/from-binary conversions,
+omitting any mention of rounding for hexadecimal conversions.
+As other compilers do apply rounding, so does this one.</p></li>
+<li><p>For real <code class="docutils literal notranslate"><span class="pre">MAXVAL</span></code>, <code class="docutils literal notranslate"><span class="pre">MINVAL</span></code>, <code class="docutils literal notranslate"><span class="pre">MAXLOC</span></code>, and <code class="docutils literal notranslate"><span class="pre">MINLOC</span></code>, NaN values are
+essentially ignored unless there are some unmasked array entries and
+<em>all</em> of them are NaNs.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">INDEX</span></code> is used as an unrestricted specific intrinsic function
+in the context of an actual procedure, as the explicit interface in
+a <code class="docutils literal notranslate"><span class="pre">PROCEDURE</span></code> declaration statement, or as the target of a procedure
+pointer assignment, its interface has exactly two dummy arguments
+(<code class="docutils literal notranslate"><span class="pre">STRING=</span></code> and <code class="docutils literal notranslate"><span class="pre">SUBSTRING=</span></code>), and includes neither <code class="docutils literal notranslate"><span class="pre">BACK=</span></code> nor
+<code class="docutils literal notranslate"><span class="pre">KIND=</span></code>.
+This is how <code class="docutils literal notranslate"><span class="pre">INDEX</span></code> as an unrestricted specific intrinsic function was
+documented in FORTRAN ‘77 and Fortran ‘90; later revisions of the
+standard deleted the argument information from the section on
+unrestricted specific intrinsic functions.
+At least one other compiler (XLF) seems to expect that the interface for
+<code class="docutils literal notranslate"><span class="pre">INDEX</span></code> include an optional <code class="docutils literal notranslate"><span class="pre">BACK=</span></code> argument, but it doesn’t actually
+work.</p></li>
+<li><p>Allocatable components of array and structure constructors are deallocated
+after use without calling final subroutines.
+The standard does not specify when and how deallocation of array and structure
+constructors allocatable components should happen. All compilers free the
+memory after use, but the behavior when the allocatable component is a derived
+type with finalization differ, especially when dealing with nested array and
+structure constructors expressions. Some compilers call final routine for the
+allocatable components of each constructor sub-expressions, some call it only
+for the allocatable component of the top level constructor, and some only
+deallocate the memory. Deallocating only the memory offers the most
+flexibility when lowering such expressions, and it is not clear finalization
+is desirable in such context (Fortran interop 1.6.2 in F2018 standards require
+array and structure constructors not to be finalized, so it also makes sense
+not to finalize their allocatable components when releasing their storage).</p></li>
+<li><p>F’2023 19.4 paragraph 5: “If integer-type-spec appears in data-implied-do or
+ac-implied-do-control it has the specified type and type parameters; otherwise
+it has the type and type parameters that it would have if it were the name of
+a variable in the innermost executable construct or scoping unit that includes
+the DATA statement or array constructor, and this type shall be integer type.”
+Reading “would have if it were” as being the subjunctive, this would mean that
+an untyped implied DO index variable should be implicitly typed according to
+the rules active in the enclosing scope.  But all other Fortran compilers interpret
+the “would have if it were” as meaning “has if it is” – i.e., if the name
+is visible in the enclosing scope, the type of that name is used as the
+type of the implied DO index.  So this is an error, not a simple application
+of the default implicit typing rule:</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">character</span> <span class="n">j</span>
+<span class="nb">print</span> <span class="o">*</span><span class="p">,</span> <span class="p">[(</span><span class="n">j</span><span class="p">,</span><span class="n">j</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="mi">10</span><span class="p">)]</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>The Fortran standard doesn’t mention integer overflow explicitly. In many cases,
+however, integer overflow makes programs non-conforming.
+Flang follows other widely-used Fortran compilers. Specifically, Flang assumes
+integer overflow never occurs in address calculations and increment of
+do-variable unless the option <code class="docutils literal notranslate"><span class="pre">-fwrapv</span></code> is enabled.</p></li>
+<li><p>Two new ieee_round_type values were added in Flang beyond the four values
+defined in f03 and f08: ieee_away and ieee_other. Contemporary hardware
+typically does not have support for these rounding modes;
+ieee_support_rounding calls for these values return false.
+ieee_set_rounding_mode calls that attempt to set the rounding mode to one
+of these values in violation of the restriction in f23 clause 17.11.42 set
+the mode to ieee_nearest.</p></li>
+<li><p>Some compilers allow an <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> dummy argument’s value to appear
+via host association in a specification expression.  A non-host-associated
+use is an error because an <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> dummy argument’s value is not
+defined.  The argument put forth to accept this usage in a <code class="docutils literal notranslate"><span class="pre">BLOCK</span></code> construct
+or inner procedure is that the language in 10.1.11 (specification expressions)
+allows any host-associated object to appear, but that’s unconvincing
+because it would also allow a host-associated <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code> dummy argument to
+be used in a nested scope, and that doesn’t make sense.  This compiler
+accepts an <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> non-<code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code> host-associated value to appear
+in a specification expression via host association with a portability
+warning since such values may have become defined by the time the nested
+expression’s value is required.</p></li>
+<li><p>Intrinsic assignment of arrays is defined elementally, and intrinsic
+assignment of derived type components is defined componentwise.
+However, when intrinsic assignment takes place for an array of derived
+type, the order of the loop nesting is not defined.
+Some compilers will loop over the elements, assigning all of the components
+of each element before proceeding to the next element.
+This compiler loops over all of the components, and assigns all of
+the elements for each component before proceeding to the next component.
+A program using defined assignment might be able to detect the difference.</p></li>
+<li><p>The standard forbids instances of derived types with defined unformatted
+WRITE subroutines from appearing in the I/O list of an <code class="docutils literal notranslate"><span class="pre">INQUIRE(IOLENGTH=...)</span></code>
+statement.  It then also says that these defined I/O procedures should be
+ignored for that statement.  So we allow them to appear (like most
+compilers) and don’t use any defined unformatted WRITE that might have been
+defined.</p></li>
+<li><p>Forward references to target objects are allowed to appear
+in the initializers of data pointer declarationss.
+Forward references to target objects are not accepted in the default
+initializers of derived type component declarations, however,
+since these default values need to be available to process incomplete
+structure constructors.</p></li>
+<li><p>When an <code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code> or <code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> statement with multiple variables
+has a <code class="docutils literal notranslate"><span class="pre">STAT=</span></code> specifier that allows the program to continue execution
+after an error, the variables after the one with the error are left
+deallocated (or allocated).  This interpretation allows the program to
+identify the variable that encountered the problem while avoiding any
+ambiguity in the case of multiple errors with distinct status codes.
+Some compilers work differently; for maximum portability, avoid
+<code class="docutils literal notranslate"><span class="pre">ALLOCATE</span></code> and <code class="docutils literal notranslate"><span class="pre">DEALLOCATE</span></code> statements with error recovery for
+multiple variables.</p></li>
+<li><p>When a “null” value is encountered in list-directed input, the
+corresponding effective item in the data list is left unchanged,
+even when it has a derived type with a defined <code class="docutils literal notranslate"><span class="pre">READ(FORMATTED)</span></code>
+subroutine.  This is the most literal reading of F’2023 13.10.3.2p2
+and the portable interpretation across the most common Fortran
+compilers.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> child input statements are allowed to advance to further
+input records.
+Further, advancement is allowed when the parent input statement is
+a non-child (top level) list-directed input statement, or, recursively,
+an intermediate child list-directed input statement that can advance.
+This means that non-<code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> list-directed child input statements are
+not allowed to advance when they have an ancestor formatted input statement
+that is not list-directed and there is no intervening <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code>.
+This design allows format-driven input with <code class="docutils literal notranslate"><span class="pre">DT</span></code> editing to retain
+control over advancement in child input, while otherwise allowing it.</p></li>
+<li><p>When output takes place to a file under <code class="docutils literal notranslate"><span class="pre">ACCESS=&quot;STREAM&quot;</span></code> after
+repositioning it to an earlier position, some compilers will
+truncate the file; this behavior is similar to the implicit
+<code class="docutils literal notranslate"><span class="pre">ENDFILE</span></code> that takes place under sequential output after a
+<code class="docutils literal notranslate"><span class="pre">BACKSPACE</span></code> or <code class="docutils literal notranslate"><span class="pre">REWIND</span></code> statement.
+Truncation of streams is not specified in the standard, however,
+and it does not take place with all compilers.
+In this one, truncation is optional; it occurs by default,
+but it can be disabled via <code class="docutils literal notranslate"><span class="pre">FORT_TRUNCATE_STREAM=0</span></code> in the
+environment at execution time.</p></li>
+<li><p>Some expression errors, like out-of-range known subscript values,
+are noted only as warnings when they appear in code known to be
+dead anyway at compilation time.</p></li>
+</ul>
+</section>
+<section id="behavior-in-cases-where-the-standard-is-clear-but-disputed">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Behavior in cases where the standard is clear but disputed</a><a class="headerlink" href="#behavior-in-cases-where-the-standard-is-clear-but-disputed" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Unless one uses <code class="docutils literal notranslate"><span class="pre">-ffast-math</span></code>, directly or by implication,
+the parentheses in real expressions like <code class="docutils literal notranslate"><span class="pre">A+(B*C)</span></code> will prevent
+fusing the multiplication with the addition using an “FMA”
+operation that only rounds the final result.
+F’2023 10.1.2.4 paragraph 2 reads “Once the interpretation of a
+numeric intrinsic operation is established, the processor may
+evaluate any mathematically equivalent expression, provided that
+the integrity of parentheses is not violated.”
+This compiler honors that long-standing guarantee of the language,
+because subclause 10.1.8 (“Integrity of parentheses”) requires that
+“any expression in parentheses shall be treated as a data entity”.
+When the calculation of the value of that data entity yields
+<code class="docutils literal notranslate"><span class="pre">REAL</span></code> or <code class="docutils literal notranslate"><span class="pre">COMPLEX</span></code>, its kind is known, which implies rounding.
+So one needn’t worry about default compilation modes breaking
+the parentheses in cases like <code class="docutils literal notranslate"><span class="pre">(X*X)-(Y*Y)</span></code> when they’re meant
+to prevent inconsistent rounding from the use of FMA.
+(Parentheses prevent fusion in only 4 out of 7 other compilers,
+so this interpretation is not portable.)</p></li>
+</ul>
+</section>
+<section id="de-facto-standard-features">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">De Facto Standard Features</a><a class="headerlink" href="#de-facto-standard-features" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">EXTENDS_TYPE_OF()</span></code> returns <code class="docutils literal notranslate"><span class="pre">.TRUE.</span></code> if both of its arguments have the
+same type, a case that is technically implementation-defined.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ENCODING=</span></code> is not in the list of changeable modes on an I/O unit,
+but every Fortran compiler allows the encoding to be changed on an
+open unit.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">NAMELIST</span></code> input item that references a scalar element of a vector
+or contiguous array can be used as the initial element of a storage
+sequence.  For example, “&amp;GRP A(1)=1. 2. 3./” is treated as if had been
+“&amp;GRP A(1:)=1. 2. 3./”.
+This extension is necessarily disabled when the type of the array
+has an accessible defined formatted READ subroutine.</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="FortranStandardsSupport.html">Flang Fortran Standards Support</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Directives.html">Compiler directives supported by Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Feb 10, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
