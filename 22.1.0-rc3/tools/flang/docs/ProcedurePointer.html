@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Procedure Pointer &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Runtime Descriptors" href="RuntimeDescriptor.html" />
+    <link rel="prev" title="Fortran Preprocessing" href="Preprocessing.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Procedure Pointer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Preprocessing.html">Fortran Preprocessing</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RuntimeDescriptor.html">Runtime Descriptors</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/ProcedurePointer.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="procedure-pointer">
+<h1>Procedure Pointer<a class="headerlink" href="#procedure-pointer" title="Link to this heading">¶</a></h1>
+<p>A procedure pointer is a procedure that has the EXTERNAL and POINTER attributes.</p>
+<p>This document summarizes what of context the procedure pointers should appear,
+and how they are lowered to FIR.</p>
+<p>The current plan is to use/extend the <code class="docutils literal notranslate"><span class="pre">BoxedProcedure</span></code> pass for the conversion
+to LLVM IR, and thus will not be lowering the procedure-pointer-related
+operations to LLVM IR in <code class="docutils literal notranslate"><span class="pre">CodeGen.cpp</span></code>.</p>
+<section id="fortran-standard">
+<h2>Fortran standard<a class="headerlink" href="#fortran-standard" title="Link to this heading">¶</a></h2>
+<p>Here is a list of the sections and constraints of the Fortran standard involved
+for procedure pointers.</p>
+<ul class="simple">
+<li><p>8.5.4 Components</p>
+<ul>
+<li><p>C757</p></li>
+<li><p>C758</p></li>
+<li><p>C759</p></li>
+</ul>
+</li>
+<li><p>8.5.9: EXTERNAL attribute</p></li>
+<li><p>8.5.14: POINTER attribute</p>
+<ul>
+<li><p>C853</p></li>
+<li><p>A procedure pointer shall not be referenced unless it is pointer associated
+with a target procedure.</p></li>
+</ul>
+</li>
+<li><p>8.5.15 PROTECTED attribute</p>
+<ul>
+<li><p>C855</p></li>
+</ul>
+</li>
+<li><p>8.5.16 SAVE attribute</p>
+<ul>
+<li><p>(4) A procedure pointer declared in the scoping unit of a main program,
+module, or submodule implicitly has the SAVE attribute.</p></li>
+</ul>
+</li>
+<li><p>8.10.2.1 COMMON statement</p>
+<ul>
+<li><p>C8119</p></li>
+</ul>
+</li>
+<li><p>10.2.2.2 Pointer assignment statement</p>
+<ul>
+<li><p>C1028</p></li>
+<li><p>C1029</p></li>
+</ul>
+</li>
+<li><p>10.2.2.4 Procedure pointer assignment</p></li>
+<li><p>11.1.3 ASSOCIATE construct</p>
+<ul>
+<li><p>C1005</p></li>
+</ul>
+</li>
+<li><p>12.6.3 Data transfer input/output list</p>
+<ul>
+<li><p>C1233</p></li>
+</ul>
+</li>
+<li><p>15.2.2.4 Procedure pointers</p>
+<ul>
+<li><p>A procedure pointer may be pointer associated with an external procedure, an
+internal procedure, an intrinsic procedure, a module procedure, or a dummy
+procedure that is not a procedure pointer.</p></li>
+</ul>
+</li>
+<li><p>15.4.3.6 Procedure declaration statement</p></li>
+<li><p>15.5.2.9(5) Actual arguments associated with dummy procedure entities</p></li>
+<li><p>16.9.16 ASSOCIATED(POINTER [, TARGET])</p>
+<ul>
+<li><p>POINTER may be a procedure pointer, and TARGET may be proc-target in a
+pointer assignment statement (10.2.2).</p></li>
+</ul>
+</li>
+<li><p>16.9.144 NULL([MOLD])</p>
+<ul>
+<li><p>MOLD may be a procedure pointer.</p></li>
+</ul>
+</li>
+<li><p>18.2.3.4 C_F_PROCPOINTER(CPTR, FPTR)</p>
+<ul>
+<li><p>FPTR shall be a procedure pointer, and not be a component of a coindexed
+object.</p></li>
+</ul>
+</li>
+<li><p>C.1.1 A procedure that is not a procedure pointer can be an actual argument
+that corresponds to a procedure pointer dummy argument with the INTENT(IN)
+attribute.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="representation-in-fir">
+<h2>Representation in FIR<a class="headerlink" href="#representation-in-fir" title="Link to this heading">¶</a></h2>
+<section id="procedure-pointer-fir-ref-fir-boxproc-t">
+<h3>Procedure pointer <code class="docutils literal notranslate"><span class="pre">!fir.ref&lt;!fir.boxproc&lt;T&gt;&gt;</span></code><a class="headerlink" href="#procedure-pointer-fir-ref-fir-boxproc-t" title="Link to this heading">¶</a></h3>
+<p>A procedure pointer may have an explicit or implicit interface. T in
+<code class="docutils literal notranslate"><span class="pre">!fir.ref&lt;!fir.boxproc&lt;T&gt;&gt;</span></code> is the function type, which is <code class="docutils literal notranslate"><span class="pre">()</span> <span class="pre">-&gt;</span> <span class="pre">()</span></code> if the
+procedure pointer has the implicit interface declared as
+<code class="docutils literal notranslate"><span class="pre">procedure(),</span> <span class="pre">pointer</span> <span class="pre">::</span> <span class="pre">p</span></code>.</p>
+<p>A procedure declaration statement specifies EXTERNAL attribute (8.5.9) for all
+entities for all entities in the procedure declaration list.</p>
+</section>
+<section id="actual-arguments-associated-with-dummy-procedure-entities">
+<h3>Actual arguments associated with dummy procedure entities<a class="headerlink" href="#actual-arguments-associated-with-dummy-procedure-entities" title="Link to this heading">¶</a></h3>
+<p>The actual argument may be a procedure pointer, a valid target for the dummy
+pointer, a reference to the NULL() intrinsic, or a reference to a function that
+returns a procedure pointer.</p>
+<p>If the interface is explicit, and the dummy argument is procedure pointer, the
+reference is resolved as the pointer to the procedure; otherwise, the reference
+is resolved as the pointer target.</p>
+<p><strong>Fortran case 1</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">proc_pointer_dummy_argument</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">func</span>
+<span class="w">  </span><span class="k">end interface</span>
+<span class="k">  procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo1</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo2</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">foo2</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+<span class="w">    </span><span class="k">interface</span>
+<span class="k">      function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">        </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">      </span><span class="k">end function </span><span class="n">func</span>
+<span class="w">    </span><span class="k">end interface</span>
+<span class="k">    procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">q</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">foo2</span>
+<span class="k">end subroutine </span><span class="n">proc_pointer_dummy_argument</span>
+</pre></div>
+</div>
+<p><strong>FIR for case 1</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func private @foo1(!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;)
+func.func private @foo2(!fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;)
+
+func.func @proc_pointer_dummy_argument(%0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;) {
+  %1 = fir.load %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  fir.call @foo1(%1) : (!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;) -&gt; ()
+  fir.call @foo2(%0) : (!fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;) -&gt; ()
+  return
+}
+</pre></div>
+</div>
+<p><strong>Fortran case 2</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">proc_pointer_global</span><span class="p">()</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">func</span>
+<span class="w">  </span><span class="k">end interface</span>
+<span class="k">  procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="p">,</span><span class="w"> </span><span class="k">save</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo1</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo2</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">foo2</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+<span class="w">    </span><span class="k">interface</span>
+<span class="k">      function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">        </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">      </span><span class="k">end function </span><span class="n">func</span>
+<span class="w">    </span><span class="k">end interface</span>
+<span class="k">    procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">q</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">foo2</span>
+<span class="k">end subroutine </span><span class="n">proc_pointer_global</span>
+</pre></div>
+</div>
+<p><strong>FIR for case 2</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func private @foo1(!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;)
+func.func private @foo2(!fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;)
+
+fir.global internal @ProcedurePointer : !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt; {
+  %0 = fir.zero_bits (!fir.ref&lt;i32&gt;) -&gt; f32
+  %1 = fir.emboxproc %0 : ((!fir.ref&lt;i32&gt;) -&gt; f32) -&gt; !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  fir.has_value %1 : !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+}
+
+func.func @proc_pointer_global() {
+  %0 = fir.address_of(@ProcedurePointer) : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  %1 = fir.load %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  fir.call @foo1(%1) : (!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;) -&gt; ()
+  fir.call @foo2(%0) : (!fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;) -&gt; ()
+  return
+}
+</pre></div>
+</div>
+<p><strong>Fortran case 3</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">proc_pointer_local</span><span class="p">()</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">end function </span><span class="n">func</span>
+<span class="w">  </span><span class="k">end interface</span>
+<span class="k">  procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo1</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">  </span><span class="k">call </span><span class="n">foo2</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">foo2</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+<span class="w">    </span><span class="k">interface</span>
+<span class="k">      function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">        </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">      </span><span class="k">end function </span><span class="n">func</span>
+<span class="w">    </span><span class="k">end interface</span>
+<span class="k">    procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">q</span>
+<span class="w">  </span><span class="k">end subroutine </span><span class="n">foo2</span>
+<span class="k">end subroutine </span><span class="n">proc_pointer_local</span>
+</pre></div>
+</div>
+<p><strong>FIR for case 3</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func private @foo1(!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;)
+func.func private @foo2(!fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;)
+
+func.func @proc_pointer_local() {
+  %0 = fir.alloca !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  %1 = fir.zero_bits (!fir.ref&lt;i32&gt;) -&gt; f32
+  %2 = fir.emboxproc %1 : ((!fir.ref&lt;i32&gt;) -&gt; f32) -&gt; !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  fir.store %2 to %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  %4 = fir.load %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  fir.call @foo1(%4) : (!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;) -&gt; ()
+  fir.call @foo2(%0) : (!fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;) -&gt; ()
+  return
+}
+</pre></div>
+</div>
+<p>It is possible to pass procedure pointers to a C function. If the C function has
+an explicit interface in fortran code, and the dummy argument is a procedure
+pointer, the code passes a pointer to the procedure as the actual argument
+(see Case 5); Otherwise, the code passes the procedure pointer target as the
+actual argument (see Case 4).</p>
+<p><strong>Case 4</strong></p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">func_</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">)(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="n">foo</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">procedure</span><span class="p">(),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pp</span>
+<span class="w">  </span><span class="n">pp</span><span class="o">=&gt;</span><span class="n">print_x</span>
+<span class="w">  </span><span class="k">call </span><span class="n">func</span><span class="p">(</span><span class="n">pp</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">print_x</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>
+<span class="w">  </span><span class="k">end</span>
+<span class="k">end</span>
+</pre></div>
+</div>
+<p>Note that the internal procedure is not one good usage, but it works in
+implementation. It is better to use BIND(C) external or module procedure as
+right-hand side proc-target.</p>
+<p><strong>Case 5</strong></p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">func_</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">**</span><span class="n">foo</span><span class="p">)(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">)(</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    subroutine </span><span class="n">func</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="w">      </span><span class="k">procedure</span><span class="p">(),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">p</span>
+<span class="w">    </span><span class="k">end</span>
+<span class="k">  end interface</span>
+<span class="k">  procedure</span><span class="p">(),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pp</span>
+<span class="w">  </span><span class="n">pp</span><span class="o">=&gt;</span><span class="n">print_x</span>
+<span class="w">  </span><span class="k">call </span><span class="n">func</span><span class="p">(</span><span class="n">pp</span><span class="p">)</span>
+<span class="k">contains</span>
+<span class="k">  subroutine </span><span class="n">print_x</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">    </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">print</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>
+<span class="w">  </span><span class="k">end</span>
+<span class="k">end</span>
+</pre></div>
+</div>
+<p>Case 4 and Case 5 are not recommended from Fortran 2003 standard, which provides
+the feature of interoperability with C to handle this. Specifically,
+C_F_PROCPOINTER is used to associate a procedure pointer with the target of a C
+function pointer. C_FUNPTR is also designed for interoperability with any C
+function pointer type.</p>
+</section>
+<section id="procedure-pointer-to-function-returning-a-character-type">
+<h3>Procedure pointer to function returning a character type<a class="headerlink" href="#procedure-pointer-to-function-returning-a-character-type" title="Link to this heading">¶</a></h3>
+<p>The dummy procedure pointer may not have a function type with an assumed length
+due to C721 and C723.</p>
+</section>
+<section id="procedure-pointer-to-internal-procedure">
+<h3>Procedure pointer to internal procedure<a class="headerlink" href="#procedure-pointer-to-internal-procedure" title="Link to this heading">¶</a></h3>
+<p>Initially the current plan is to implement pointers to internal procedures
+using the LLVM Trampoline intrinsics. This has the drawback of requiring the
+stack to be executable, which is a security hole. To avoid this, we will need
+<a class="reference internal" href="InternalProcedureTrampolines.html"><span class="std std-doc">improve the implementation</span></a> to use heap-resident thunks.</p>
+</section>
+<section id="procedure-pointer-assignment-p-proc">
+<h3>Procedure pointer assignment <code class="docutils literal notranslate"><span class="pre">p</span> <span class="pre">=&gt;</span> <span class="pre">proc</span></code><a class="headerlink" href="#procedure-pointer-assignment-p-proc" title="Link to this heading">¶</a></h3>
+<p>The right-hand side may be a procedure, a procedure pointer, or a function whose
+result is a procedure pointer.</p>
+<p>The procedure could be a BIND(C) procedure. The lowering of it is the same as
+that of an external or module procedure. The case of internal procedure has been
+discussed above.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">func_</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;%d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">program </span><span class="n">main</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    subroutine </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">end</span>
+<span class="k">  end interface</span>
+<span class="k">  procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;func_&quot;</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">proc</span>
+<span class="w">  </span><span class="k">procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pp</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span>
+<span class="w">  </span><span class="n">pp</span><span class="o">=&gt;</span><span class="n">proc</span>
+<span class="w">  </span><span class="k">call </span><span class="n">pp</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="k">end</span>
+</pre></div>
+</div>
+<p><strong>Fortran case</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">proc_pointer_assignment</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span><span class="w"> </span><span class="n">arg1</span><span class="p">)</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">end</span>
+<span class="k">  end interface</span>
+<span class="k">  procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">arg0</span><span class="p">,</span><span class="w"> </span><span class="n">arg1</span>
+<span class="w">  </span><span class="kt">real</span><span class="p">,</span><span class="w"> </span><span class="k">external</span><span class="p">,</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Procedure&quot;</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">proc</span>
+<span class="w">  </span><span class="n">arg0</span><span class="o">=&gt;</span><span class="n">proc</span><span class="w">    </span><span class="c">! case 1</span>
+<span class="w">  </span><span class="n">arg0</span><span class="o">=&gt;</span><span class="n">arg1</span><span class="w">    </span><span class="c">! case 2</span>
+<span class="w">  </span><span class="n">arg0</span><span class="o">=&gt;</span><span class="n">reffunc</span><span class="w"> </span><span class="c">! case 3</span>
+<span class="k">contains</span>
+<span class="k">  function </span><span class="n">reffunc</span><span class="p">()</span><span class="w"> </span><span class="k">result</span><span class="p">(</span><span class="n">pp</span><span class="p">)</span>
+<span class="w">    </span><span class="k">interface</span>
+<span class="k">      function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">        </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">      </span><span class="k">end</span>
+<span class="k">    end interface</span>
+<span class="k">    procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">pp</span>
+<span class="w">  </span><span class="k">end</span>
+<span class="k">end</span>
+<span class="k">function </span><span class="n">proc</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="k">bind</span><span class="p">(</span><span class="n">C</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;Procedure&quot;</span><span class="p">)</span>
+<span class="w">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">  </span><span class="n">proc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">real</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="k">end</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @Procedure(%arg0 : !fir.ref&lt;i32&gt;) -&gt; f32 {
+  %0 = fir.alloca f32 {bindc_name = &quot;res&quot;, uniq_name = &quot;_QFfuncEres&quot;}
+  %1 = fir.load %arg0 : !fir.ref&lt;i32&gt;
+  %2 = fir.convert %1 : (i32) -&gt; f32
+  fir.store %2 to %0 : !fir.ref&lt;f32&gt;
+  %3 = fir.load %0 : !fir.ref&lt;f32&gt;
+  return %3 : f32
+}
+
+func.func @Reference2Function() -&gt; !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt; {
+  %0 = fir.alloca !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  %1 = fir.load %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  return %1 : !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+}
+
+func.func @proc_pointer_assignment(%arg0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;, %arg1 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;) {
+  %0 = fir.alloca !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt; {bindc_name = &quot;.result&quot;}
+  // case 1: assignment from external procedure
+  %1 = fir.address_of(@Procedure) : (!fir.ref&lt;i32&gt;) -&gt; f32
+  %2 = fir.emboxproc %1 : ((!fir.ref&lt;i32&gt;) -&gt; f32) -&gt; !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  fir.store %2 to %arg0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  // case2: assignment from procdure pointer
+  %3 = fir.load %arg1 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  fir.store %3 to %arg0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  // case3: assignment from a reference to a function whose result is a procedure pointer
+  %4 = fir.call @Reference2Function() : () -&gt; !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  fir.store %4 to %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  %5 = fir.load %0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  fir.store %5 to %arg0 : !fir.ref&lt;!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;&gt;
+  return
+}
+</pre></div>
+</div>
+</section>
+<section id="procedure-pointer-components">
+<h3>Procedure pointer components<a class="headerlink" href="#procedure-pointer-components" title="Link to this heading">¶</a></h3>
+<p>Having procedure pointers in derived types permits <code class="docutils literal notranslate"><span class="pre">methods</span></code> to be dynamically
+bound to objects. Such procedure pointer components will have the type
+!fir.boxproc<T>.</p>
+<p><strong>Fortran</strong></p>
+<div class="highlight-fortran notranslate"><div class="highlight"><pre><span></span><span class="k">subroutine </span><span class="n">proc_pointer_component</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"> </span><span class="n">f</span><span class="p">)</span>
+<span class="w">  </span><span class="k">interface</span>
+<span class="k">    function </span><span class="n">func</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="w">      </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">x</span>
+<span class="w">    </span><span class="k">end</span>
+<span class="k">  end interface</span>
+<span class="k">  type </span><span class="n">matrix</span>
+<span class="w">    </span><span class="kt">real</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">element</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">    </span><span class="k">procedure</span><span class="p">(</span><span class="n">func</span><span class="p">),</span><span class="w"> </span><span class="k">pointer</span><span class="p">,</span><span class="w"> </span><span class="k">nopass</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">solve</span>
+<span class="w">  </span><span class="k">end type</span>
+<span class="k">  </span><span class="kt">integer</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">i</span>
+<span class="w">  </span><span class="k">procedure</span><span class="p">(</span><span class="n">func</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">f</span>
+<span class="w">  </span><span class="k">type</span><span class="p">(</span><span class="n">matrix</span><span class="p">)</span><span class="w"> </span><span class="kd">::</span><span class="w"> </span><span class="n">a</span>
+<span class="w">  </span><span class="n">a</span><span class="p">%</span><span class="n">solve</span><span class="o">=&gt;</span><span class="n">f</span>
+<span class="w">  </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="p">%</span><span class="n">solve</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<span class="k">end subroutine </span><span class="n">proc_pointer_component</span>
+</pre></div>
+</div>
+<p><strong>FIR</strong></p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>func.func @proc_pointer_component(%arg0 : !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;, %arg1: !fir.ref&lt;i32&gt;) {
+  %0 = fir.alloca !fir.type&lt;_QFtestTmatrix{element:!fir.array&lt;2x2xf32&gt;,solve:!fir.boxproc&lt;() -&gt; ()&gt;}&gt;
+  %1 = fir.field_index solve, !fir.type&lt;_QFtestTmatrix{element:!fir.array&lt;2x2xf32&gt;,solve:!fir.boxproc&lt;() -&gt; ()&gt;}&gt;
+  %2 = fir.coordinate_of %0, %1 : (!fir.ref&lt;!fir.type&lt;_QFtestTmatrix{element:!fir.array&lt;2x2xf32&gt;,solve:!fir.boxproc&lt;() -&gt; ()&gt;}&gt;&gt;, !fir.field) -&gt; !fir.ref&lt;!fir.boxproc&lt;() -&gt; ()&gt;&gt;
+  %3 = fir.convert %arg0 : (!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;) -&gt;  !fir.boxproc&lt;() -&gt; ()&gt;
+  fir.store %3 to %2 : !fir.ref&lt;!fir.boxproc&lt;() -&gt; ()&gt;&gt;
+  %4 = fir.field_index solve, !fir.type&lt;_QFtestTmatrix{element:!fir.array&lt;2x2xf32&gt;,solve:!fir.boxproc&lt;() -&gt; ()&gt;}&gt;
+  %5 = fir.coordinate_of %0, %4 : (!fir.ref&lt;!fir.type&lt;_QFtestTmatrix{element:!fir.array&lt;2x2xf32&gt;,solve:!fir.boxproc&lt;() -&gt; ()&gt;}&gt;&gt;, !fir.field) -&gt; !fir.ref&lt;!fir.boxproc&lt;() -&gt; ()&gt;&gt;
+  %6 = fir.load %5 : !fir.ref&lt;!fir.boxproc&lt;() -&gt; ()&gt;&gt;
+  %7 = fir.convert %6 : (!fir.boxproc&lt;() -&gt; ()&gt;) -&gt; !fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;
+  %8 = fir.box_addr %7 : (!fir.boxproc&lt;(!fir.ref&lt;i32&gt;) -&gt; f32&gt;) -&gt; ((!fir.ref&lt;i32&gt;) -&gt; f32)
+  %9 = fir.call %8(%arg1) : (!fir.ref&lt;i32&gt;) -&gt; f32
+  return
+}
+</pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils" />
+<section id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<p>The lowering part is tested with LIT tests in tree, but the execution tests are
+useful for full testing.</p>
+<p>LLVM IR testing is also helpful with the initial check. A C function pointer is
+semantically equivalent to a Fortran procedure in LLVM IR level, and a pointer
+to a C function pointer is semantically equivalent to a Fortran procedure
+pointer in LLVM IR level. That is, a Fortran procedure will be converted to a
+opaque pointer in LLVM IR level, which is the same for a C function pointer;
+a Fortran procedure pointer will be converted to a opaque pointer pointing to
+a opaque pointer, which is the same for a pointer to a C function pointer.</p>
+<p>The tests should include the following</p>
+<ul class="simple">
+<li><p>function result, subroutine/function arguments with varying types</p>
+<ul>
+<li><p>non-character scalar</p></li>
+<li><p>character (assumed-length and non-assumed-length)</p></li>
+<li><p>array (static and dynamic)</p></li>
+<li><p>character array</p></li>
+<li><p>derived type</p></li>
+<li><p>… (polymorphic?)</p></li>
+</ul>
+</li>
+<li><p>internal/external/module procedure or a C function as the target</p>
+<ul>
+<li><p>procedure pointer initialization</p></li>
+<li><p>procedure pointer assignment</p></li>
+</ul>
+</li>
+<li><p>procedure pointer, procedure pointer target passed to a C function</p></li>
+<li><p>procedure pointer, procedure pointer target passed to a Fortran procedure</p></li>
+<li><p>procedure pointer component in derived types</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="current-todos">
+<h2>Current TODOs<a class="headerlink" href="#current-todos" title="Link to this heading">¶</a></h2>
+<p>Current list of TODOs in lowering:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/CallInterface.cpp:708</span></code>: not yet implemented: procedure pointer result not yet handled</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/CallInterface.cpp:961</span></code>: not yet implemented: procedure pointer arguments</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/CallInterface.cpp:993</span></code>: not yet implemented: procedure pointer results</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertExpr.cpp:1119</span></code>: not yet implemented: procedure pointer component in derived type assignment</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertType.cpp:228</span></code>: not yet implemented: procedure pointers</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/Bridge.cpp:2438</span></code>: not yet implemented: procedure pointer assignment</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertVariable.cpp:348</span></code>: not yet implemented: procedure pointer component default initialization</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertVariable.cpp:416</span></code>: not yet implemented: procedure pointer globals</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/ConvertVariable.cpp:1459</span></code>: not yet implemented: procedure pointers</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Lower/HostAssociations.cpp:162</span></code>: not yet implemented: capture procedure pointer in internal procedure</p></li>
+<li><p>lowering of procedure pointers in ASSOCIATED, NULL, and C_F_PROCPOINTER</p></li>
+</ul>
+<p>Current list of TODOs in code generation:</p>
+<p>NOTE: There are any number of possible implementations.</p>
+<p>BoxedProcedure pass</p>
+<p>or</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/TypeConverter.h:64</span></code> TODO: BoxProcType type conversion</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:2080</span></code> not yet implemented: fir.emboxproc codegen</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:629</span></code> not yet implemented: fir.boxproc_host codegen</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:1078</span></code> not yet implemented: fir.len_param_index codegen</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flang/lib/Optimizer/CodeGen/CodeGen.cpp:3166</span></code> not yet implemented: fir.unboxproc codegen</p></li>
+</ul>
+<hr class="docutils" />
+<p>Resources:</p>
+<ul class="simple">
+<li><p>[1] Fortran standard</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Preprocessing.html">Fortran Preprocessing</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RuntimeDescriptor.html">Runtime Descriptors</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Feb 10, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
