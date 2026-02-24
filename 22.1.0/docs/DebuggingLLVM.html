@@ -1,0 +1,242 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debugging LLVM &#8212; LLVM 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=19ab019f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="LLVM Tutorial: Table of Contents" href="tutorial/index.html" />
+    <link rel="prev" title="LLVM Programmer’s Manual" href="ProgrammersManual.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="tutorial/index.html" title="LLVM Tutorial: Table of Contents"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="ProgrammersManual.html" title="LLVM Programmer’s Manual"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="GettingStartedTutorials.html" accesskey="U">Getting Started/Tutorials</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debugging LLVM</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/DebuggingLLVM.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="debugging-llvm">
+<h1>Debugging LLVM<a class="headerlink" href="#debugging-llvm" title="Link to this heading">¶</a></h1>
+<p>This document is a collection of tips and tricks for debugging LLVM
+using a source-level debugger. The assumption is that you are trying to
+figure out the root cause of a miscompilation in the program that you
+are compiling.</p>
+<section id="extract-and-rerun-the-compile-command">
+<h2>Extract and rerun the compile command<a class="headerlink" href="#extract-and-rerun-the-compile-command" title="Link to this heading">¶</a></h2>
+<p>Extract the Clang command that produces the buggy code. The way to do
+this depends on the build system used by your program.</p>
+<ul class="simple">
+<li><p>For Ninja-based build systems, you can pass <code class="docutils literal notranslate"><span class="pre">-t</span> <span class="pre">commands</span></code> to Ninja
+and filter the output by the targeted source file name. For example:
+<code class="docutils literal notranslate"><span class="pre">ninja</span> <span class="pre">-t</span> <span class="pre">commands</span> <span class="pre">myprogram</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">path/to/file.cpp</span></code>.</p></li>
+<li><p>For Bazel-based build systems using Bazel 9 or newer (not released yet
+as of this writing), you can pass <code class="docutils literal notranslate"><span class="pre">--output=commands</span></code> to the <code class="docutils literal notranslate"><span class="pre">bazel</span>
+<span class="pre">aquery</span></code> subcommand for a similar result. For example: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">aquery</span>
+<span class="pre">--output=commands</span> <span class="pre">'deps(//myprogram)'</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">path/to/file.cpp</span></code>. Build
+commands must generally be run from a subdirectory of the source
+directory named <code class="docutils literal notranslate"><span class="pre">bazel-$PROJECTNAME</span></code>. Bazel typically makes the target
+paths of <code class="docutils literal notranslate"><span class="pre">-o</span></code> and <code class="docutils literal notranslate"><span class="pre">-MF</span></code> read-only when running commands outside
+of a build, so it may be necessary to change or remove these flags.</p></li>
+<li><p>A method that should work with any build system is to build your program
+under <a class="reference external" href="https://github.com/rizsotto/Bear">Bear</a> and look for the
+compile command in the resulting <code class="docutils literal notranslate"><span class="pre">compile_commands.json</span></code> file.</p></li>
+</ul>
+<p>Once you have the command you can use the following steps to debug
+it. Note that any flags mentioned later in this document are LLVM flags
+so they must be prefixed with <code class="docutils literal notranslate"><span class="pre">-mllvm</span></code> when passed to the Clang driver,
+e.g. <code class="docutils literal notranslate"><span class="pre">-mllvm</span> <span class="pre">-print-after-all</span></code>.</p>
+</section>
+<section id="understanding-the-source-of-the-issue">
+<h2>Understanding the source of the issue<a class="headerlink" href="#understanding-the-source-of-the-issue" title="Link to this heading">¶</a></h2>
+<p>If you have a miscompilation introduced by a pass, it is
+frequently possible to identify the pass where things go wrong
+by searching a pass-by-pass printout, which is enabled using the
+<code class="docutils literal notranslate"><span class="pre">-print-after-all</span></code> flag. Pipe stderr into <code class="docutils literal notranslate"><span class="pre">less</span></code> (append <code class="docutils literal notranslate"><span class="pre">2&gt;&amp;1</span> <span class="pre">|</span>
+<span class="pre">less</span></code> to command line) and use text search to move between passes
+(e.g. type <code class="docutils literal notranslate"><span class="pre">/Dump</span> <span class="pre">After&lt;Enter&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">n</span></code> to move to next pass,
+<code class="docutils literal notranslate"><span class="pre">N</span></code> to move to previous pass). If the name of the function
+containing the buggy IR is known, you can filter the output by passing
+<code class="docutils literal notranslate"><span class="pre">-filter-print-funcs=functionname</span></code>. You can sometimes pass <code class="docutils literal notranslate"><span class="pre">-debug</span></code> to
+get useful details about what passes are doing. See also  <a class="reference external" href="https://github.com/llvm/llvm-project/blob/main/llvm/lib/IR/PrintPasses.cpp">PrintPasses.cpp</a>
+for more useful options.</p>
+</section>
+<section id="creating-a-debug-build-of-llvm">
+<h2>Creating a debug build of LLVM<a class="headerlink" href="#creating-a-debug-build-of-llvm" title="Link to this heading">¶</a></h2>
+<p>The subsequent debugging steps require a debug build of LLVM. Pass the
+<code class="docutils literal notranslate"><span class="pre">-DCMAKE_BUILD_TYPE=Debug</span></code> to CMake in a separate build tree to create
+a debug build.</p>
+</section>
+<section id="understanding-where-an-instruction-came-from">
+<h2>Understanding where an instruction came from<a class="headerlink" href="#understanding-where-an-instruction-came-from" title="Link to this heading">¶</a></h2>
+<p>A common debugging task involves understanding which part of the code
+introduced a buggy instruction. The pass-by-pass dump is sometimes enough,
+but for complex or unfamiliar passes, more information is often required.</p>
+<p>The first step is to record a run of the debug build of Clang under <a class="reference external" href="https://rr-project.org">rr</a> passing the LLVM flag <code class="docutils literal notranslate"><span class="pre">-print-inst-addrs</span></code>
+together with <code class="docutils literal notranslate"><span class="pre">-print-after-all</span></code> and any desired filters. This will
+cause each instruction printed by LLVM to be suffixed with a comment
+showing the address of the <code class="docutils literal notranslate"><span class="pre">Instruction</span></code> object. You can then replay
+the run of Clang with <code class="docutils literal notranslate"><span class="pre">rr</span> <span class="pre">replay</span></code>. Because <code class="docutils literal notranslate"><span class="pre">rr</span></code> is deterministic,
+the instruction will receive the same address during the replay, so
+you can break on the instruction’s construction using a conditional
+breakpoint that checks for the address printed by LLVM, with commands
+such as the following:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>b Instruction::Instruction if this == 0x12345678
+</pre></div>
+</div>
+<p>When the breakpoint is hit, you will likely be at the location where
+the instruction was created, so you can unwind the stack with <code class="docutils literal notranslate"><span class="pre">bt</span></code>
+to see the stack trace. It is also possible that an instruction was
+created multiple times at the same address, so you may need to continue
+until reaching the desired location, but in the author’s experience this
+is unlikely to occur.</p>
+</section>
+<section id="identifying-the-source-locations-of-instructions">
+<h2>Identifying the source locations of instructions<a class="headerlink" href="#identifying-the-source-locations-of-instructions" title="Link to this heading">¶</a></h2>
+<p>To identify the source location that caused a particular instruction
+to be created, you can pass the LLVM flag <code class="docutils literal notranslate"><span class="pre">-print-inst-debug-locs</span></code>
+and each instruction printed by LLVM is suffixed with the file and line
+number of the instruction according to the debug information. Note that
+this requires debug information to be enabled (e.g. pass <code class="docutils literal notranslate"><span class="pre">-g</span></code> to Clang).</p>
+</section>
+<section id="lldb-data-formatters">
+<h2>LLDB Data Formatters<a class="headerlink" href="#lldb-data-formatters" title="Link to this heading">¶</a></h2>
+<p>A handful of <a class="reference external" href="https://lldb.llvm.org/resources/dataformatters.html">LLDB data formatters</a> are
+provided for some of the core LLVM libraries. To use them, execute the
+following (or add it to your <code class="docutils literal notranslate"><span class="pre">~/.lldbinit</span></code>):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">command</span> <span class="n">script</span> <span class="kn">import</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">llvm</span><span class="o">/</span><span class="n">utils</span><span class="o">/</span><span class="n">lldbDataFormatters</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+</section>
+<section id="gdb-pretty-printers">
+<h2>GDB pretty printers<a class="headerlink" href="#gdb-pretty-printers" title="Link to this heading">¶</a></h2>
+<p>A handful of <a class="reference external" href="https://sourceware.org/gdb/onlinedocs/gdb/Pretty-Printing.html">GDB pretty printers</a> are
+provided for some of the core LLVM libraries. To use them, execute the
+following (or add it to your <code class="docutils literal notranslate"><span class="pre">~/.gdbinit</span></code>):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">source</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">llvm</span><span class="o">/</span><span class="n">utils</span><span class="o">/</span><span class="n">gdb</span><span class="o">-</span><span class="n">scripts</span><span class="o">/</span><span class="n">prettyprinters</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+<p>It also might be handy to enable the <a class="reference external" href="https://sourceware.org/gdb/current/onlinedocs/gdb.html/Print-Settings.html">print pretty</a>
+option to avoid data structures being printed as a big block of text.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="tutorial/index.html" title="LLVM Tutorial: Table of Contents"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="ProgrammersManual.html" title="LLVM Programmer’s Manual"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="GettingStartedTutorials.html" >Getting Started/Tutorials</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debugging LLVM</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-02-24.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

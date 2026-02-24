@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>RealtimeSanitizer &#8212; Clang 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=19ab019f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="SanitizerCoverage" href="SanitizerCoverage.html" />
+    <link rel="prev" title="TypeSanitizer" href="TypeSanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 22.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>RealtimeSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="TypeSanitizer.html">TypeSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SanitizerCoverage.html">SanitizerCoverage</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="realtimesanitizer">
+<h1>RealtimeSanitizer<a class="headerlink" href="#realtimesanitizer" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id4">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#how-to-build" id="id5">How to build</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id6">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#blocking-functions" id="id7">Blocking functions</a></p></li>
+<li><p><a class="reference internal" href="#run-time-flags" id="id8">Run-time flags</a></p></li>
+<li><p><a class="reference internal" href="#additional-customization" id="id9">Additional customization</a></p></li>
+<li><p><a class="reference internal" href="#disabling-and-suppressing" id="id10">Disabling and suppressing</a></p>
+<ul>
+<li><p><a class="reference internal" href="#scopeddisabler" id="id11"><code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code></a></p></li>
+<li><p><a class="reference internal" href="#suppression-file" id="id12">Suppression file</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#compile-time-sanitizer-detection" id="id13">Compile-time sanitizer detection</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>RealtimeSanitizer (a.k.a. RTSan) is a real-time safety testing tool for C and C++
+projects. RTSan can be used to detect real-time violations, i.e. calls to methods
+that are not safe for use in functions with deterministic run time requirements.
+RTSan considers any function marked with the <code class="docutils literal notranslate"><span class="pre">[[clang::nonblocking]]</span></code> attribute
+to be a real-time function. At run-time, if RTSan detects a call to <code class="docutils literal notranslate"><span class="pre">malloc</span></code>,
+<code class="docutils literal notranslate"><span class="pre">free</span></code>, <code class="docutils literal notranslate"><span class="pre">pthread_mutex_lock</span></code>, or anything else known to have a
+non-deterministic execution time in a function marked <code class="docutils literal notranslate"><span class="pre">[[clang::nonblocking]]</span></code>
+it raises an error.</p>
+<p>RTSan performs its analysis at run-time but shares the <code class="docutils literal notranslate"><span class="pre">[[clang::nonblocking]]</span></code>
+attribute with the <a class="reference internal" href="FunctionEffectAnalysis.html"><span class="doc">Function Effect Analysis</span></a> system, which operates at
+compile-time to detect potential real-time safety violations. For comprehensive
+detection of real-time safety issues, it is recommended to use both systems together.</p>
+<p>The runtime slowdown introduced by RealtimeSanitizer is negligible.</p>
+</section>
+<section id="how-to-build">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">How to build</a><a class="headerlink" href="#how-to-build" title="Link to this heading">¶</a></h2>
+<p>Build LLVM/Clang with <a class="reference external" href="https://llvm.org/docs/CMake.html">CMake</a> and enable the
+<code class="docutils literal notranslate"><span class="pre">compiler-rt</span></code> runtime. An example CMake configuration that will allow for the
+use/testing of RealtimeSanitizer:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>-DLLVM_ENABLE_PROJECTS<span class="o">=</span><span class="s2">&quot;clang&quot;</span><span class="w"> </span>-DLLVM_ENABLE_RUNTIMES<span class="o">=</span><span class="s2">&quot;compiler-rt&quot;</span><span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>source&gt;/llvm
+</pre></div>
+</div>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>There are two requirements:</p>
+<ol class="arabic simple">
+<li><p>The code must be compiled with the <code class="docutils literal notranslate"><span class="pre">-fsanitize=realtime</span></code> flag.</p></li>
+<li><p>Functions that are subject to real-time constraints must be marked
+with the <code class="docutils literal notranslate"><span class="pre">[[clang::nonblocking]]</span></code> attribute.</p></li>
+</ol>
+<p>Typically, these attributes should be added onto the functions that are entry
+points for threads with real-time priority. These threads are subject to a fixed
+callback time, such as audio callback threads or rendering loops in video game
+code.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>cat<span class="w"> </span>example_realtime_violation.cpp
+<span class="gp">#</span>include<span class="w"> </span>&lt;vector&gt;
+
+<span class="go">void violation() [[clang::nonblocking]]{</span>
+<span class="go">  std::vector&lt;float&gt; v;</span>
+<span class="go">  v.resize(100);</span>
+<span class="go">}</span>
+
+<span class="go">int main() {</span>
+<span class="go">  violation();</span>
+<span class="go">  return 0;</span>
+<span class="go">}</span>
+<span class="gp"># </span>Compile<span class="w"> </span>and<span class="w"> </span>link
+<span class="gp">% </span>clang++<span class="w"> </span>-fsanitize<span class="o">=</span>realtime<span class="w"> </span>example_realtime_violation.cpp
+</pre></div>
+</div>
+<p>If a real-time safety violation is detected in a <code class="docutils literal notranslate"><span class="pre">[[clang::nonblocking]]</span></code>
+context, or any function invoked by that function, the program will exit with a
+non-zero exit code.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>clang++<span class="w"> </span>-fsanitize<span class="o">=</span>realtime<span class="w"> </span>example_realtime_violation.cpp
+<span class="gp">% </span>./a.out
+<span class="go">==76290==ERROR: RealtimeSanitizer: unsafe-library-call</span>
+<span class="go">Intercepted call to real-time unsafe function `malloc` in real-time context!</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x000102a7b884<span class="w"> </span><span class="k">in</span><span class="w"> </span>malloc<span class="w"> </span>rtsan_interceptors.cpp:426
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x00019c326bd0<span class="w"> </span><span class="k">in</span><span class="w"> </span>operator<span class="w"> </span>new<span class="o">(</span>unsigned<span class="w"> </span>long<span class="o">)</span>+0x1c<span class="w"> </span><span class="o">(</span>libc++abi.dylib:arm64+0x16bd0<span class="o">)</span>
+<span class="gp">    #</span><span class="m">2</span><span class="w"> </span>0xa30d0001024f79a8<span class="w">  </span><span class="o">(</span>&lt;unknown<span class="w"> </span>module&gt;<span class="o">)</span>
+<span class="gp">    #</span><span class="m">3</span><span class="w"> </span>0x0001024f794c<span class="w"> </span><span class="k">in</span><span class="w"> </span>std::__1::__libcpp_allocate<span class="o">[</span>abi:ne200000<span class="o">](</span>unsigned<span class="w"> </span>long,<span class="w"> </span>unsigned<span class="w"> </span>long<span class="o">)</span>+0x44
+<span class="gp">    #</span><span class="m">4</span><span class="w"> </span>0x0001024f78c4<span class="w"> </span><span class="k">in</span><span class="w"> </span>std::__1::allocator&lt;float&gt;::allocate<span class="o">[</span>abi:ne200000<span class="o">](</span>unsigned<span class="w"> </span>long<span class="o">)</span>+0x44
+<span class="go">    ... snip ...</span>
+<span class="gp">    #</span><span class="m">9</span><span class="w"> </span>0x0001024f6868<span class="w"> </span><span class="k">in</span><span class="w"> </span>std::__1::vector&lt;float,<span class="w"> </span>std::__1::allocator&lt;float&gt;&gt;::resize<span class="o">(</span>unsigned<span class="w"> </span>long<span class="o">)</span>+0x48
+<span class="gp">    #</span><span class="m">10</span><span class="w"> </span>0x0001024f67b4<span class="w"> </span><span class="k">in</span><span class="w"> </span>violation<span class="o">()</span>+0x24
+<span class="gp">    #</span><span class="m">11</span><span class="w"> </span>0x0001024f68f0<span class="w"> </span><span class="k">in</span><span class="w"> </span>main+0x18<span class="w"> </span><span class="o">(</span>a.out:arm64+0x1000028f0<span class="o">)</span>
+<span class="gp">    #</span><span class="m">12</span><span class="w"> </span>0x00019bfe3150<span class="w">  </span><span class="o">(</span>&lt;unknown<span class="w"> </span>module&gt;<span class="o">)</span>
+<span class="gp">    #</span><span class="m">13</span><span class="w"> </span>0xed5efffffffffffc<span class="w">  </span><span class="o">(</span>&lt;unknown<span class="w"> </span>module&gt;<span class="o">)</span>
+</pre></div>
+</div>
+<section id="blocking-functions">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Blocking functions</a><a class="headerlink" href="#blocking-functions" title="Link to this heading">¶</a></h3>
+<p>Calls to system library functions such as <code class="docutils literal notranslate"><span class="pre">malloc</span></code> are automatically caught by
+RealtimeSanitizer. Real-time programmers may also write their own blocking
+(real-time unsafe) functions that they wish RealtimeSanitizer to be aware of.
+RealtimeSanitizer will raise an error at run time if any function attributed
+with <code class="docutils literal notranslate"><span class="pre">[[clang::blocking]]</span></code> is called in a <code class="docutils literal notranslate"><span class="pre">[[clang::nonblocking]]</span></code> context.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cat<span class="w"> </span>example_blocking_violation.cpp
+<span class="gp">#</span>include<span class="w"> </span>&lt;atomic&gt;
+<span class="gp">#</span>include<span class="w"> </span>&lt;thread&gt;
+
+<span class="go">std::atomic&lt;bool&gt; has_permission{false};</span>
+
+<span class="go">int wait_for_permission() [[clang::blocking]] {</span>
+<span class="go">  while (has_permission.load() == false)</span>
+<span class="go">    std::this_thread::yield();</span>
+<span class="go">  return 0;</span>
+<span class="go">}</span>
+
+<span class="go">int real_time_function() [[clang::nonblocking]] {</span>
+<span class="go">  return wait_for_permission();</span>
+<span class="go">}</span>
+
+<span class="go">int main() {</span>
+<span class="go">  return real_time_function();</span>
+<span class="go">}</span>
+
+<span class="gp">$ </span>clang++<span class="w"> </span>-fsanitize<span class="o">=</span>realtime<span class="w"> </span>example_blocking_violation.cpp<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>./a.out
+<span class="go">==76131==ERROR: RealtimeSanitizer: blocking-call</span>
+<span class="go">Call to blocking function `wait_for_permission()` in real-time context!</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x0001000c3db0<span class="w"> </span><span class="k">in</span><span class="w"> </span>wait_for_permission<span class="o">()</span>+0x10<span class="w"> </span><span class="o">(</span>a.out:arm64+0x100003db0<span class="o">)</span>
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x0001000c3e3c<span class="w"> </span><span class="k">in</span><span class="w"> </span>real_time_function<span class="o">()</span>+0x10<span class="w"> </span><span class="o">(</span>a.out:arm64+0x100003e3c<span class="o">)</span>
+<span class="gp">    #</span><span class="m">2</span><span class="w"> </span>0x0001000c3e68<span class="w"> </span><span class="k">in</span><span class="w"> </span>main+0x10<span class="w"> </span><span class="o">(</span>a.out:arm64+0x100003e68<span class="o">)</span>
+<span class="gp">    #</span><span class="m">3</span><span class="w"> </span>0x00019bfe3150<span class="w">  </span><span class="o">(</span>&lt;unknown<span class="w"> </span>module&gt;<span class="o">)</span>
+<span class="gp">    #</span><span class="m">4</span><span class="w"> </span>0x5a27fffffffffffc<span class="w">  </span><span class="o">(</span>&lt;unknown<span class="w"> </span>module&gt;<span class="o">)</span>
+</pre></div>
+</div>
+</section>
+<section id="run-time-flags">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Run-time flags</a><a class="headerlink" href="#run-time-flags" title="Link to this heading">¶</a></h3>
+<p>RealtimeSanitizer supports a number of run-time flags, which can be specified in the <code class="docutils literal notranslate"><span class="pre">RTSAN_OPTIONS</span></code> environment variable:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span><span class="nv">RTSAN_OPTIONS</span><span class="o">=</span><span class="nv">option_1</span><span class="o">=</span>true:path_option_2<span class="o">=</span><span class="s2">&quot;/some/file.txt&quot;</span><span class="w"> </span>./a.out
+<span class="go">...</span>
+</pre></div>
+</div>
+<p>Or at compile-time by providing the symbol <code class="docutils literal notranslate"><span class="pre">__rtsan_default_options</span></code>:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="n">__attribute__</span><span class="p">((</span><span class="n">__visibility__</span><span class="p">(</span><span class="s">&quot;default&quot;</span><span class="p">)))</span>
+<span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">__rtsan_default_options</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;symbolize=false:abort_on_error=0:log_to_syslog=0&quot;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>You can see all sanitizer options (some of which are unsupported) by using the <code class="docutils literal notranslate"><span class="pre">help</span></code> flag:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span><span class="nv">RTSAN_OPTIONS</span><span class="o">=</span><span class="nv">help</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span>./a.out
+</pre></div>
+</div>
+<p>A <strong>partial</strong> list of flags RealtimeSanitizer respects:</p>
+<table class="docutils align-default" id="id2">
+<caption><span class="caption-text">Run-time Flags</span><a class="headerlink" href="#id2" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 18.2%" />
+<col style="width: 9.1%" />
+<col style="width: 9.1%" />
+<col style="width: 63.6%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Flag name</p></th>
+<th class="head"><p>Default value</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Short description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">halt_on_error</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>boolean</p></td>
+<td><p>Exit after first reported error.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">suppress_equal_stacks</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>boolean</p></td>
+<td><p>If true, suppress duplicate reports (i.e. only print each unique error once). Only particularly useful when <code class="docutils literal notranslate"><span class="pre">halt_on_error=false</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">print_stats_on_exit</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>boolean</p></td>
+<td><p>Print stats on exit. Includes total and unique errors.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">color</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code></p></td>
+<td><p>string</p></td>
+<td><p>Colorize reports: (always|never|auto).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fast_unwind_on_fatal</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>boolean</p></td>
+<td><p>If available, use the fast frame-pointer-based unwinder on detected errors. If true, ensure the code under test has been compiled with frame pointers with <code class="docutils literal notranslate"><span class="pre">-fno-omit-frame-pointers</span></code> or similar.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">abort_on_error</span></code></p></td>
+<td><p>OS dependent</p></td>
+<td><p>boolean</p></td>
+<td><p>If true, the tool calls <code class="docutils literal notranslate"><span class="pre">abort()</span></code> instead of <code class="docutils literal notranslate"><span class="pre">_exit()</span></code> after printing the error report. On some OSes (macOS, for example) this is beneficial because a better stack trace is emitted on crash.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">symbolize</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>boolean</p></td>
+<td><p>If set, use the symbolizer to turn virtual addresses to file/line locations. If false, can greatly speed up the error reporting.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">suppressions</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code></p></td>
+<td><p>path</p></td>
+<td><p>If set to a valid suppressions file, will suppress issue reporting. See details in <a class="reference internal" href="#id1">Disabling and Suppressing</a>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">verify_interceptors</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>boolean</p></td>
+<td><p>If true, verifies interceptors are working at initialization. The program will abort with error <code class="docutils literal notranslate"><span class="pre">==ERROR:</span> <span class="pre">Interceptors</span> <span class="pre">are</span> <span class="pre">not</span> <span class="pre">working.</span> <span class="pre">This</span> <span class="pre">may</span> <span class="pre">be</span> <span class="pre">because</span> <span class="pre">RealtimeSanitizer</span> <span class="pre">is</span> <span class="pre">loaded</span> <span class="pre">too</span> <span class="pre">late</span> <span class="pre">(e.g.</span> <span class="pre">via</span> <span class="pre">dlopen)</span></code> if an issue is detected.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Some issues with flags can be debugged using the <code class="docutils literal notranslate"><span class="pre">verbosity=$NUM</span></code> flag:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span><span class="nv">RTSAN_OPTIONS</span><span class="o">=</span><span class="nv">verbosity</span><span class="o">=</span><span class="m">1</span>:misspelled_flag<span class="o">=</span><span class="nb">true</span><span class="w"> </span>./a.out
+<span class="go">WARNING: found 1 unrecognized flag(s):</span>
+<span class="go">misspelled_flag</span>
+<span class="go">...</span>
+</pre></div>
+</div>
+</section>
+<section id="additional-customization">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Additional customization</a><a class="headerlink" href="#additional-customization" title="Link to this heading">¶</a></h3>
+<p>In addition to <code class="docutils literal notranslate"><span class="pre">__rtsan_default_options</span></code> outlined above, you can provide definitions of other functions that affect how RTSan operates.</p>
+<p>To be notified on every error reported by RTsan, provide a definition of <code class="docutils literal notranslate"><span class="pre">__sanitizer_report_error_summary</span></code>.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_report_error_summary</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">error_summary</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;%s %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;In custom handler! &quot;</span><span class="p">,</span><span class="w"> </span><span class="n">error_summary</span><span class="p">);</span>
+<span class="w">   </span><span class="cm">/* do other custom things */</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The error summary will be of the form:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">SUMMARY: RealtimeSanitizer: unsafe-library-call main.cpp:8 in process(std::__1::vector&lt;int, std::__1::allocator&lt;int&gt;&gt;&amp;)</span>
+</pre></div>
+</div>
+<p>To register a callback which will be invoked before a RTSan kills the process:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">__sanitizer_set_death_callback</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="n">callback</span><span class="p">)(</span><span class="kt">void</span><span class="p">));</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">custom_on_die_callback</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;In custom handler!&quot;</span><span class="p">)</span>
+<span class="w">  </span><span class="cm">/* do other custom things */</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="n">__sanitizer_set_death_callback</span><span class="p">(</span><span class="n">custom_on_die_callback</span><span class="p">);</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="disabling-and-suppressing">
+<span id="id1"></span><h3><a class="toc-backref" href="#id10" role="doc-backlink">Disabling and suppressing</a><a class="headerlink" href="#disabling-and-suppressing" title="Link to this heading">¶</a></h3>
+<p>There are multiple ways to disable error reporting when using RealtimeSanitizer.</p>
+<p>In general, <code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code> should be preferred, as it is the most performant.</p>
+<table class="docutils align-default" id="id3">
+<caption><span class="caption-text">Suppression methods</span><a class="headerlink" href="#id3" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 21.4%" />
+<col style="width: 10.7%" />
+<col style="width: 10.7%" />
+<col style="width: 7.1%" />
+<col style="width: 50.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Specified at?</p></th>
+<th class="head"><p>Scope</p></th>
+<th class="head"><p>Run-time cost</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code></p></td>
+<td><p>Compile-time</p></td>
+<td><p>Stack</p></td>
+<td><p>Very low</p></td>
+<td><p>Violations are ignored for the lifetime of the <code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code> object.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">function-name-matches</span></code> suppression</p></td>
+<td><p>Run-time</p></td>
+<td><p>Single function</p></td>
+<td><p>Medium</p></td>
+<td><p>Suppresses intercepted and <code class="docutils literal notranslate"><span class="pre">[[clang::blocking]]</span></code> function calls by name.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">call-stack-contains</span></code> suppression</p></td>
+<td><p>Run-time</p></td>
+<td><p>Stack</p></td>
+<td><p>High</p></td>
+<td><p>Suppresses any stack trace containing the specified pattern.</p></td>
+</tr>
+</tbody>
+</table>
+<section id="scopeddisabler">
+<h4><a class="toc-backref" href="#id11" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code></a><a class="headerlink" href="#scopeddisabler" title="Link to this heading">¶</a></h4>
+<p>At compile time, RealtimeSanitizer may be disabled using <code class="docutils literal notranslate"><span class="pre">__rtsan::ScopedDisabler</span></code>. RTSan ignores any errors originating within the <code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code> instance variable scope.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sanitizer/rtsan_interface.h&gt;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="kt">float</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">buffer</span><span class="p">)</span><span class="w"> </span><span class="p">[[</span><span class="n">clang</span><span class="o">::</span><span class="n">nonblocking</span><span class="p">]]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">        </span><span class="n">__rtsan</span><span class="o">::</span><span class="n">ScopedDisabler</span><span class="w"> </span><span class="n">d</span><span class="p">;</span>
+<span class="w">        </span><span class="p">...</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If RealtimeSanitizer is not enabled at compile time (i.e., the code is not compiled with the <code class="docutils literal notranslate"><span class="pre">-fsanitize=realtime</span></code> flag), the <code class="docutils literal notranslate"><span class="pre">ScopedDisabler</span></code> is compiled as a no-op.</p>
+<p>In C, you can use the <code class="docutils literal notranslate"><span class="pre">__rtsan_disable()</span></code> and <code class="docutils literal notranslate"><span class="pre">rtsan_enable()</span></code> functions to manually disable and re-enable RealtimeSanitizer checks.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sanitizer/rtsan_interface.h&gt;</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">buffer</span><span class="p">)</span><span class="w"> </span><span class="p">[[</span><span class="n">clang</span><span class="o">::</span><span class="n">nonblocking</span><span class="p">]]</span>
+<span class="p">{</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">        </span><span class="n">__rtsan_disable</span><span class="p">();</span>
+
+<span class="w">        </span><span class="p">...</span>
+
+<span class="w">        </span><span class="n">__rtsan_enable</span><span class="p">();</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Each call to <code class="docutils literal notranslate"><span class="pre">__rtsan_disable()</span></code> must be paired with a subsequent call to <code class="docutils literal notranslate"><span class="pre">__rtsan_enable()</span></code> to restore normal sanitizer functionality. If a corresponding <code class="docutils literal notranslate"><span class="pre">rtsan_enable()</span></code> call is not made, the behavior is undefined.</p>
+</section>
+<section id="suppression-file">
+<h4><a class="toc-backref" href="#id12" role="doc-backlink">Suppression file</a><a class="headerlink" href="#suppression-file" title="Link to this heading">¶</a></h4>
+<p>At run-time, suppressions may be specified using a suppressions file passed in <code class="docutils literal notranslate"><span class="pre">RTSAN_OPTIONS</span></code>. Run-time suppression may be useful if the source cannot be changed.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">&gt; cat suppressions.supp</span>
+<span class="go">call-stack-contains:MallocViolation</span>
+<span class="go">call-stack-contains:std::*vector</span>
+<span class="go">function-name-matches:free</span>
+<span class="go">function-name-matches:CustomMarkedBlocking*</span>
+<span class="go">&gt; RTSAN_OPTIONS=&quot;suppressions=suppressions.supp&quot; ./a.out</span>
+<span class="go">...</span>
+</pre></div>
+</div>
+<p>Suppressions specified in this file are one of two flavors.</p>
+<p><code class="docutils literal notranslate"><span class="pre">function-name-matches</span></code> suppresses reporting of any intercepted library call, or function marked <code class="docutils literal notranslate"><span class="pre">[[clang::blocking]]</span></code> by name. If, for instance, you know that <code class="docutils literal notranslate"><span class="pre">malloc</span></code> is real-time safe on your system, you can disable the check for it via <code class="docutils literal notranslate"><span class="pre">function-name-matches:malloc</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">call-stack-contains</span></code> suppresses reporting of errors in any stack that contains a string matching the pattern specified. For example, suppressing error reporting of any non-real-time-safe behavior in <code class="docutils literal notranslate"><span class="pre">std::vector</span></code> may be specified <code class="docutils literal notranslate"><span class="pre">call-stack-contains:std::*vector</span></code>. You must include symbols in your build for this method to be effective, unsymbolicated stack traces cannot be matched. <code class="docutils literal notranslate"><span class="pre">call-stack-contains</span></code> has the highest run-time cost of any method of suppression.</p>
+<p>Patterns may be exact matches or are “regex-light” patterns, containing special characters such as <code class="docutils literal notranslate"><span class="pre">^$*</span></code>.</p>
+<p>The number of potential errors suppressed via this method may be seen on exit when using the <code class="docutils literal notranslate"><span class="pre">print_stats_on_exit</span></code> flag.</p>
+</section>
+</section>
+<section id="compile-time-sanitizer-detection">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Compile-time sanitizer detection</a><a class="headerlink" href="#compile-time-sanitizer-detection" title="Link to this heading">¶</a></h3>
+<p>Clang provides the pre-processor macro <code class="docutils literal notranslate"><span class="pre">__has_feature</span></code> which may be used to detect if RealtimeSanitizer is enabled at compile-time.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature) &amp;&amp; __has_feature(realtime_sanitizer)</span>
+<span class="p">...</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="TypeSanitizer.html">TypeSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="SanitizerCoverage.html">SanitizerCoverage</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,314 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Instruction referencing for debug info &#8212; LLVM 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=19ab019f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Key Instructions debug info in LLVM and Clang" href="KeyInstructionsDebugInfo.html" />
+    <link rel="prev" title="Instrumentation Profile Format" href="InstrProfileFormat.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="KeyInstructionsDebugInfo.html" title="Key Instructions debug info in LLVM and Clang"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="InstrProfileFormat.html" title="Instrumentation Profile Format"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Instruction referencing for debug info</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/InstrRefDebugInfo.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="instruction-referencing-for-debug-info">
+<h1>Instruction referencing for debug info<a class="headerlink" href="#instruction-referencing-for-debug-info" title="Link to this heading">¶</a></h1>
+<p>This document explains how LLVM uses value tracking, or instruction
+referencing, to determine variable locations for debug info in the code
+generation stage of compilation. This content is aimed at those working on code
+generation targets and optimisation passes. It may also be of interest to anyone
+curious about low-level debug info handling.</p>
+</section>
+<section id="problem-statement">
+<h1>Problem statement<a class="headerlink" href="#problem-statement" title="Link to this heading">¶</a></h1>
+<p>At the end of compilation, LLVM must produce a DWARF location list (or similar)
+describing what register or stack location a variable can be found in, for each
+instruction in that variable’s lexical scope. We could track the virtual
+register that the variable resides in through compilation, however this is
+vulnerable to register optimisations during regalloc, and instruction
+movements.</p>
+</section>
+<section id="solution-instruction-referencing">
+<h1>Solution: instruction referencing<a class="headerlink" href="#solution-instruction-referencing" title="Link to this heading">¶</a></h1>
+<p>Rather than identify the virtual register that a variable value resides in,
+instead in instruction referencing mode, LLVM refers to the machine instruction
+and operand position that the value is defined in. Consider the LLVM IR way of
+referring to instruction values:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv nv-Anonymous">%2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">add</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%1</span>
+<span class="w">  </span><span class="err">#dbg_value</span><span class="p">(</span><span class="k">metadata</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv nv-Anonymous">%2</span><span class="p">,</span>
+</pre></div>
+</div>
+<p>In LLVM IR, the IR Value is synonymous with the instruction that computes the
+value, to the extent that in memory a Value is a pointer to the computing
+instruction. Instruction referencing implements this relationship in the
+codegen backend of LLVM, after instruction selection. Consider the X86 assembly
+below and instruction referencing debug info, corresponding to the earlier
+LLVM IR:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>%2:gr32 = ADD32rr %0, %1, implicit-def $eflags, debug-instr-number 1
+DBG_INSTR_REF 1, 0, !123, !456, debug-location !789
+</pre></div>
+</div>
+<p>While the function remains in SSA form, virtual register <code class="docutils literal notranslate"><span class="pre">%2</span></code> is sufficient to
+identify the value computed by the instruction – however the function
+eventually leaves SSA form, and register optimisations will obscure which
+register the desired value is in. Instead, a more consistent way of identifying
+the instruction’s value is to refer to the <code class="docutils literal notranslate"><span class="pre">MachineOperand</span></code> where the value is
+defined: independently of which register is defined by that <code class="docutils literal notranslate"><span class="pre">MachineOperand</span></code>. In
+the code above, the <code class="docutils literal notranslate"><span class="pre">DBG_INSTR_REF</span></code> instruction refers to instruction number
+one, operand zero, while the <code class="docutils literal notranslate"><span class="pre">ADD32rr</span></code> has a <code class="docutils literal notranslate"><span class="pre">debug-instr-number</span></code> attribute
+attached indicating that it is instruction number one.</p>
+<p>De-coupling variable locations from registers avoids difficulties involving
+register allocation and optimisation, but requires additional instrumentation
+when the instructions are optimised instead. Optimisations that replace
+instructions with optimised versions that compute the same value must either
+preserve the instruction number, or record a substitution from the old
+instruction / operand number pair to the new instruction / operand pair – see
+<code class="docutils literal notranslate"><span class="pre">MachineFunction::substituteDebugValuesForInst</span></code>. If debug info maintenance is
+not performed, or an instruction is eliminated as dead code, the variable
+location is safely dropped and marked “optimised out”. The exception is
+instructions that are mutated rather than replaced, which always need debug info
+maintenance.</p>
+</section>
+<section id="register-allocator-considerations">
+<h1>Register allocator considerations<a class="headerlink" href="#register-allocator-considerations" title="Link to this heading">¶</a></h1>
+<p>When the register allocator runs, debugging instructions do not directly refer
+to any virtual registers, and thus there is no need for expensive location
+maintenance during regalloc (i.e. <code class="docutils literal notranslate"><span class="pre">LiveDebugVariables</span></code>). Debug instructions are
+unlinked from the function, then linked back in after register allocation
+completes.</p>
+<p>The exception is <code class="docutils literal notranslate"><span class="pre">PHI</span></code> instructions: these become implicit definitions at
+control flow merges once regalloc finishes, and any debug numbers attached to
+<code class="docutils literal notranslate"><span class="pre">PHI</span></code> instructions are lost. To circumvent this, debug numbers of <code class="docutils literal notranslate"><span class="pre">PHI</span></code>s are
+recorded at the start of register allocation (<code class="docutils literal notranslate"><span class="pre">phi-node-elimination</span></code>), then
+<code class="docutils literal notranslate"><span class="pre">DBG_PHI</span></code> instructions are inserted after regalloc finishes. This requires some
+maintenance of which register a variable is located in during regalloc, but at
+single positions (block entry points) rather than ranges of instructions.</p>
+<p>An example, before regalloc:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bb.2:
+  %2 = PHI %1, %bb.0, %2, %bb.1, debug-instr-number 1
+</pre></div>
+</div>
+<p>After:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bb.2:
+  DBG_PHI $rax, 1
+</pre></div>
+</div>
+</section>
+<section id="livedebugvalues">
+<h1><code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code><a class="headerlink" href="#livedebugvalues" title="Link to this heading">¶</a></h1>
+<p>After optimisations and code layout complete, information about variable
+values must be translated into variable locations, i.e. registers and stack
+slots. This is performed in the [<code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code> pass][LiveDebugValues], where
+the debug instructions and machine code are separated out into two independent
+functions:</p>
+<ul class="simple">
+<li><p>One that assigns values to variable names,</p></li>
+<li><p>One that assigns values to machine registers and stack slots.</p></li>
+</ul>
+<p>LLVM’s existing SSA tools are used to place <code class="docutils literal notranslate"><span class="pre">PHI</span></code>s for each function, between
+variable values and the values contained in machine locations, with value
+propagation eliminating any unnecessary <code class="docutils literal notranslate"><span class="pre">PHI</span></code>s. The two can then be joined up
+to map variables to values, then values to locations, for each instruction in
+the function.</p>
+<p>Key to this process is being able to identify the movement of values between
+registers and stack locations, so that the location of values can be preserved
+for the full time that they are resident in the machine.</p>
+</section>
+<section id="required-target-support-and-transition-guide">
+<h1>Required target support and transition guide<a class="headerlink" href="#required-target-support-and-transition-guide" title="Link to this heading">¶</a></h1>
+<p>Instruction referencing will work on any target, but likely with poor coverage.
+Supporting instruction referencing well requires:</p>
+<ul class="simple">
+<li><p>Target hooks to be implemented to allow <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code> to follow values
+through the machine,</p></li>
+<li><p>Target-specific optimisations to be instrumented, to preserve instruction
+numbers.</p></li>
+</ul>
+<section id="target-hooks">
+<h2>Target hooks<a class="headerlink" href="#target-hooks" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">TargetInstrInfo::isCopyInstrImpl</span></code> must be implemented to recognise any
+instructions that are copy-like – <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code> uses this to identify when
+values move between registers.</p>
+<p><code class="docutils literal notranslate"><span class="pre">TargetInstrInfo::isLoadFromStackSlotPostFE</span></code> and
+<code class="docutils literal notranslate"><span class="pre">TargetInstrInfo::isStoreToStackSlotPostFE</span></code> are needed to identify spill and
+restore instructions. Each should return the destination or source register
+respectively. <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code> will track the movement of a value from / to
+the stack slot. In addition, any instruction that writes to a stack spill
+should have a <code class="docutils literal notranslate"><span class="pre">MachineMemoryOperand</span></code> attached, so that <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code> can
+recognise that a slot has been clobbered.</p>
+</section>
+<section id="target-specific-optimisation-instrumentation">
+<h2>Target-specific optimisation instrumentation<a class="headerlink" href="#target-specific-optimisation-instrumentation" title="Link to this heading">¶</a></h2>
+<p>Optimisations come in two flavours: those that mutate a <code class="docutils literal notranslate"><span class="pre">MachineInstr</span></code> to make
+it do something different, and those that create a new instruction to replace
+the operation of the old.</p>
+<p>The former <em>must</em> be instrumented – the relevant question is whether any
+register def in any operand will produce a different value, as a result of the
+mutation. If the answer is yes, then there is a risk that a <code class="docutils literal notranslate"><span class="pre">DBG_INSTR_REF</span></code>
+instruction referring to that operand will end up assigning the different
+value to a variable, presenting the debugging developer with an unexpected
+variable value. In such scenarios, call <code class="docutils literal notranslate"><span class="pre">MachineInstr::dropDebugNumber()</span></code> on the
+mutated instruction to erase its instruction number. Any <code class="docutils literal notranslate"><span class="pre">DBG_INSTR_REF</span></code>
+referring to it will produce an empty variable location instead, that appears
+as “optimised out” in the debugger.</p>
+<p>For the latter flavour of optimisation, to increase coverage you should record
+an instruction number substitution: a mapping from the old instruction number /
+operand pair to new instruction number / operand pair. Consider if we replace
+a three-address add instruction with a two-address add:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>%2:gr32 = ADD32rr %0, %1, debug-instr-number 1
+</pre></div>
+</div>
+<p>becomes</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>%2:gr32 = ADD32rr %0(tied-def 0), %1, debug-instr-number 2
+</pre></div>
+</div>
+<p>With a substitution from “instruction number 1 operand 0” to “instruction number
+2 operand 0” recorded in the <code class="docutils literal notranslate"><span class="pre">MachineFunction</span></code>. In <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code>,
+<code class="docutils literal notranslate"><span class="pre">DBG_INSTR_REF</span></code>s will be mapped through the substitution table to find the most
+recent instruction number / operand number of the value it refers to.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">MachineFunction::substituteDebugValuesForInst</span></code> to automatically produce
+substitutions between an old and new instruction. It assumes that any operand
+that is a def in the old instruction is a def in the new instruction at the
+same operand position. This works most of the time, for example in the example
+above.</p>
+<p>If operand numbers do not line up between the old and new instruction, use
+<code class="docutils literal notranslate"><span class="pre">MachineInstr::getDebugInstrNum</span></code> to acquire the instruction number for the new
+instruction, and <code class="docutils literal notranslate"><span class="pre">MachineFunction::makeDebugValueSubstitution</span></code> to record the
+mapping between register definitions in the old and new instructions. If some
+values computed by the old instruction are no longer computed by the new
+instruction, record no substitution – <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code> will safely drop the
+now unavailable variable value.</p>
+<p>Should your target clone instructions, much the same as the <code class="docutils literal notranslate"><span class="pre">TailDuplicator</span></code>
+optimisation pass, do not attempt to preserve the instruction numbers or
+record any substitutions. <code class="docutils literal notranslate"><span class="pre">MachineFunction::CloneMachineInstr</span></code> should drop the
+instruction number of any cloned instruction, to avoid duplicate numbers
+appearing to <code class="docutils literal notranslate"><span class="pre">LiveDebugValues</span></code>. Dealing with duplicated instructions is a
+natural extension to instruction referencing that’s currently unimplemented.</p>
+<p>[LiveDebugValues]: project:SourceLevelDebugging.rst#LiveDebugValues expansion of variable locations</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="KeyInstructionsDebugInfo.html" title="Key Instructions debug info in LLVM and Clang"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="InstrProfileFormat.html" title="Instrumentation Profile Format"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Instruction referencing for debug info</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-02-24.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

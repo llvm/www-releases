@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>2.6. Taint Analysis Configuration &#8212; Clang 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../../_static/documentation_options.js?v=19ab019f"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="2.7. Source Annotations" href="Annotations.html" />
+    <link rel="prev" title="2.5. Cross Translation Unit (CTU) Analysis" href="CrossTranslationUnit.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 22.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>2.6. Taint Analysis Configuration</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="CrossTranslationUnit.html"><span class="section-number">2.5. </span>Cross Translation Unit (CTU) Analysis</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Annotations.html"><span class="section-number">2.7. </span>Source Annotations</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="taint-analysis-configuration">
+<h1><span class="section-number">2.6. </span>Taint Analysis Configuration<a class="headerlink" href="#taint-analysis-configuration" title="Link to this heading">¶</a></h1>
+<p>The Clang Static Analyzer uses taint analysis to detect injection vulnerability related issues in code.
+The backbone of taint analysis in the Clang SA is the <code class="docutils literal notranslate"><span class="pre">TaintPropagation</span></code> modeling checker.
+The reports are emitted via the <a class="reference internal" href="../checkers.html#optin-taint-generictaint"><span class="std std-ref">optin.taint.GenericTaint (C, C++)</span></a> checker.
+The <code class="docutils literal notranslate"><span class="pre">TaintPropagation</span></code> checker has a default taint-related configuration.
+The built-in default settings are defined in code, and they are always in effect.
+The checker also provides a configuration interface for extending the default settings via the <code class="docutils literal notranslate"><span class="pre">optin.taint.TaintPropagation:Config</span></code> checker config parameter
+by providing a configuration file to the in <a class="reference external" href="http://llvm.org/docs/YamlIO.html#introduction-to-yaml">YAML</a> format.
+This documentation describes the syntax of the configuration file and gives the informal semantics of the configuration options.</p>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id5">Overview</a></p></li>
+<li><p><a class="reference internal" href="#example-configuration-file" id="id6">Example configuration file</a></p></li>
+<li><p><a class="reference internal" href="#configuration-file-syntax-and-semantics" id="id7">Configuration file syntax and semantics</a></p>
+<ul>
+<li><p><a class="reference internal" href="#filter-syntax-and-semantics" id="id8">Filter syntax and semantics</a></p></li>
+<li><p><a class="reference internal" href="#propagation-syntax-and-semantics" id="id9">Propagation syntax and semantics</a></p></li>
+<li><p><a class="reference internal" href="#sink-syntax-and-semantics" id="id10">Sink syntax and semantics</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="overview">
+<span id="clangsa-taint-configuration-overview"></span><h2><a class="toc-backref" href="#id5" role="doc-backlink"><span class="section-number">2.6.1. </span>Overview</a><a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>Taint analysis works by checking for the occurrence of special operations during the symbolic execution of the program.
+Taint analysis defines sources, sinks, and propagation rules. It identifies errors by detecting a flow of information that originates from a taint source, reaches a taint sink, and propagates through the program paths via propagation rules.
+A source, sink, or an operation that propagates taint is mainly domain-specific knowledge, but there are some built-in defaults provided by the <code class="docutils literal notranslate"><span class="pre">TaintPropagation</span></code> checker.
+It is possible to express that a statement sanitizes tainted values by providing a <code class="docutils literal notranslate"><span class="pre">Filters</span></code> section in the external configuration (see <a class="reference internal" href="#clangsa-taint-configuration-example"><span class="std std-ref">Example configuration file</span></a> and <a class="reference internal" href="#clangsa-taint-filter-details"><span class="std std-ref">Filter syntax and semantics</span></a>).
+There are no default filters defined in the built-in settings.
+The checker’s documentation also specifies how to provide a custom taint configuration with command-line options.</p>
+</section>
+<section id="example-configuration-file">
+<span id="clangsa-taint-configuration-example"></span><h2><a class="toc-backref" href="#id6" role="doc-backlink"><span class="section-number">2.6.2. </span>Example configuration file</a><a class="headerlink" href="#example-configuration-file" title="Link to this heading">¶</a></h2>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># The entries that specify arguments use 0-based indexing when specifying</span>
+<span class="c1"># input arguments, and -1 is used to denote the return value.</span>
+
+<span class="nt">Filters</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># Filter functions</span>
+<span class="w">  </span><span class="c1"># Taint is sanitized when tainted variables are pass arguments to filters.</span>
+
+<span class="w">  </span><span class="c1"># Filter function</span>
+<span class="w">  </span><span class="c1">#   void cleanse_first_arg(int* arg)</span>
+<span class="w">  </span><span class="c1">#</span>
+<span class="w">  </span><span class="c1"># Result example:</span>
+<span class="w">  </span><span class="c1">#   int x; // x is tainted</span>
+<span class="w">  </span><span class="c1">#   cleanse_first_arg(&amp;x); // x is not tainted after the call</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cleanse_first_arg</span>
+<span class="w">    </span><span class="nt">Args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+
+<span class="nt">Propagations</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># Source functions</span>
+<span class="w">  </span><span class="c1"># The omission of SrcArgs key indicates unconditional taint propagation,</span>
+<span class="w">  </span><span class="c1"># which is conceptually what a source does.</span>
+
+<span class="w">  </span><span class="c1"># Source function</span>
+<span class="w">  </span><span class="c1">#   size_t fread(void *ptr, size_t size, size_t nmemb, FILE * stream)</span>
+<span class="w">  </span><span class="c1">#</span>
+<span class="w">  </span><span class="c1"># Result example:</span>
+<span class="w">  </span><span class="c1">#   FILE* f = fopen(&quot;file.txt&quot;);</span>
+<span class="w">  </span><span class="c1">#   char buf[1024];</span>
+<span class="w">  </span><span class="c1">#   size_t read = fread(buf, sizeof(buf[0]), sizeof(buf)/sizeof(buf[0]), f);</span>
+<span class="w">  </span><span class="c1">#   // both read and buf are tainted</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fread</span>
+<span class="w">    </span><span class="nt">DstArgs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">-1</span><span class="p p-Indicator">]</span>
+
+<span class="w">  </span><span class="c1"># Propagation functions</span>
+<span class="w">  </span><span class="c1"># The presence of SrcArgs key indicates conditional taint propagation,</span>
+<span class="w">  </span><span class="c1"># which is conceptually what a propagator does.</span>
+
+<span class="w">  </span><span class="c1"># Propagation function</span>
+<span class="w">  </span><span class="c1">#   char *dirname(char *path)</span>
+<span class="w">  </span><span class="c1">#</span>
+<span class="w">  </span><span class="c1"># Result example:</span>
+<span class="w">  </span><span class="c1">#   char* path = read_path();</span>
+<span class="w">  </span><span class="c1">#   char* dir = dirname(path);</span>
+<span class="w">  </span><span class="c1">#   // dir is tainted if path was tainted</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dirname</span>
+<span class="w">    </span><span class="nt">SrcArgs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">DstArgs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">-1</span><span class="p p-Indicator">]</span>
+
+<span class="nt">Sinks</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># Sink functions</span>
+<span class="w">  </span><span class="c1"># If taint reaches any of the arguments specified, a warning is emitted.</span>
+
+<span class="w">  </span><span class="c1"># Sink function</span>
+<span class="w">  </span><span class="c1">#   int system(const char* command)</span>
+<span class="w">  </span><span class="c1">#</span>
+<span class="w">  </span><span class="c1"># Result example:</span>
+<span class="w">  </span><span class="c1">#   const char* command = read_command();</span>
+<span class="w">  </span><span class="c1">#   system(command); // emit diagnostic if command is tainted</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">Name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">system</span>
+<span class="w">    </span><span class="nt">Args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">]</span>
+</pre></div>
+</div>
+<p>In the example file above, the entries under the <cite>Propagation</cite> key implement the conceptual sources and propagations, and sinks have their dedicated <cite>Sinks</cite> key.
+The user can define operations (function calls) where the tainted values should be cleansed by listing entries under the <cite>Filters</cite> key.
+Filters model the sanitization of values done by the programmer, and providing these is key to avoiding false-positive findings.</p>
+</section>
+<section id="configuration-file-syntax-and-semantics">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink"><span class="section-number">2.6.3. </span>Configuration file syntax and semantics</a><a class="headerlink" href="#configuration-file-syntax-and-semantics" title="Link to this heading">¶</a></h2>
+<p>The configuration file should have valid <a class="reference external" href="http://llvm.org/docs/YamlIO.html#introduction-to-yaml">YAML</a> syntax.</p>
+<dl class="simple">
+<dt>The configuration file can have the following top-level keys:</dt><dd><ul class="simple">
+<li><p>Filters</p></li>
+<li><p>Propagations</p></li>
+<li><p>Sinks</p></li>
+</ul>
+</dd>
+</dl>
+<p>Under the <cite>Filters</cite> key, the user can specify a list of operations that remove taint (see <a class="reference internal" href="#clangsa-taint-filter-details"><span class="std std-ref">Filter syntax and semantics</span></a> for details).</p>
+<p>Under the <cite>Propagations</cite> key, the user can specify a list of operations that introduce and propagate taint (see <a class="reference internal" href="#clangsa-taint-propagation-details"><span class="std std-ref">Propagation syntax and semantics</span></a> for details).
+The user can mark taint sources with a <cite>SrcArgs</cite> key in the <cite>Propagation</cite> key, while propagations have none.
+The lack of the <cite>SrcArgs</cite> key means unconditional propagation, which is how sources are modeled.
+The semantics of propagations are such, that if any of the source arguments are tainted (specified by indexes in <cite>SrcArgs</cite>) then all of the destination arguments (specified by indexes in <cite>DstArgs</cite>) also become tainted.</p>
+<p>Under the <cite>Sinks</cite> key, the user can specify a list of operations where the checker should emit a bug report if tainted data reaches it (see <a class="reference internal" href="#clangsa-taint-sink-details"><span class="std std-ref">Sink syntax and semantics</span></a> for details).</p>
+<section id="filter-syntax-and-semantics">
+<span id="clangsa-taint-filter-details"></span><h3><a class="toc-backref" href="#id8" role="doc-backlink"><span class="section-number">2.6.3.1. </span>Filter syntax and semantics</a><a class="headerlink" href="#filter-syntax-and-semantics" title="Link to this heading">¶</a></h3>
+<dl class="simple">
+<dt>An entry under <cite>Filters</cite> is a <a class="reference external" href="http://llvm.org/docs/YamlIO.html#introduction-to-yaml">YAML</a> object with the following mandatory keys:</dt><dd><ul class="simple">
+<li><p><cite>Name</cite> is a string that specifies the name of a function.
+Encountering this function during symbolic execution the checker will sanitize taint from the memory region referred to by the given arguments or return a sanitized value.</p></li>
+<li><p><cite>Args</cite> is a list of numbers in the range of <code class="docutils literal notranslate"><span class="pre">[-1..int_max]</span></code>.
+It indicates the indexes of arguments in the function call.
+The number <code class="docutils literal notranslate"><span class="pre">-1</span></code> signifies the return value; other numbers identify call arguments.
+The values of these arguments are considered clean after the function call.</p></li>
+</ul>
+</dd>
+<dt>The following keys are optional:</dt><dd><ul class="simple">
+<li><p><cite>Scope</cite> is a string that specifies the prefix of the function’s name in its fully qualified name. This option restricts the set of matching function calls. It can encode not only namespaces but struct/class names as well to match member functions.</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="propagation-syntax-and-semantics">
+<span id="clangsa-taint-propagation-details"></span><h3><a class="toc-backref" href="#id9" role="doc-backlink"><span class="section-number">2.6.3.2. </span>Propagation syntax and semantics</a><a class="headerlink" href="#propagation-syntax-and-semantics" title="Link to this heading">¶</a></h3>
+<dl class="simple">
+<dt>An entry under <cite>Propagation</cite> is a <a class="reference external" href="http://llvm.org/docs/YamlIO.html#introduction-to-yaml">YAML</a> object with the following mandatory keys:</dt><dd><ul class="simple">
+<li><p><cite>Name</cite> is a string that specifies the name of a function.
+Encountering this function during symbolic execution propagate taint from one or more arguments to other arguments and possibly the return value.
+It helps model the taint-related behavior of functions that are not analyzable otherwise.</p></li>
+</ul>
+</dd>
+<dt>The following keys are optional:</dt><dd><ul class="simple">
+<li><p><cite>Scope</cite> is a string that specifies the prefix of the function’s name in its fully qualified name. This option restricts the set of matching function calls.</p></li>
+<li><p><cite>SrcArgs</cite> is a list of numbers in the range of <code class="docutils literal notranslate"><span class="pre">[0..int_max]</span></code> that indicates the indexes of arguments in the function call.
+Taint-propagation considers the values of these arguments during the evaluation of the function call.
+If any <cite>SrcArgs</cite> arguments are tainted, the checker will consider all <cite>DstArgs</cite> arguments tainted after the call.</p></li>
+<li><p><cite>DstArgs</cite> is a list of numbers in the range of <code class="docutils literal notranslate"><span class="pre">[-1..int_max]</span></code> that indicates the indexes of arguments in the function call.
+The number <code class="docutils literal notranslate"><span class="pre">-1</span></code> specifies the return value of the function.
+If any <cite>SrcArgs</cite> arguments are tainted, the checker will consider all <cite>DstArgs</cite> arguments tainted after the call.</p></li>
+<li><p><cite>VariadicType</cite> is a string that can be one of <code class="docutils literal notranslate"><span class="pre">None</span></code>, <code class="docutils literal notranslate"><span class="pre">Dst</span></code>, <code class="docutils literal notranslate"><span class="pre">Src</span></code>.
+It is used in conjunction with <cite>VariadicIndex</cite> to specify arguments inside a variadic argument.
+The value of <code class="docutils literal notranslate"><span class="pre">Src</span></code> will treat every call site argument that is part of a variadic argument list as a source concerning propagation rules (as if specified by <cite>SrcArg</cite>).
+The value of <code class="docutils literal notranslate"><span class="pre">Dst</span></code> will treat every call site argument that is part of a variadic argument list a destination concerning propagation rules.
+The value of <code class="docutils literal notranslate"><span class="pre">None</span></code> will not consider the arguments that are part of a variadic argument list (this option is redundant but can be used to temporarily switch off handling of a particular variadic argument option without removing the VariadicIndex key).</p></li>
+<li><p><cite>VariadicIndex</cite> is a number in the range of <code class="docutils literal notranslate"><span class="pre">[0..int_max]</span></code>. It indicates the starting index of the variadic argument in the signature of the function.</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="sink-syntax-and-semantics">
+<span id="clangsa-taint-sink-details"></span><h3><a class="toc-backref" href="#id10" role="doc-backlink"><span class="section-number">2.6.3.3. </span>Sink syntax and semantics</a><a class="headerlink" href="#sink-syntax-and-semantics" title="Link to this heading">¶</a></h3>
+<dl class="simple">
+<dt>An entry under <cite>Sinks</cite> is a <a class="reference external" href="http://llvm.org/docs/YamlIO.html#introduction-to-yaml">YAML</a> object with the following mandatory keys:</dt><dd><ul class="simple">
+<li><p><cite>Name</cite> is a string that specifies the name of a function.
+Encountering this function during symbolic execution will emit a taint-related diagnostic if any of the arguments specified with <cite>Args</cite> are tainted at the call site.</p></li>
+<li><p><cite>Args</cite> is a list of numbers in the range of <code class="docutils literal notranslate"><span class="pre">[0..int_max]</span></code> that indicates the indexes of arguments in the function call.
+The checker reports an error if any of the specified arguments are tainted.</p></li>
+</ul>
+</dd>
+<dt>The following keys are optional:</dt><dd><ul class="simple">
+<li><p><cite>Scope</cite> is a string that specifies the prefix of the function’s name in its fully qualified name. This option restricts the set of matching function calls.</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="CrossTranslationUnit.html"><span class="section-number">2.5. </span>Cross Translation Unit (CTU) Analysis</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Annotations.html"><span class="section-number">2.7. </span>Source Annotations</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
