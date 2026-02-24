@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Clang SYCL Linker &#8212; Clang 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=19ab019f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clang Maintainers" href="Maintainers.html" />
+    <link rel="prev" title="Clang-Repl" href="ClangRepl.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 22.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Clang SYCL Linker</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangRepl.html">Clang-Repl</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Maintainers.html">Clang Maintainers</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="clang-sycl-linker">
+<h1>Clang SYCL Linker<a class="headerlink" href="#clang-sycl-linker" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id2">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id3">Usage</a></p></li>
+<li><p><a class="reference internal" href="#example" id="id4">Example</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<span id="id1"></span><h2><a class="toc-backref" href="#id2" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>This tool works as a wrapper around the SYCL device code linking process.
+The purpose of this tool is to provide an interface to link SYCL device bitcode
+in LLVM IR format, SYCL device bitcode in SPIR-V IR format, and native binary
+objects, and then use the SPIR-V LLVM Translator tool on fully linked device
+objects to produce the final output.
+After the linking stage, the fully linked device code in LLVM IR format may
+undergo several SYCL-specific finalization steps before the SPIR-V code
+generation step.
+The tool will also support the Ahead-Of-Time (AOT) compilation flow. AOT
+compilation is the process of invoking the back-end at compile time to produce
+the final binary, as opposed to just-in-time (JIT) compilation when final code
+generation is deferred until application runtime.</p>
+<p>Device code linking for SYCL offloading has several known quirks that
+make it difficult to use in a unified offloading setting. Two of the primary
+issues are:
+1. Several finalization steps are required to be run on the fully linked LLVM
+IR bitcode to guarantee conformance to SYCL standards. This step is unique to
+the SYCL offloading compilation flow.
+2. The SPIR-V LLVM Translator tool is an external tool and hence SPIR-V IR code
+generation cannot be done as part of LTO. This limitation can be lifted once
+the SPIR-V backend is available as a viable LLVM backend.</p>
+<p>This tool has been proposed to work around these issues.</p>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>This tool can be used with the following options. Several of these options will
+be passed down to downstream tools like ‘llvm-link’, ‘llvm-spirv’, etc.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">OVERVIEW: A utility that wraps around the SYCL device code linking process.</span>
+<span class="go">This enables linking and code generation for SPIR-V JIT targets and AOT</span>
+<span class="go">targets.</span>
+
+<span class="go">USAGE: clang-sycl-linker [options]</span>
+
+<span class="go">OPTIONS:</span>
+<span class="go">  --arch &lt;value&gt;                Specify the name of the target architecture.</span>
+<span class="go">  --dry-run                     Print generated commands without running.</span>
+<span class="go">  -g                            Specify that this was a debug compile.</span>
+<span class="go">  -help-hidden                  Display all available options</span>
+<span class="go">  -help                         Display available options (--help-hidden for more)</span>
+<span class="go">  --library-path=&lt;dir&gt;          Set the library path for SYCL device libraries</span>
+<span class="go">  --device-libs=&lt;value&gt;         A comma separated list of device libraries that are linked during the device link</span>
+<span class="go">  -o &lt;path&gt;                     Path to file to write output</span>
+<span class="go">  --save-temps                  Save intermediate results</span>
+<span class="go">  --triple &lt;value&gt;              Specify the target triple.</span>
+<span class="go">  --version                     Display the version number and exit</span>
+<span class="go">  -v                            Print verbose information</span>
+<span class="go">  -spirv-dump-device-code=&lt;dir&gt; Directory to dump SPIR-V IR code into</span>
+<span class="go">  -is-windows-msvc-env          Specify if we are compiling under windows environment</span>
+<span class="go">  -llvm-spirv-options=&lt;value&gt;   Pass options to llvm-spirv tool</span>
+<span class="go">  --llvm-spirv-path=&lt;dir&gt;       Set the system llvm-spirv path</span>
+</pre></div>
+</div>
+</section>
+<section id="example">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Example</a><a class="headerlink" href="#example" title="Link to this heading">¶</a></h2>
+<p>This tool is intended to be invoked when targeting any of the target offloading
+toolchains. When the –sycl-link option is passed to the clang driver, the
+driver will invoke the linking job of the target offloading toolchain, which in
+turn will invoke this tool. This tool can be used to create one or more fully
+linked device images that are ready to be wrapped and linked with host code to
+generate the final executable.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-sycl-linker --triple spirv64 --arch native input.bc</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangRepl.html">Clang-Repl</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Maintainers.html">Clang Maintainers</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Array Composition &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Assumed-shape arrays repacking" href="ArrayRepacking.html" />
+    <link rel="prev" title="Aliasing analysis in FIR" href="AliasingAnalysisFIR.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Array Composition</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AliasingAnalysisFIR.html">Aliasing analysis in FIR</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ArrayRepacking.html">Assumed-shape arrays repacking</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/ArrayComposition.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="array-composition">
+<h1>Array Composition<a class="headerlink" href="#array-composition" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#arrays-as-functions" id="id1">Arrays as functions</a></p></li>
+<li><p><a class="reference internal" href="#array-expressions-as-functions" id="id2">Array expressions as functions</a></p></li>
+<li><p><a class="reference internal" href="#transformational-intrinsic-functions-as-function-composition" id="id3">Transformational intrinsic functions as function composition</a></p></li>
+<li><p><a class="reference internal" href="#determination-of-rank-and-shape" id="id4">Determination of rank and shape</a></p></li>
+<li><p><a class="reference internal" href="#automatic-reallocation-of-allocatables" id="id5">Automatic reallocation of allocatables</a></p></li>
+<li><p><a class="reference internal" href="#rewriting-rules" id="id6">Rewriting rules</a></p></li>
+</ul>
+</nav>
+<p>This note attempts to describe the motivation for and design of an
+implementation of Fortran 90 (and later) array expression evaluation that
+minimizes the use of dynamically allocated temporary storage for
+the results of calls to transformational intrinsic functions, and
+making them more amenable to acceleration.</p>
+<p>The transformational intrinsic functions of Fortran of interest to
+us here include:</p>
+<ul class="simple">
+<li><p>Reductions to scalars (<code class="docutils literal notranslate"><span class="pre">SUM(X)</span></code>, also <code class="docutils literal notranslate"><span class="pre">ALL</span></code>, <code class="docutils literal notranslate"><span class="pre">ANY</span></code>, <code class="docutils literal notranslate"><span class="pre">COUNT</span></code>,
+<code class="docutils literal notranslate"><span class="pre">DOT_PRODUCT</span></code>,
+<code class="docutils literal notranslate"><span class="pre">IALL</span></code>, <code class="docutils literal notranslate"><span class="pre">IANY</span></code>, <code class="docutils literal notranslate"><span class="pre">IPARITY</span></code>, <code class="docutils literal notranslate"><span class="pre">MAXVAL</span></code>, <code class="docutils literal notranslate"><span class="pre">MINVAL</span></code>, <code class="docutils literal notranslate"><span class="pre">PARITY</span></code>, <code class="docutils literal notranslate"><span class="pre">PRODUCT</span></code>)</p></li>
+<li><p>Axial reductions (<code class="docutils literal notranslate"><span class="pre">SUM(X,DIM=)</span></code>, &amp;c.)</p></li>
+<li><p>Location reductions to indices (<code class="docutils literal notranslate"><span class="pre">MAXLOC</span></code>, <code class="docutils literal notranslate"><span class="pre">MINLOC</span></code>, <code class="docutils literal notranslate"><span class="pre">FINDLOC</span></code>)</p></li>
+<li><p>Axial location reductions (<code class="docutils literal notranslate"><span class="pre">MAXLOC(DIM=</span></code>, &amp;c.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TRANSPOSE(M)</span></code> matrix transposition</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RESHAPE</span></code> without <code class="docutils literal notranslate"><span class="pre">ORDER=</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RESHAPE</span></code> with <code class="docutils literal notranslate"><span class="pre">ORDER=</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CSHIFT</span></code> and <code class="docutils literal notranslate"><span class="pre">EOSHIFT</span></code> with scalar <code class="docutils literal notranslate"><span class="pre">SHIFT=</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CSHIFT</span></code> and <code class="docutils literal notranslate"><span class="pre">EOSHIFT</span></code> with array-valued <code class="docutils literal notranslate"><span class="pre">SHIFT=</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PACK</span></code> and <code class="docutils literal notranslate"><span class="pre">UNPACK</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">MATMUL</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SPREAD</span></code></p></li>
+</ul>
+<p>Other Fortran intrinsic functions are technically transformational (e.g.,
+<code class="docutils literal notranslate"><span class="pre">COMMAND_ARGUMENT_COUNT</span></code>) but not of interest for this note.
+The generic <code class="docutils literal notranslate"><span class="pre">REDUCE</span></code> is also not considered here.</p>
+<section id="arrays-as-functions">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Arrays as functions</a><a class="headerlink" href="#arrays-as-functions" title="Link to this heading">¶</a></h2>
+<p>A whole array can be viewed as a function that maps its indices to the values
+of its elements.
+Specifically, it is a map from a tuple of integers to its element type.
+The rank of the array is the number of elements in that tuple,
+and the shape of the array delimits the domain of the map.</p>
+<p><code class="docutils literal notranslate"><span class="pre">REAL</span> <span class="pre">::</span> <span class="pre">A(N,M)</span></code> can be seen as a function mapping ordered pairs of integers
+<code class="docutils literal notranslate"><span class="pre">(J,K)</span></code> with <code class="docutils literal notranslate"><span class="pre">1&lt;=J&lt;=N</span></code> and <code class="docutils literal notranslate"><span class="pre">1&lt;=J&lt;=M</span></code> to real values.</p>
+</section>
+<section id="array-expressions-as-functions">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Array expressions as functions</a><a class="headerlink" href="#array-expressions-as-functions" title="Link to this heading">¶</a></h2>
+<p>The same perspective can be taken of an array expression comprising
+intrinsic operators and elemental functions.
+Fortran doesn’t allow one to apply subscripts directly to an expression,
+but expressions have rank and shape, and one can view array expressions
+as functions over index tuples by applying those indices to the arrays
+and subexpressions in the expression.</p>
+<p>Consider <code class="docutils literal notranslate"><span class="pre">B</span> <span class="pre">=</span> <span class="pre">A</span> <span class="pre">+</span> <span class="pre">1.0</span></code> (assuming <code class="docutils literal notranslate"><span class="pre">REAL</span> <span class="pre">::</span> <span class="pre">A(N,M),</span> <span class="pre">B(N,M)</span></code>).
+The right-hand side of that assignment could be evaluated into a
+temporary array <code class="docutils literal notranslate"><span class="pre">T</span></code> and then subscripted as it is copied into <code class="docutils literal notranslate"><span class="pre">B</span></code>.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">REAL</span><span class="p">,</span> <span class="n">ALLOCATABLE</span> <span class="p">::</span> <span class="n">T</span><span class="p">(:,:)</span>
+<span class="n">ALLOCATE</span><span class="p">(</span><span class="n">T</span><span class="p">(</span><span class="n">N</span><span class="p">,</span><span class="n">M</span><span class="p">))</span>
+<span class="n">DO</span> <span class="n">CONCURRENT</span><span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">,</span><span class="n">K</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">M</span><span class="p">)</span>
+  <span class="n">T</span><span class="p">(</span><span class="n">J</span><span class="p">,</span><span class="n">K</span><span class="p">)</span><span class="o">=</span><span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">,</span><span class="n">K</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0</span>
+<span class="n">END</span> <span class="n">DO</span>
+<span class="n">DO</span> <span class="n">CONCURRENT</span><span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">,</span><span class="n">K</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">M</span><span class="p">)</span>
+  <span class="n">B</span><span class="p">(</span><span class="n">J</span><span class="p">,</span><span class="n">K</span><span class="p">)</span><span class="o">=</span><span class="n">T</span><span class="p">(</span><span class="n">J</span><span class="p">,</span><span class="n">K</span><span class="p">)</span>
+<span class="n">END</span> <span class="n">DO</span>
+<span class="n">DEALLOCATE</span><span class="p">(</span><span class="n">T</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>But we can avoid the allocation, population, and deallocation of
+the temporary by treating the right-hand side expression as if it
+were a statement function <code class="docutils literal notranslate"><span class="pre">F(J,K)=A(J,K)+1.0</span></code> and evaluating</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">DO</span> <span class="n">CONCURRENT</span><span class="p">(</span><span class="n">J</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">N</span><span class="p">,</span><span class="n">K</span><span class="o">=</span><span class="mi">1</span><span class="p">:</span><span class="n">M</span><span class="p">)</span>
+  <span class="n">A</span><span class="p">(</span><span class="n">J</span><span class="p">,</span><span class="n">K</span><span class="p">)</span><span class="o">=</span><span class="n">F</span><span class="p">(</span><span class="n">J</span><span class="p">,</span><span class="n">K</span><span class="p">)</span>
+<span class="n">END</span> <span class="n">DO</span>
+</pre></div>
+</div>
+<p>In general, when a Fortran array assignment to a non-allocatable array
+does not include the left-hand
+side variable as an operand of the right-hand side expression, and any
+function calls on the right-hand side are elemental or scalar-valued,
+we can avoid the use of a temporary.</p>
+</section>
+<section id="transformational-intrinsic-functions-as-function-composition">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Transformational intrinsic functions as function composition</a><a class="headerlink" href="#transformational-intrinsic-functions-as-function-composition" title="Link to this heading">¶</a></h2>
+<p>Many of the transformational intrinsic functions listed above
+can, when their array arguments are viewed as functions over their
+index tuples, be seen as compositions of those functions with
+functions of the “incoming” indices – yielding a function for
+an entire right-hand side of an array assignment statement.</p>
+<p>For example, the application of <code class="docutils literal notranslate"><span class="pre">TRANSPOSE(A</span> <span class="pre">+</span> <span class="pre">1.0)</span></code> to the index
+tuple <code class="docutils literal notranslate"><span class="pre">(J,K)</span></code> becomes <code class="docutils literal notranslate"><span class="pre">A(K,J)</span> <span class="pre">+</span> <span class="pre">1.0</span></code>.</p>
+<p>Partial (axial) reductions can be similarly composed.
+The application of <code class="docutils literal notranslate"><span class="pre">SUM(A,DIM=2)</span></code> to the index <code class="docutils literal notranslate"><span class="pre">J</span></code> is the
+complete reduction <code class="docutils literal notranslate"><span class="pre">SUM(A(J,:))</span></code>.</p>
+<p>More completely:</p>
+<ul class="simple">
+<li><p>Reductions to scalars (<code class="docutils literal notranslate"><span class="pre">SUM(X)</span></code> without <code class="docutils literal notranslate"><span class="pre">DIM=</span></code>) become
+runtime calls; the result needs no dynamic allocation,
+being a scalar.</p></li>
+<li><p>Axial reductions (<code class="docutils literal notranslate"><span class="pre">SUM(X,DIM=d)</span></code>) applied to indices <code class="docutils literal notranslate"><span class="pre">(J,K)</span></code>
+become scalar values like <code class="docutils literal notranslate"><span class="pre">SUM(X(J,K,:))</span></code> if <code class="docutils literal notranslate"><span class="pre">d=3</span></code>.</p></li>
+<li><p>Location reductions to indices (<code class="docutils literal notranslate"><span class="pre">MAXLOC(X)</span></code> without <code class="docutils literal notranslate"><span class="pre">DIM=</span></code>)
+do not require dynamic allocation, since their results are
+either scalar or small vectors of length <code class="docutils literal notranslate"><span class="pre">RANK(X)</span></code>.</p></li>
+<li><p>Axial location reductions (<code class="docutils literal notranslate"><span class="pre">MAXLOC(X,DIM=)</span></code>, &amp;c.)
+are handled like other axial reductions like <code class="docutils literal notranslate"><span class="pre">SUM(DIM=)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TRANSPOSE(M)</span></code> exchanges the two components of the index tuple.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RESHAPE(A,SHAPE=s)</span></code> without <code class="docutils literal notranslate"><span class="pre">ORDER=</span></code> must precompute the shape
+vector <code class="docutils literal notranslate"><span class="pre">S</span></code>, and then use it to linearize indices into offsets
+in the storage order of <code class="docutils literal notranslate"><span class="pre">A</span></code> (whose shape must also be captured).
+These conversions can involve division and/or modulus, which
+can be optimized into a fixed-point multiplication using the
+usual technique.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RESHAPE</span></code> with <code class="docutils literal notranslate"><span class="pre">ORDER=</span></code> is similar, but must permute the
+components of the index tuple; it generalizes <code class="docutils literal notranslate"><span class="pre">TRANSPOSE</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CSHIFT</span></code> applies addition and modulus.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EOSHIFT</span></code> applies addition and a conditional move (<code class="docutils literal notranslate"><span class="pre">MERGE</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PACK</span></code> and <code class="docutils literal notranslate"><span class="pre">UNPACK</span></code> are likely to require a runtime call.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">MATMUL(A,B)</span></code> can become <code class="docutils literal notranslate"><span class="pre">DOT_PRODUCT(A(J,:),B(:,K))</span></code>, but
+might benefit from calling a highly optimized runtime
+routine.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SPREAD(A,DIM=d,NCOPIES=n)</span></code> for compile-time <code class="docutils literal notranslate"><span class="pre">d</span></code> simply
+applies <code class="docutils literal notranslate"><span class="pre">A</span></code> to a reduced index tuple.</p></li>
+</ul>
+</section>
+<section id="determination-of-rank-and-shape">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Determination of rank and shape</a><a class="headerlink" href="#determination-of-rank-and-shape" title="Link to this heading">¶</a></h2>
+<p>An important part of evaluating array expressions without the use of
+temporary storage is determining the shape of the result prior to,
+or without, evaluating the elements of the result.</p>
+<p>The shapes of array objects, results of elemental intrinsic functions,
+and results of intrinsic operations are obvious.
+But it is possible to determine the shapes of the results of many
+transformational intrinsic function calls as well.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(SUM(X,DIM=d))</span></code> is <code class="docutils literal notranslate"><span class="pre">SHAPE(X)</span></code> with one element removed:
+<code class="docutils literal notranslate"><span class="pre">PACK(SHAPE(X),[(j,j=1,RANK(X))]/=d)</span></code> in general.
+(The <code class="docutils literal notranslate"><span class="pre">DIM=</span></code> argument is commonly a compile-time constant.)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(MAXLOC(X))</span></code> is <code class="docutils literal notranslate"><span class="pre">[RANK(X)]</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(MAXLOC(X,DIM=d))</span></code> is <code class="docutils literal notranslate"><span class="pre">SHAPE(X)</span></code> with one element removed.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(TRANSPOSE(M))</span></code> is a reversal of <code class="docutils literal notranslate"><span class="pre">SHAPE(M)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(RESHAPE(...,</span> <span class="pre">SHAPE=S))</span></code> is <code class="docutils literal notranslate"><span class="pre">S</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(CSHIFT(X))</span></code> is <code class="docutils literal notranslate"><span class="pre">SHAPE(X)</span></code>; same with <code class="docutils literal notranslate"><span class="pre">EOSHIFT</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(PACK(A,VECTOR=V))</span></code> is <code class="docutils literal notranslate"><span class="pre">SHAPE(V)</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(PACK(A,MASK=m))</span></code> with non-scalar <code class="docutils literal notranslate"><span class="pre">m</span></code> and without <code class="docutils literal notranslate"><span class="pre">VECTOR=</span></code> is <code class="docutils literal notranslate"><span class="pre">[COUNT(m)]</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RANK(PACK(...))</span></code> is always 1.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(UNPACK(MASK=M))</span></code> is <code class="docutils literal notranslate"><span class="pre">SHAPE(M)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(MATMUL(A,B))</span></code> drops one value from <code class="docutils literal notranslate"><span class="pre">SHAPE(A)</span></code> and another from <code class="docutils literal notranslate"><span class="pre">SHAPE(B)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(SHAPE(X))</span></code> is <code class="docutils literal notranslate"><span class="pre">[RANK(X)]</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SHAPE(SPREAD(A,DIM=d,NCOPIES=n))</span></code> is <code class="docutils literal notranslate"><span class="pre">SHAPE(A)</span></code> with <code class="docutils literal notranslate"><span class="pre">n</span></code> inserted at
+dimension <code class="docutils literal notranslate"><span class="pre">d</span></code>.</p></li>
+</ul>
+<p>This is useful because expression evaluations that <em>do</em> require temporaries
+to hold their results (due to the context in which the evaluation occurs)
+can be implemented with a separation of the allocation
+of the temporary array and the population of the array.
+The code that evaluates the expression, or that implements a transformational
+intrinsic in the runtime library, can be designed with an API that includes
+a pointer to the destination array as an argument.</p>
+<p>Statements like <code class="docutils literal notranslate"><span class="pre">ALLOCATE(A,SOURCE=expression)</span></code> should thus be capable
+of evaluating their array expressions directly into the newly-allocated
+storage for the allocatable array.
+The implementation would generate code to calculate the shape, use it
+to allocate the memory and populate the descriptor, and then drive a
+loop nest around the expression to populate the array.
+In cases where the analyzed shape is known at compile time, we should
+be able to have the opportunity to avoid heap allocation in favor of
+stack storage, if the scope of the variable is local.</p>
+</section>
+<section id="automatic-reallocation-of-allocatables">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Automatic reallocation of allocatables</a><a class="headerlink" href="#automatic-reallocation-of-allocatables" title="Link to this heading">¶</a></h2>
+<p>Fortran 2003 introduced the ability to assign non-conforming array expressions
+to ALLOCATABLE arrays with the implied semantics of reallocation to the
+new shape.
+The implementation of this feature also becomes more straightforward if
+our implementation of array expressions has decoupled calculation of shapes
+from the evaluation of the elements of the result.</p>
+</section>
+<section id="rewriting-rules">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Rewriting rules</a><a class="headerlink" href="#rewriting-rules" title="Link to this heading">¶</a></h2>
+<p>Let <code class="docutils literal notranslate"><span class="pre">{...}</span></code> denote an ordered tuple of 1-based indices, e.g. <code class="docutils literal notranslate"><span class="pre">{j,k}</span></code>, into
+the result of an array expression or subexpression.</p>
+<ul class="simple">
+<li><p>Array constructors always yield vectors; higher-rank arrays that appear as
+constituents are flattened; so <code class="docutils literal notranslate"><span class="pre">[X]</span> <span class="pre">=&gt;</span> <span class="pre">RESHAPE(X,SHAPE=[SIZE(X)})</span></code>.</p></li>
+<li><p>Array constructors with multiple constituents are concatenations of
+their constituents; so <code class="docutils literal notranslate"><span class="pre">[X,Y]{j}</span> <span class="pre">=&gt;</span> <span class="pre">MERGE(Y{j-SIZE(X)},X{j},J&gt;SIZE(X))</span></code>.</p></li>
+<li><p>Array constructors with implied DO loops are difficult when nested
+triangularly.</p></li>
+<li><p>Whole array references can have lower bounds other than 1, so
+<code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">=&gt;</span> <span class="pre">A(LBOUND(A,1):UBOUND(A,1),...)</span></code>.</p></li>
+<li><p>Array sections simply apply indices: <code class="docutils literal notranslate"><span class="pre">A(i:...:n){j}</span> <span class="pre">=&gt;</span> <span class="pre">A(i1+n*(j-1))</span></code>.</p></li>
+<li><p>Vector-valued subscripts apply indices to the subscript: <code class="docutils literal notranslate"><span class="pre">A(N(:)){j}</span> <span class="pre">=&gt;</span> <span class="pre">A(N(:){j})</span></code>.</p></li>
+<li><p>Scalar operands ignore indices: <code class="docutils literal notranslate"><span class="pre">X{j,k}</span> <span class="pre">=&gt;</span> <span class="pre">X</span></code>.
+Further, they are evaluated at most once.</p></li>
+<li><p>Elemental operators and functions apply indices to their arguments:
+<code class="docutils literal notranslate"><span class="pre">(A(:,:)</span> <span class="pre">+</span> <span class="pre">B(:,:)){j,k}</span></code> =&gt; A(:,:){j,k} + B(:,:){j,k}`.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TRANSPOSE(X){j,k}</span> <span class="pre">=&gt;</span> <span class="pre">X{k,j}</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SPREAD(X,DIM=2,...){j,k}</span> <span class="pre">=&gt;</span> <span class="pre">X{j}</span></code>; i.e., the contents are replicated.
+If X is sufficiently expensive to compute elementally, it might be evaluated
+into a temporary.</p></li>
+</ul>
+<p>(more…)</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AliasingAnalysisFIR.html">Aliasing analysis in FIR</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ArrayRepacking.html">Assumed-shape arrays repacking</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Feb 24, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

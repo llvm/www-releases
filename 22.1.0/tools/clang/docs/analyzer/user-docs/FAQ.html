@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>2.8. FAQ and How to Deal with Common False Positives &#8212; Clang 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../../_static/documentation_options.js?v=19ab019f"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="3. Developer Docs" href="../developer-docs.html" />
+    <link rel="prev" title="2.7. Source Annotations" href="Annotations.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 22.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>2.8. FAQ and How to Deal with Common False Positives</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Annotations.html"><span class="section-number">2.7. </span>Source Annotations</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="../developer-docs.html"><span class="section-number">3. </span>Developer Docs</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="faq-and-how-to-deal-with-common-false-positives">
+<h1><span class="section-number">2.8. </span>FAQ and How to Deal with Common False Positives<a class="headerlink" href="#faq-and-how-to-deal-with-common-false-positives" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#custom-assertions" id="id1">Custom Assertions</a></p></li>
+<li><p><a class="reference internal" href="#null-pointer-dereference" id="id2">Null Pointer Dereference</a></p></li>
+<li><p><a class="reference internal" href="#dead-store" id="id3">Dead Store</a></p></li>
+<li><p><a class="reference internal" href="#unused-instance-variable" id="id4">Unused Instance Variable</a></p></li>
+<li><p><a class="reference internal" href="#unlocalized-string" id="id5">Unlocalized String</a></p></li>
+<li><p><a class="reference internal" href="#dealloc-in-manual-retain-release" id="id6">Dealloc in Manual Retain/Release</a></p></li>
+<li><p><a class="reference internal" href="#deciding-nullability" id="id7">Deciding Nullability</a></p></li>
+<li><p><a class="reference internal" href="#intentional-nullability-violation" id="id8">Intentional Nullability Violation</a></p></li>
+<li><p><a class="reference internal" href="#ensuring-loop-body-execution" id="id9">Ensuring Loop Body Execution</a></p></li>
+<li><p><a class="reference internal" href="#suppressing-specific-warnings" id="id10">Suppressing Specific Warnings</a></p></li>
+<li><p><a class="reference internal" href="#excluding-code-from-analysis" id="id11">Excluding Code from Analysis</a></p></li>
+</ul>
+</nav>
+<section id="custom-assertions">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink"><span class="section-number">2.8.1. </span>Custom Assertions</a><a class="headerlink" href="#custom-assertions" title="Link to this heading">¶</a></h2>
+<p>Q: How do I tell the analyzer that I do not want the bug being reported here since my custom error handler will safely end the execution before the bug is reached?</p>
+<img alt="../../_images/example_custom_assert.png" src="../../_images/example_custom_assert.png" />
+<p>You can tell the analyzer that this path is unreachable by teaching it about your <a class="reference external" href="Annotations.html#custom-assertion-handlers">custom assertion handlers</a>. For example, you can modify the code segment as following:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">customAssert</span><span class="p">()</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">analyzer_noreturn</span><span class="p">));</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">b</span><span class="p">)</span>
+<span class="w">    </span><span class="n">customAssert</span><span class="p">();</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">b</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="null-pointer-dereference">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink"><span class="section-number">2.8.2. </span>Null Pointer Dereference</a><a class="headerlink" href="#null-pointer-dereference" title="Link to this heading">¶</a></h2>
+<p>Q: The analyzer reports a null dereference, but I know that the pointer is never null. How can I tell the analyzer that a pointer can never be null?</p>
+<img alt="../../_images/example_null_pointer.png" src="../../_images/example_null_pointer.png" />
+<p>The reason the analyzer often thinks that a pointer can be null is because the preceding code checked compared it against null. If you are absolutely sure that it cannot be null, remove the preceding check and, preferably, add an assertion as well. For example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">usePointer</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">b</span><span class="p">);</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">usePointer</span><span class="p">(</span><span class="n">b</span><span class="p">);</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">b</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="dead-store">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink"><span class="section-number">2.8.3. </span>Dead Store</a><a class="headerlink" href="#dead-store" title="Link to this heading">¶</a></h2>
+<p>Q: How do I tell the static analyzer that I don’t care about a specific dead store?</p>
+<p>When the analyzer sees that a value stored into a variable is never used, it’s going to produce a message similar to this one:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Value stored to &#39;x&#39; is never read
+</pre></div>
+</div>
+<p>You can use the <code class="docutils literal notranslate"><span class="pre">(void)x;</span></code> idiom to acknowledge that there is a dead store in your code but you do not want it to be reported in the future.</p>
+</section>
+<section id="unused-instance-variable">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink"><span class="section-number">2.8.4. </span>Unused Instance Variable</a><a class="headerlink" href="#unused-instance-variable" title="Link to this heading">¶</a></h2>
+<p>Q: How do I tell the static analyzer that I don’t care about a specific unused instance variable in Objective-C?</p>
+<p>When the analyzer sees that a value stored into a variable is never used, it is going to produce a message similar to this one:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Instance variable &#39;commonName&#39; in class &#39;HappyBird&#39; is never used by the methods in its @implementation
+</pre></div>
+</div>
+<p>You can add <code class="docutils literal notranslate"><span class="pre">__attribute__((unused))</span></code> to the instance variable declaration to suppress the warning.</p>
+</section>
+<section id="unlocalized-string">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink"><span class="section-number">2.8.5. </span>Unlocalized String</a><a class="headerlink" href="#unlocalized-string" title="Link to this heading">¶</a></h2>
+<p>Q: How do I tell the static analyzer that I don’t care about a specific unlocalized string?</p>
+<p>When the analyzer sees that an unlocalized string is passed to a method that will present that string to the user, it is going to produce a message similar to this one:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>User-facing text should use localized string macro
+</pre></div>
+</div>
+<p>If your project deliberately uses unlocalized user-facing strings (for example, in a debugging UI that is never shown to users), you can suppress the analyzer warnings (and document your intent) with a function that just returns its input but is annotated to return a localized string:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="bp">__attribute__</span><span class="p">((</span><span class="n">annotate</span><span class="p">(</span><span class="s">&quot;returns_localized_nsstring&quot;</span><span class="p">)))</span>
+<span class="k">static</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">LocalizationNotNeeded</span><span class="p">(</span><span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">s</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>You can then call this function when creating your debugging UI:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="p">[</span><span class="n">field</span><span class="w"> </span><span class="n">setStringValue</span><span class="o">:</span><span class="n">LocalizationNotNeeded</span><span class="p">(</span><span class="s">@&quot;Debug&quot;</span><span class="p">)];</span>
+</pre></div>
+</div>
+<p>Some projects may also find it useful to use NSLocalizedString but add “DNL” or “Do Not Localize” to the string contents as a convention:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="bp">UILabel</span><span class="w"> </span><span class="o">*</span><span class="n">testLabel</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[[</span><span class="bp">UILabel</span><span class="w"> </span><span class="n">alloc</span><span class="p">]</span><span class="w"> </span><span class="n">init</span><span class="p">];</span>
+<span class="bp">NSString</span><span class="w"> </span><span class="o">*</span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">NSLocalizedString</span><span class="p">(</span><span class="s">@&quot;Hello &lt;Do Not Localize&gt;&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">@&quot;For debug purposes&quot;</span><span class="p">);</span>
+<span class="p">[</span><span class="n">testLabel</span><span class="w"> </span><span class="n">setText</span><span class="o">:</span><span class="n">s</span><span class="p">];</span>
+</pre></div>
+</div>
+</section>
+<section id="dealloc-in-manual-retain-release">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink"><span class="section-number">2.8.6. </span>Dealloc in Manual Retain/Release</a><a class="headerlink" href="#dealloc-in-manual-retain-release" title="Link to this heading">¶</a></h2>
+<p>Q: How do I tell the analyzer that my instance variable does not need to be released in -dealloc under Manual Retain/Release?</p>
+<p>If your class only uses an instance variable for part of its lifetime, it may maintain an invariant guaranteeing that the instance variable is always released before -dealloc. In this case, you can silence a warning about a missing release by either adding <code class="docutils literal notranslate"><span class="pre">assert(_ivar</span> <span class="pre">==</span> <span class="pre">nil)</span></code> or an explicit release <code class="docutils literal notranslate"><span class="pre">[_ivar</span> <span class="pre">release]</span></code> (which will be a no-op when the variable is nil) in -dealloc.</p>
+</section>
+<section id="deciding-nullability">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink"><span class="section-number">2.8.7. </span>Deciding Nullability</a><a class="headerlink" href="#deciding-nullability" title="Link to this heading">¶</a></h2>
+<p>Q: How do I decide whether a method’s return type should be _Nullable or _Nonnull?</p>
+<p>Depending on the implementation of the method, this puts you in one of five situations:</p>
+<ol class="arabic simple">
+<li><p>You actually never return nil.</p></li>
+<li><p>You do return nil sometimes, and callers are supposed to handle that. This includes cases where your method is documented to return nil given certain inputs.</p></li>
+<li><p>You return nil based on some external condition (such as an out-of-memory error), but the client can’t do anything about it either.</p></li>
+<li><p>You return nil only when the caller passes input documented to be invalid. That means it’s the client’s fault.</p></li>
+<li><p>You return nil in some totally undocumented case.</p></li>
+</ol>
+<p>In (1) you should annotate the method as returning a <code class="docutils literal notranslate"><span class="pre">_Nonnull</span></code> object.</p>
+<p>In (2) the method should be marked <code class="docutils literal notranslate"><span class="pre">_Nullable</span></code>.</p>
+<p>In (3) you should probably annotate the method <code class="docutils literal notranslate"><span class="pre">_Nonnull</span></code>. Why? Because no callers will actually check for nil, given that they can’t do anything about the situation and don’t know what went wrong. At this point things have gone so poorly that there’s basically no way to recover.</p>
+<p>The least happy case is (4) because the resulting program will almost certainly either crash or just silently do the wrong thing. If this is a new method or you control the callers, you can use <code class="docutils literal notranslate"><span class="pre">NSParameterAssert()</span></code> (or the equivalent) to check the precondition and remove the nil return. But if you don’t control the callers and they rely on this behavior, you should return mark the method <code class="docutils literal notranslate"><span class="pre">_Nonnull</span></code> and return nil cast to _Nonnull anyway.</p>
+<p>If you’re in (5), document it, then figure out if you’re now in (2), (3), or (4).</p>
+</section>
+<section id="intentional-nullability-violation">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink"><span class="section-number">2.8.8. </span>Intentional Nullability Violation</a><a class="headerlink" href="#intentional-nullability-violation" title="Link to this heading">¶</a></h2>
+<p>Q: How do I tell the analyzer that I am intentionally violating nullability?</p>
+<p>In some cases, it may make sense for methods to intentionally violate nullability. For example, your method may — for reasons of backward compatibility — chose to return nil and log an error message in a method with a non-null return type when the client violated a documented precondition rather than check the precondition with <code class="docutils literal notranslate"><span class="pre">NSAssert()</span></code>. In these cases, you can suppress the analyzer warning with a cast:</p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="kt">id</span><span class="w"> </span><span class="n">_Nonnull</span><span class="p">)</span><span class="nb">nil</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>Note that this cast does not affect code generation.</p>
+</section>
+<section id="ensuring-loop-body-execution">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink"><span class="section-number">2.8.9. </span>Ensuring Loop Body Execution</a><a class="headerlink" href="#ensuring-loop-body-execution" title="Link to this heading">¶</a></h2>
+<p>Q: The analyzer assumes that a loop body is never entered. How can I tell it that the loop body will be entered at least once?</p>
+<img alt="../../_images/example_use_assert.png" src="../../_images/example_use_assert.png" />
+<p>In cases where you know that a loop will always be entered at least once, you can use assertions to inform the analyzer. For example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">length</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">length</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span>
+<span class="w">    </span><span class="n">x</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">length</span><span class="o">/</span><span class="n">x</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>By adding <code class="docutils literal notranslate"><span class="pre">assert(length</span> <span class="pre">&gt;</span> <span class="pre">0)</span></code> in the beginning of the function, you tell the analyzer that your code is never expecting a zero or a negative value, so it won’t need to test the correctness of those paths.</p>
+</section>
+<section id="suppressing-specific-warnings">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink"><span class="section-number">2.8.10. </span>Suppressing Specific Warnings</a><a class="headerlink" href="#suppressing-specific-warnings" title="Link to this heading">¶</a></h2>
+<p>Q: How can I suppress a specific analyzer warning?</p>
+<p>When you encounter an analyzer bug/false positive, check if it’s one of the issues discussed above or if the analyzer <a class="reference external" href="Annotations.html#custom-assertion-handlers">annotations</a> can resolve the issue by helping the static analyzer understand the code better. Second, please <a class="reference external" href="FilingBugs.html">report it</a> to help us improve user experience.</p>
+<p>Sometimes there’s really no “good” way to eliminate the issue. In such cases you can “silence” it directly by annotating the problematic line of code with the help of Clang attribute ‘suppress’:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nullptr</span><span class="p">;</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="p">[[</span><span class="n">clang</span><span class="o">::</span><span class="n">suppress</span><span class="p">]]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// all warnings in this scope are suppressed</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="c1">// null pointer dereference warning suppressed on the next line</span>
+<span class="w">  </span><span class="p">[[</span><span class="n">clang</span><span class="o">::</span><span class="n">suppress</span><span class="p">]]</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">x</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">bool</span><span class="w"> </span><span class="n">coin_flip</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// suppress all memory leak warnings about this allocation</span>
+<span class="w">  </span><span class="p">[[</span><span class="n">clang</span><span class="o">::</span><span class="n">suppress</span><span class="p">]]</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="kt">int</span><span class="p">));</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">coin_flip</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w">      </span><span class="c1">// including this leak path</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="n">result</span><span class="p">;</span><span class="w">  </span><span class="c1">// as well as this leak path</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="excluding-code-from-analysis">
+<span id="exclude-code"></span><h2><a class="toc-backref" href="#id11" role="doc-backlink"><span class="section-number">2.8.11. </span>Excluding Code from Analysis</a><a class="headerlink" href="#excluding-code-from-analysis" title="Link to this heading">¶</a></h2>
+<p>Q: How can I selectively exclude code the analyzer examines?</p>
+<p>When the static analyzer is using clang to parse source files, it implicitly defines the preprocessor macro <code class="docutils literal notranslate"><span class="pre">__clang_analyzer__</span></code>. One can use this macro to selectively exclude code the analyzer examines. Here is an example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#ifndef __clang_analyzer__</span>
+<span class="c1">// Code not to be analyzed</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+<p>This usage is discouraged because it makes the code dead to the analyzer from now on. Instead, we prefer that users file bugs against the analyzer when it flags false positives.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Annotations.html"><span class="section-number">2.7. </span>Source Annotations</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="../developer-docs.html"><span class="section-number">3. </span>Developer Docs</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

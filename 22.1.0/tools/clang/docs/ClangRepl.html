@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Clang-Repl &#8212; Clang 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=19ab019f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clang SYCL Linker" href="ClangSYCLLinker.html" />
+    <link rel="prev" title="Clang Offload Bundler" href="ClangOffloadBundler.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 22.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Clang-Repl</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangOffloadBundler.html">Clang Offload Bundler</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ClangSYCLLinker.html">Clang SYCL Linker</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="clang-repl">
+<h1>Clang-Repl<a class="headerlink" href="#clang-repl" title="Link to this heading">¶</a></h1>
+<p><strong>Clang-Repl</strong> is an interactive C++ interpreter that allows for incremental
+compilation. It supports interactive programming for C++ in a
+read-evaluate-print-loop (REPL) style. It uses Clang as a library to compile the
+high level programming language into LLVM IR. Then the LLVM IR is executed by
+the LLVM just-in-time (JIT) infrastructure.</p>
+<p>Clang-Repl is suitable for exploratory programming and in places where time
+to insight is important. Clang-Repl is a project inspired by the work in
+<a class="reference external" href="https://github.com/root-project/cling">Cling</a>, a LLVM-based C/C++ interpreter
+developed by the field of high energy physics and used by the scientific data
+analysis framework <a class="reference external" href="https://root.cern/">ROOT</a>. Clang-Repl allows to move parts
+of Cling upstream, making them useful and available to a broader audience.</p>
+<section id="clang-repl-basic-data-flow">
+<h2>Clang-Repl Basic Data Flow<a class="headerlink" href="#clang-repl-basic-data-flow" title="Link to this heading">¶</a></h2>
+<img alt="ClangRepl design" class="align-center" src="_images/ClangRepl_design.png" />
+<p>Clang-Repl data flow can be divided into roughly 8 phases:</p>
+<ol class="arabic simple">
+<li><p>Clang-Repl controls the input infrastructure by an interactive prompt or by
+an interface allowing the incremental processing of input.</p></li>
+<li><p>Then it sends the input to the underlying incremental facilities in Clang
+infrastructure.</p></li>
+<li><p>Clang compiles the input into an AST representation.</p></li>
+<li><p>When required the AST can be further transformed in order to attach specific
+behavior.</p></li>
+<li><p>The AST representation is then lowered to LLVM IR.</p></li>
+<li><p>The LLVM IR is the input format for LLVM’s JIT compilation infrastructure.
+The tool will instruct the JIT to run specified functions, translating them
+into machine code targeting the underlying device architecture (eg. Intel
+x86 or NVPTX).</p></li>
+<li><p>The LLVM JIT lowers the LLVM IR to machine code.</p></li>
+<li><p>The machine code is then executed.</p></li>
+</ol>
+</section>
+<section id="build-instructions">
+<h2>Build Instructions:<a class="headerlink" href="#build-instructions" title="Link to this heading">¶</a></h2>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nb">cd</span><span class="w"> </span>llvm-project
+<span class="gp">$ </span>mkdir<span class="w"> </span>build
+<span class="gp">$ </span><span class="nb">cd</span><span class="w"> </span>build
+<span class="gp">$ </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>RelWithDebInfo<span class="w"> </span>-DLLVM_ENABLE_PROJECTS<span class="o">=</span>clang<span class="w"> </span>-G<span class="w"> </span><span class="s2">&quot;Unix Makefiles&quot;</span><span class="w"> </span>../llvm
+</pre></div>
+</div>
+<p><strong>Note here</strong>, above RelWithDebInfo - Debug / Release</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">cmake --build . --target clang clang-repl -j n</span>
+<span class="go">   OR</span>
+<span class="go">cmake --build . --target clang clang-repl</span>
+</pre></div>
+</div>
+<p><strong>Clang-repl</strong> is built under llvm-project/build/bin. Proceed into the directory <strong>llvm-project/build/bin</strong></p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">./clang-repl</span>
+<span class="go">clang-repl&gt;</span>
+</pre></div>
+</div>
+</section>
+<section id="clang-repl-usage">
+<h2>Clang-Repl Usage<a class="headerlink" href="#clang-repl-usage" title="Link to this heading">¶</a></h2>
+<p><strong>Clang-Repl</strong> is an interactive C++ interpreter that allows for incremental
+compilation. It supports interactive programming for C++ in a
+read-evaluate-print-loop (REPL) style. It uses Clang as a library to compile the
+high level programming language into LLVM IR. Then the LLVM IR is executed by
+the LLVM just-in-time (JIT) infrastructure.</p>
+</section>
+<section id="basic">
+<h2>Basic:<a class="headerlink" href="#basic" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; #include &lt;iostream&gt;
+clang-repl&gt; int f() { std::cout &lt;&lt; &quot;Hello Interpreted World!\n&quot;; return 0; }
+clang-repl&gt; auto r = f();
+ // Prints Hello Interpreted World!
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; #include&lt;iostream&gt;
+clang-repl&gt; using namespace std;
+clang-repl&gt; std::cout &lt;&lt; &quot;Welcome to CLANG-REPL&quot; &lt;&lt; std::endl;
+Welcome to CLANG-REPL
+// Prints Welcome to CLANG-REPL
+</pre></div>
+</div>
+</section>
+<section id="function-definitions-and-calls">
+<h2>Function Definitions and Calls:<a class="headerlink" href="#function-definitions-and-calls" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; #include &lt;iostream&gt;
+clang-repl&gt; int sum(int a, int b){ return a+b; };
+clang-repl&gt; int c = sum(9,10);
+clang-repl&gt; std::cout &lt;&lt; c &lt;&lt; std::endl;
+19
+clang-repl&gt;
+</pre></div>
+</div>
+</section>
+<section id="iterative-structures">
+<h2>Iterative Structures:<a class="headerlink" href="#iterative-structures" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; #include &lt;iostream&gt;
+clang-repl&gt; for (int i = 0;i &lt; 3;i++){ std::cout &lt;&lt; i &lt;&lt; std::endl;}
+0
+1
+2
+clang-repl&gt; while(i &lt; 7){ i++; std::cout &lt;&lt; i &lt;&lt; std::endl;}
+4
+5
+6
+7
+</pre></div>
+</div>
+</section>
+<section id="classes-and-structures">
+<h2>Classes and Structures:<a class="headerlink" href="#classes-and-structures" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; #include &lt;iostream&gt;
+clang-repl&gt; class Rectangle {int width, height; public: void set_values (int,int);\
+clang-repl... int area() {return width*height;}};
+clang-repl&gt;  void Rectangle::set_values (int x, int y) { width = x;height = y;}
+clang-repl&gt; int main () { Rectangle rect;rect.set_values (3,4);\
+clang-repl... std::cout &lt;&lt; &quot;area: &quot; &lt;&lt; rect.area() &lt;&lt; std::endl;\
+clang-repl... return 0;}
+clang-repl&gt; main();
+area: 12
+clang-repl&gt;
+// Note: This &#39;\&#39; can be used for continuation of the statements in the next line
+</pre></div>
+</div>
+</section>
+<section id="lamdas">
+<h2>Lamdas:<a class="headerlink" href="#lamdas" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; #include &lt;iostream&gt;
+clang-repl&gt; using namespace std;
+clang-repl&gt; auto welcome = []()  { std::cout &lt;&lt; &quot;Welcome to REPL&quot; &lt;&lt; std::endl;};
+clang-repl&gt; welcome();
+Welcome to REPL
+</pre></div>
+</div>
+</section>
+<section id="comments">
+<h2>Comments:<a class="headerlink" href="#comments" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; // Comments in Clang-Repl
+clang-repl&gt; /* Comments in Clang-Repl */
+</pre></div>
+</div>
+</section>
+<section id="built-in-commands">
+<h2>Built in Commands:<a class="headerlink" href="#built-in-commands" title="Link to this heading">¶</a></h2>
+<p>clang-repl has some special commands that are of the form <code class="docutils literal notranslate"><span class="pre">%&lt;something&gt;</span></code>. To list all these commands, use the <code class="docutils literal notranslate"><span class="pre">%help</span></code> command:</p>
+<section id="help">
+<h3>Help:<a class="headerlink" href="#help" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">%help</span></code> command lists all built in clang-repl commands.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; %help
+</pre></div>
+</div>
+</section>
+<section id="using-dynamic-libraries">
+<h3>Using Dynamic Libraries:<a class="headerlink" href="#using-dynamic-libraries" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">%lib</span></code> command links a dynamic library.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; %lib print.so
+clang-repl&gt; #include&quot;print.hpp&quot;
+clang-repl&gt; print(9);
+9
+</pre></div>
+</div>
+<p><strong>Generation of dynamic library</strong></p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>// print.cpp
+#include &lt;iostream&gt;
+#include &quot;print.hpp&quot;
+
+void print(int a)
+{
+   std::cout &lt;&lt; a &lt;&lt; std::endl;
+}
+
+// print.hpp
+void print (int a);
+
+// Commands
+clang++-17  -c -o print.o print.cpp
+clang-17 -shared print.o -o print.so
+</pre></div>
+</div>
+</section>
+<section id="undo">
+<h3>Undo:<a class="headerlink" href="#undo" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">%undo</span></code> command undoes the previous input.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; int a = 1; a
+(int) 1
+clang-repl&gt; %undo
+clang-repl&gt; a
+In file included from &lt;&lt;&lt; inputs &gt;&gt;&gt;:1:
+input_line_2:1:1: error: use of undeclared identifier &#39;a&#39;
+1 | a
+* | ^
+error: Parsing failed.
+</pre></div>
+</div>
+</section>
+<section id="quit">
+<h3>Quit:<a class="headerlink" href="#quit" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">%quit</span></code> command terminates clang-repl.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>clang-repl&gt; %quit
+</pre></div>
+</div>
+<p>Just like Clang, Clang-Repl can be integrated in existing applications as a library
+(using the clangInterpreter library). This turns your C++ compiler into a service that
+can incrementally consume and execute code. The <strong>Compiler as A Service</strong> (<strong>CaaS</strong>)
+concept helps support advanced use cases such as template instantiations on demand and
+automatic language interoperability. It also helps static languages such as C/C++ become
+apt for data science.</p>
+</section>
+</section>
+<section id="execution-results-handling-in-clang-repl">
+<h2>Execution Results Handling in Clang-Repl<a class="headerlink" href="#execution-results-handling-in-clang-repl" title="Link to this heading">¶</a></h2>
+<p>Execution Results Handling features discussed below help extend the Clang-Repl
+functionality by creating an interface between the execution results of a
+program and the compiled program.</p>
+<p>1. <strong>Capture Execution Results</strong>: This feature helps capture the execution results
+of a program and bring them back to the compiled program.</p>
+<p>2. <strong>Dump Captured Execution Results</strong>: This feature helps create a temporary dump
+for Value Printing/Automatic Printf, that is, to display the value and type of
+the captured data.</p>
+</section>
+<section id="capture-execution-results">
+<h2>1. Capture Execution Results<a class="headerlink" href="#capture-execution-results" title="Link to this heading">¶</a></h2>
+<p>In many cases, it is useful to bring back the program execution result to the
+compiled program. This result can be stored in an object of type <strong>Value</strong>.</p>
+<section id="how-execution-results-are-captured-value-synthesis">
+<h3>How Execution Results are captured (Value Synthesis):<a class="headerlink" href="#how-execution-results-are-captured-value-synthesis" title="Link to this heading">¶</a></h3>
+<p>The synthesizer chooses which expression to synthesize, and then it replaces
+the original expression with the synthesized expression. Depending on the
+expression type, it may choose to save an object (<code class="docutils literal notranslate"><span class="pre">LastValue</span></code>) of type ‘value’
+while allocating memory to it (<code class="docutils literal notranslate"><span class="pre">SetValueWithAlloc()</span></code>), or not (
+<code class="docutils literal notranslate"><span class="pre">SetValueNoAlloc()</span></code>).</p>
+<figure class="align-center" id="valuesynthesis">
+<div class="graphviz"><img src="_images/graphviz-4d52a65fd072512bb39329fb783bdfbdd8bbb1e6.png" alt="Shows how an object of type 'Value' is synthesized" class="graphviz" /></div>
+<figcaption>
+<p><span class="caption-text">Value Synthesis</span><a class="headerlink" href="#valuesynthesis" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="where-is-the-captured-result-stored">
+<h3>Where is the captured result stored?<a class="headerlink" href="#where-is-the-captured-result-stored" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">LastValue</span></code> holds the last result of the value printing. It is a class member
+because it can be accessed even after subsequent inputs.</p>
+<p><strong>Note:</strong> If no value printing happens, then it is in an invalid state.</p>
+</section>
+<section id="improving-efficiency-and-user-experience">
+<h3>Improving Efficiency and User Experience<a class="headerlink" href="#improving-efficiency-and-user-experience" title="Link to this heading">¶</a></h3>
+<p>The Value object is essentially used to create a mapping between an expression
+‘type’ and the allocated ‘memory’. Built-in types (bool, char, int,
+float, double, etc.) are copyable. Their memory allocation size is known
+and the Value object can introduce a small-buffer optimization.
+In case of objects, the <code class="docutils literal notranslate"><span class="pre">Value</span></code> class provides reference-counted memory
+management.</p>
+<p>The implementation maps the type as written and the Clang Type to be able to use
+the preprocessor to synthesize the relevant cast operations. For example,
+<code class="docutils literal notranslate"><span class="pre">X(char,</span> <span class="pre">Char_S)</span></code>, where <code class="docutils literal notranslate"><span class="pre">char</span></code> is the type from the language’s type system
+and <code class="docutils literal notranslate"><span class="pre">Char_S</span></code> is the Clang builtin type which represents it. This mapping helps
+to import execution results from the interpreter in a compiled program and vice
+versa. The <code class="docutils literal notranslate"><span class="pre">Value.h</span></code> header file can be included at runtime and this is why it
+has a very low token count and was developed with strict constraints in mind.</p>
+<p>This also enables the user to receive the computed ‘type’ back in their code
+and then transform the type into something else (e.g., re-cast a double into
+a float). Normally, the compiler can handle these conversions transparently,
+but in interpreter mode, the compiler cannot see all the ‘from’ and ‘to’ types,
+so it cannot implicitly do the conversions. So this logic enables providing
+these conversions on request.</p>
+<p>On-request conversions can help improve the user experience, by allowing
+conversion to a desired ‘to’ type, when the ‘from’ type is unknown or unclear.</p>
+</section>
+<section id="significance-of-this-feature">
+<h3>Significance of this Feature<a class="headerlink" href="#significance-of-this-feature" title="Link to this heading">¶</a></h3>
+<p>The ‘Value’ object enables wrapping a memory region that comes from the
+JIT, and bringing it back to the compiled code (and vice versa).
+This is a very useful functionality when:</p>
+<ul class="simple">
+<li><p>connecting an interpreter to the compiled code, or</p></li>
+<li><p>connecting an interpreter in another language.</p></li>
+</ul>
+<p>For example, this feature helps transport values across boundaries. A notable
+example is the cppyy project code makes use of this feature to enable running C++
+within Python. It enables transporting values/information between C++
+and Python.</p>
+<p>Note: <a class="reference external" href="https://github.com/wlav/cppyy/">cppyy</a> is an automatic, run-time,
+Python-to-C++ bindings generator, for calling C++ from Python and Python from C++.
+It uses LLVM along with a C++ interpreter (e.g., Cling) to enable features like
+run-time instantiation of C++ templates, cross-inheritance, callbacks,
+auto-casting, transparent use of smart pointers, etc.</p>
+<p>In a nutshell, this feature enables a new way of developing code, paving the
+way for language interoperability and easier interactive programming.</p>
+</section>
+</section>
+<section id="implementation-details">
+<h2>Implementation Details<a class="headerlink" href="#implementation-details" title="Link to this heading">¶</a></h2>
+<section id="interpreter-as-a-repl-vs-as-a-library">
+<h3>Interpreter as a REPL vs. as a Library<a class="headerlink" href="#interpreter-as-a-repl-vs-as-a-library" title="Link to this heading">¶</a></h3>
+<p>1 - If we’re using the interpreter in interactive (REPL) mode, it will dump
+the value (i.e., value printing).</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">if (LastValue.isValid()) {</span>
+<span class="go">  if (!V) {</span>
+<span class="go">    LastValue.dump();</span>
+<span class="go">    LastValue.clear();</span>
+<span class="go">  } else</span>
+<span class="go">    *V = std::move(LastValue);</span>
+<span class="go">}</span>
+</pre></div>
+</div>
+<p>2 - If we’re using the interpreter as a library, then it will pass the value
+to the user.</p>
+</section>
+<section id="incremental-ast-consumer">
+<h3>Incremental AST Consumer<a class="headerlink" href="#incremental-ast-consumer" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">IncrementalASTConsumer</span></code> class wraps the original code generator
+<code class="docutils literal notranslate"><span class="pre">ASTConsumer</span></code> and it performs a hook, to traverse all the top-level decls, to
+look for expressions to synthesize, based on the <code class="docutils literal notranslate"><span class="pre">isSemiMissing()</span></code> condition.</p>
+<p>If this condition is found to be true, then <code class="docutils literal notranslate"><span class="pre">Interp.SynthesizeExpr()</span></code> will be
+invoked.</p>
+<p><strong>Note:</strong> Following is a sample code snippet. Actual code may vary over time.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">for (Decl *D : DGR)</span>
+<span class="go">  if (auto *TSD = llvm::dyn_cast&lt;TopLevelStmtDecl&gt;(D);</span>
+<span class="go">      TSD &amp;&amp; TSD-&gt;isSemiMissing())</span>
+<span class="go">    TSD-&gt;setStmt(Interp.SynthesizeExpr(cast&lt;Expr&gt;(TSD-&gt;getStmt())));</span>
+
+<span class="go">return Consumer-&gt;HandleTopLevelDecl(DGR);</span>
+</pre></div>
+</div>
+<p>The synthesizer will then choose the relevant expression, based on its type.</p>
+</section>
+<section id="communication-between-compiled-code-and-interpreted-code">
+<h3>Communication between Compiled Code and Interpreted Code<a class="headerlink" href="#communication-between-compiled-code-and-interpreted-code" title="Link to this heading">¶</a></h3>
+<p>In Clang-Repl there is <strong>interpreted code</strong>, and this feature adds a ‘value’
+runtime that can talk to the <strong>compiled code</strong>.</p>
+<p>Following is an example where the compiled code interacts with the interpreter
+code. The execution results of an expression are stored in the object ‘V’ of
+type Value. This value is then printed, effectively helping the interpreter
+use a value from the compiled code.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">int Global = 42;</span>
+<span class="go">void setGlobal(int val) { Global = val; }</span>
+<span class="go">int getGlobal() { return Global; }</span>
+<span class="go">Interp.ParseAndExecute(“void setGlobal(int val);”);</span>
+<span class="go">Interp.ParseAndExecute(“int getGlobal();”);</span>
+<span class="go">Value V;</span>
+<span class="go">Interp.ParseAndExecute(“getGlobal()”, &amp;V);</span>
+<span class="go">std::cout &lt;&lt; V.getAs&lt;int&gt;() &lt;&lt; “\n”; // Prints 42</span>
+</pre></div>
+</div>
+<p><strong>Note:</strong> Above is an example of interoperability between the compiled code and
+the interpreted code. Interoperability between languages (e.g., C++ and Python)
+works similarly.</p>
+</section>
+</section>
+<section id="dump-captured-execution-results">
+<h2>2. Dump Captured Execution Results<a class="headerlink" href="#dump-captured-execution-results" title="Link to this heading">¶</a></h2>
+<p>This feature helps create a temporary dump to display the value and type
+(pretty print) of the desired data. This is a good way to interact with the
+interpreter during interactive programming.</p>
+<section id="how-value-printing-is-simplified-automatic-printf">
+<h3>How value printing is simplified (Automatic Printf)<a class="headerlink" href="#how-value-printing-is-simplified-automatic-printf" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">Automatic</span> <span class="pre">Printf</span></code> feature makes it easy to display variable values during
+program execution. Using the <code class="docutils literal notranslate"><span class="pre">printf</span></code> function repeatedly is not required.
+This is achieved using an extension in the <code class="docutils literal notranslate"><span class="pre">libclangInterpreter</span></code> library.</p>
+<p>To automatically print the value of an expression, simply write the expression
+in the global scope <strong>without a semicolon</strong>.</p>
+<figure class="align-center" id="automaticprintf">
+<div class="graphviz"><img src="_images/graphviz-7b3ae88c785ecc90fa69fae162f157c2ba60ffaf.png" alt="Shows how Automatic PrintF can be used" class="graphviz" /></div>
+<figcaption>
+<p><span class="caption-text">Automatic PrintF</span><a class="headerlink" href="#automaticprintf" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="id1">
+<h3>Significance of this feature<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<p>Inspired by a similar implementation in <a class="reference external" href="https://github.com/root-project/cling">Cling</a>,
+this feature added to upstream Clang repo has essentially extended the syntax of
+C++, so that it can be more helpful for people that are writing code for data
+science applications.</p>
+<p>This is useful, for example, when you want to experiment with a set of values
+against a set of functions, and you’d like to know the results right away.
+This is similar to how Python works (hence its popularity in data science
+research), but the superior performance of C++, along with this flexibility
+makes it a more attractive option.</p>
+</section>
+</section>
+<section id="id3">
+<h2>Implementation Details<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<section id="parsing-mechanism">
+<h3>Parsing mechanism:<a class="headerlink" href="#parsing-mechanism" title="Link to this heading">¶</a></h3>
+<p>The Interpreter in Clang-Repl (<code class="docutils literal notranslate"><span class="pre">Interpreter.cpp</span></code>) includes the function
+<code class="docutils literal notranslate"><span class="pre">ParseAndExecute()</span></code> that can accept a ‘Value’ parameter to capture the result.
+But if the value parameter is made optional and it is omitted (i.e., that the
+user does not want to utilize it elsewhere), then the last value can be
+validated and pushed into the <code class="docutils literal notranslate"><span class="pre">dump()</span></code> function.</p>
+<figure class="align-center" id="parsing">
+<div class="graphviz"><img src="_images/graphviz-2733886182489010eae293ddcc1371d32d58038d.png" alt="Shows the Parsing Mechanism for Pretty Printing" class="graphviz" /></div>
+<figcaption>
+<p><span class="caption-text">Parsing Mechanism</span><a class="headerlink" href="#parsing" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p><strong>Note:</strong> Following is a sample code snippet. Actual code may vary over time.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">llvm::Error Interpreter::ParseAndExecute(llvm::StringRef Code, Value *V) {</span>
+
+<span class="go">auto PTU = Parse(Code);</span>
+<span class="go">if (!PTU)</span>
+<span class="go">    return PTU.takeError();</span>
+<span class="go">if (PTU-&gt;TheModule)</span>
+<span class="go">    if (llvm::Error Err = Execute(*PTU))</span>
+<span class="go">    return Err;</span>
+
+<span class="go">if (LastValue.isValid()) {</span>
+<span class="go">    if (!V) {</span>
+<span class="go">    LastValue.dump();</span>
+<span class="go">    LastValue.clear();</span>
+<span class="go">    } else</span>
+<span class="go">    *V = std::move(LastValue);</span>
+<span class="go">}</span>
+<span class="go">return llvm::Error::success();</span>
+<span class="go">}</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">dump()</span></code> function (in <code class="docutils literal notranslate"><span class="pre">value.cpp</span></code>) calls the <code class="docutils literal notranslate"><span class="pre">print()</span></code> function.</p>
+<p>Printing the Data and Type are handled in their respective functions:
+<code class="docutils literal notranslate"><span class="pre">ReplPrintDataImpl()</span></code> and <code class="docutils literal notranslate"><span class="pre">ReplPrintTypeImpl()</span></code>.</p>
+</section>
+<section id="annotation-token-annot-repl-input-end">
+<h3>Annotation Token (annot_repl_input_end)<a class="headerlink" href="#annotation-token-annot-repl-input-end" title="Link to this heading">¶</a></h3>
+<p>This feature uses a new token (<code class="docutils literal notranslate"><span class="pre">annot_repl_input_end</span></code>) to consider printing the
+value of an expression if it doesn’t end with a semicolon. When parsing an
+Expression Statement, if the last semicolon is missing, then the code will
+pretend that there one and set a marker there for later utilization, and
+continue parsing.</p>
+<p>A semicolon is normally required in C++, but this feature expands the C++
+syntax to handle cases where a missing semicolon is expected (i.e., when
+handling an expression statement). It also makes sure that an error is not
+generated for the missing semicolon in this specific case.</p>
+<p>This is accomplished by identifying the end position of the user input
+(expression statement). This helps store and return the expression statement
+effectively, so that it can be printed (displayed to the user automatically).</p>
+<p><strong>Note:</strong> This logic is only available for C++ for now, since part of the
+implementation itself requires C++ features. Future versions may support more
+languages.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">Token *CurTok = nullptr;</span>
+<span class="go">// If the semicolon is missing at the end of REPL input, consider if</span>
+<span class="go">// we want to do value printing. Note this is only enabled in C++ mode</span>
+<span class="go">// since part of the implementation requires C++ language features.</span>
+<span class="go">// Note we shouldn&#39;t eat the token since the callback needs it.</span>
+<span class="go">if (Tok.is(tok::annot_repl_input_end) &amp;&amp; Actions.getLangOpts().CPlusPlus)</span>
+<span class="go">  CurTok = &amp;Tok;</span>
+<span class="go">else</span>
+<span class="go">  // Otherwise, eat the semicolon.</span>
+<span class="go">  ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);</span>
+
+<span class="go">StmtResult R = handleExprStmt(Expr, StmtCtx);</span>
+<span class="go">if (CurTok &amp;&amp; !R.isInvalid())</span>
+<span class="go">  CurTok-&gt;setAnnotationValue(R.get());</span>
+
+<span class="go">return R;</span>
+<span class="go">  }</span>
+</pre></div>
+</div>
+</section>
+<section id="ast-transformation">
+<h3>AST Transformation<a class="headerlink" href="#ast-transformation" title="Link to this heading">¶</a></h3>
+<p>When Sema encounters the <code class="docutils literal notranslate"><span class="pre">annot_repl_input_end</span></code> token, it knows to transform
+the AST before the real CodeGen process. It will consume the token and set a
+‘semi missing’ bit in the respective decl.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">if (Tok.is(tok::annot_repl_input_end) &amp;&amp;</span>
+<span class="go">    Tok.getAnnotationValue() != nullptr) {</span>
+<span class="go">    ConsumeAnnotationToken();</span>
+<span class="go">    cast&lt;TopLevelStmtDecl&gt;(DeclsInGroup.back())-&gt;setSemiMissing();</span>
+<span class="go">}</span>
+</pre></div>
+</div>
+<p>In the AST Consumer, traverse all the Top Level Decls, to look for expressions
+to synthesize. If the current Decl is the Top Level Statement
+Decl(<code class="docutils literal notranslate"><span class="pre">TopLevelStmtDecl</span></code>) and has a semicolon missing, then ask the interpreter
+to synthesize another expression (an internal function call) to replace this
+original expression.</p>
+</section>
+<section id="detailed-rfc-and-discussion">
+<h3>Detailed RFC and Discussion:<a class="headerlink" href="#detailed-rfc-and-discussion" title="Link to this heading">¶</a></h3>
+<p>For more technical details, community discussion and links to patches related
+to these features,
+Please visit: <a class="reference external" href="https://discourse.llvm.org/t/rfc-handle-execution-results-in-clang-repl/68493">RFC on LLVM Discourse</a>.</p>
+<p>Some logic presented in the RFC (e.g. ValueGetter()) may be outdated,
+compared to the final developed solution.</p>
+</section>
+</section>
+<section id="related-reading">
+<h2>Related Reading<a class="headerlink" href="#related-reading" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://root.cern/blog/cling-in-llvm/">Cling Transitions to LLVM’s Clang-Repl</a></p>
+<p><a class="reference external" href="https://lists.llvm.org/pipermail/llvm-dev/2020-July/143257.html">Moving (parts of) the Cling REPL in Clang</a></p>
+<p><a class="reference external" href="https://arxiv.org/pdf/2203.06139.pdf">GPU Accelerated Automatic Differentiation With Clad</a></p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ClangOffloadBundler.html">Clang Offload Bundler</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ClangSYCLLinker.html">Clang SYCL Linker</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Allocation Tokens &#8212; Clang 22.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=19ab019f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="-fbounds-safety: Enforcing bounds safety for C" href="BoundsSafety.html" />
+    <link rel="prev" title="Sanitizer special case list" href="SanitizerSpecialCaseList.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 22.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Allocation Tokens</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SanitizerSpecialCaseList.html">Sanitizer special case list</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BoundsSafety.html"><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>: Enforcing bounds safety for C</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="allocation-tokens">
+<h1>Allocation Tokens<a class="headerlink" href="#allocation-tokens" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#token-assignment-mode" id="id2">Token Assignment Mode</a></p></li>
+<li><p><a class="reference internal" href="#querying-token-ids-with-builtin-infer-alloc-token" id="id3">Querying Token IDs with <code class="docutils literal notranslate"><span class="pre">__builtin_infer_alloc_token</span></code></a></p></li>
+<li><p><a class="reference internal" href="#allocation-token-instrumentation" id="id4">Allocation Token Instrumentation</a></p>
+<ul>
+<li><p><a class="reference internal" href="#runtime-interface" id="id5">Runtime Interface</a></p></li>
+<li><p><a class="reference internal" href="#fast-abi" id="id6">Fast ABI</a></p></li>
+<li><p><a class="reference internal" href="#instrumenting-non-standard-allocation-functions" id="id7">Instrumenting Non-Standard Allocation Functions</a></p></li>
+<li><p><a class="reference internal" href="#disabling-instrumentation" id="id8">Disabling Instrumentation</a></p></li>
+<li><p><a class="reference internal" href="#suppressions-file-ignorelist" id="id9">Suppressions File (Ignorelist)</a></p></li>
+<li><p><a class="reference internal" href="#conditional-compilation-with-sanitize-alloc-token" id="id10">Conditional Compilation with <code class="docutils literal notranslate"><span class="pre">__SANITIZE_ALLOC_TOKEN__</span></code></a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Clang provides support for allocation tokens to enable allocator-level heap
+organization strategies. Clang assigns mode-dependent token IDs to allocation
+calls; the runtime behavior depends entirely on the implementation of a
+compatible memory allocator.</p>
+<p>Possible allocator strategies include:</p>
+<ul class="simple">
+<li><p><strong>Security Hardening</strong>: Placing allocations into separate, isolated heap
+partitions. For example, separating pointer-containing types from raw data
+can mitigate exploits that rely on overflowing a primitive buffer to corrupt
+object metadata.</p></li>
+<li><p><strong>Memory Layout Optimization</strong>: Grouping related allocations to improve data
+locality and cache utilization.</p></li>
+<li><p><strong>Custom Allocation Policies</strong>: Applying different management strategies to
+different partitions.</p></li>
+</ul>
+</section>
+<section id="token-assignment-mode">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Token Assignment Mode</a><a class="headerlink" href="#token-assignment-mode" title="Link to this heading">¶</a></h2>
+<p>The default mode to calculate tokens is:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">typehashpointersplit</span></code>: This mode assigns a token ID based on the hash of
+the allocated type’s name, where the top half ID-space is reserved for types
+that contain pointers and the bottom half for types that do not contain
+pointers.</p></li>
+</ul>
+<p>Other token ID assignment modes are supported, but they may be subject to
+change or removal. These may (experimentally) be selected with <code class="docutils literal notranslate"><span class="pre">-Xclang</span>
+<span class="pre">-falloc-token-mode=&lt;mode&gt;</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">typehash</span></code>: This mode assigns a token ID based on the hash of the allocated
+type’s name.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">random</span></code>: This mode assigns a statically-determined random token ID to each
+allocation site.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">increment</span></code>: This mode assigns a simple, incrementally increasing token ID
+to each allocation site.</p></li>
+</ul>
+<p>The following command-line options affect generated token IDs:</p>
+<ul class="simple">
+<li><dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">-falloc-token-max=&lt;N&gt;</span></code></dt><dd><p>Configures the maximum number of token IDs. By default the number of tokens
+is bounded by <code class="docutils literal notranslate"><span class="pre">SIZE_MAX</span></code>.</p>
+</dd>
+</dl>
+</li>
+</ul>
+</section>
+<section id="querying-token-ids-with-builtin-infer-alloc-token">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Querying Token IDs with <code class="docutils literal notranslate"><span class="pre">__builtin_infer_alloc_token</span></code></a><a class="headerlink" href="#querying-token-ids-with-builtin-infer-alloc-token" title="Link to this heading">¶</a></h2>
+<p>For use cases where the token ID must be known at compile time, Clang provides
+a builtin function:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">size_t</span><span class="w"> </span><span class="nf">__builtin_infer_alloc_token</span><span class="p">(</span><span class="o">&lt;</span><span class="n">args</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+</pre></div>
+</div>
+<p>This builtin returns the token ID inferred from its argument expressions, which
+mirror arguments normally passed to any allocation function. The argument
+expressions are <strong>unevaluated</strong>, so it can be used with expressions that would
+have side effects without any runtime impact.</p>
+<p>For example, it can be used as follows:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">MyType</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="p">};</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__partition_alloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">partition</span><span class="p">);</span>
+<span class="cp">#define partition_alloc(...) __partition_alloc(__VA_ARGS__, __builtin_infer_alloc_token(__VA_ARGS__))</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">MyType</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">partition_alloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="o">*</span><span class="n">x</span><span class="p">));</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="allocation-token-instrumentation">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Allocation Token Instrumentation</a><a class="headerlink" href="#allocation-token-instrumentation" title="Link to this heading">¶</a></h2>
+<p>To enable instrumentation of allocation functions, code can be compiled with
+the <code class="docutils literal notranslate"><span class="pre">-fsanitize=alloc-token</span></code> flag:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>clang++<span class="w"> </span>-fsanitize<span class="o">=</span>alloc-token<span class="w"> </span>example.cc
+</pre></div>
+</div>
+<p>The instrumentation transforms allocation calls to include a token ID. For
+example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// Original:</span>
+<span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="n">size</span><span class="p">);</span>
+
+<span class="c1">// Instrumented:</span>
+<span class="n">ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__alloc_token_malloc</span><span class="p">(</span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="o">&lt;</span><span class="n">token</span><span class="w"> </span><span class="n">id</span><span class="o">&gt;</span><span class="p">);</span>
+</pre></div>
+</div>
+<section id="runtime-interface">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Runtime Interface</a><a class="headerlink" href="#runtime-interface" title="Link to this heading">¶</a></h3>
+<p>A compatible runtime must be provided that implements the token-enabled
+allocation functions. The instrumentation generates calls to functions that
+take a final <code class="docutils literal notranslate"><span class="pre">size_t</span> <span class="pre">token_id</span></code> argument.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// C standard library functions</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_calloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">count</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_realloc</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">ptr</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+<span class="c1">// ...</span>
+
+<span class="c1">// C++ operators (mangled names)</span>
+<span class="c1">// operator new(size_t, size_t)</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token__Znwm</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+<span class="c1">// operator new[](size_t, size_t)</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token__Znam</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+<span class="c1">// ... other variants like nothrow, etc., are also instrumented.</span>
+</pre></div>
+</div>
+</section>
+<section id="fast-abi">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Fast ABI</a><a class="headerlink" href="#fast-abi" title="Link to this heading">¶</a></h3>
+<p>An alternative ABI can be enabled with <code class="docutils literal notranslate"><span class="pre">-fsanitize-alloc-token-fast-abi</span></code>,
+which encodes the token ID in the allocation function name.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_0_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_1_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_2_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="p">...</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">__alloc_token_0_Znwm</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_1_Znwm</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">__alloc_token_2_Znwm</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="p">...</span>
+</pre></div>
+</div>
+<p>This ABI provides a more efficient alternative where
+<code class="docutils literal notranslate"><span class="pre">-falloc-token-max</span></code> is small.</p>
+</section>
+<section id="instrumenting-non-standard-allocation-functions">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Instrumenting Non-Standard Allocation Functions</a><a class="headerlink" href="#instrumenting-non-standard-allocation-functions" title="Link to this heading">¶</a></h3>
+<p>By default, AllocToken only instruments standard library allocation functions.
+This simplifies adoption, as a compatible allocator only needs to provide
+token-enabled variants for a well-defined set of standard functions.</p>
+<p>To extend instrumentation to custom allocation functions, enable broader
+coverage with <code class="docutils literal notranslate"><span class="pre">-fsanitize-alloc-token-extended</span></code>. Such functions require being
+marked with the <a class="reference external" href="https://clang.llvm.org/docs/AttributeReference.html#malloc">malloc</a> or <a class="reference external" href="https://clang.llvm.org/docs/AttributeReference.html#alloc-size">alloc_size</a> attributes
+(or a combination).</p>
+<p>For example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">custom_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">malloc</span><span class="p">));</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="nf">my_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">alloc_size</span><span class="p">(</span><span class="mi">1</span><span class="p">)));</span>
+
+<span class="c1">// Original:</span>
+<span class="n">ptr1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">custom_malloc</span><span class="p">(</span><span class="n">size</span><span class="p">);</span>
+<span class="n">ptr2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">my_malloc</span><span class="p">(</span><span class="n">size</span><span class="p">);</span>
+
+<span class="c1">// Instrumented:</span>
+<span class="n">ptr1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__alloc_token_custom_malloc</span><span class="p">(</span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+<span class="n">ptr2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__alloc_token_my_malloc</span><span class="p">(</span><span class="n">size</span><span class="p">,</span><span class="w"> </span><span class="n">token_id</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="disabling-instrumentation">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Disabling Instrumentation</a><a class="headerlink" href="#disabling-instrumentation" title="Link to this heading">¶</a></h3>
+<p>To exclude specific functions from instrumentation, you can use the
+<code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;alloc-token&quot;)</span></code> attribute:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="n">__attribute__</span><span class="p">((</span><span class="n">no_sanitize</span><span class="p">(</span><span class="s">&quot;alloc-token&quot;</span><span class="p">)))</span>
+<span class="kt">void</span><span class="o">*</span><span class="w"> </span><span class="n">custom_allocator</span><span class="p">(</span><span class="kt">size_t</span><span class="w"> </span><span class="n">size</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="n">size</span><span class="p">);</span><span class="w">  </span><span class="c1">// Uses original malloc</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Note: Independent of any given allocator support, the instrumentation aims to
+remain performance neutral. As such, <code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;alloc-token&quot;)</span></code>
+functions may be inlined into instrumented functions and vice-versa. If
+correctness is affected, such functions should explicitly be marked
+<code class="docutils literal notranslate"><span class="pre">noinline</span></code>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">__attribute__((disable_sanitizer_instrumentation))</span></code> is also supported to
+disable this and other sanitizer instrumentations.</p>
+</section>
+<section id="suppressions-file-ignorelist">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Suppressions File (Ignorelist)</a><a class="headerlink" href="#suppressions-file-ignorelist" title="Link to this heading">¶</a></h3>
+<p>AllocToken respects the <code class="docutils literal notranslate"><span class="pre">src</span></code> and <code class="docutils literal notranslate"><span class="pre">fun</span></code> entity types in the
+<a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>, which can be used to omit specified source
+files or functions from instrumentation.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="o">[</span>alloc-token<span class="o">]</span>
+<span class="c1"># Exclude specific source files</span>
+src:third_party/allocator.c
+<span class="c1"># Exclude function name patterns</span>
+fun:*custom_malloc*
+fun:LowLevel::*
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>clang++<span class="w"> </span>-fsanitize<span class="o">=</span>alloc-token<span class="w"> </span>-fsanitize-ignorelist<span class="o">=</span>my_ignorelist.txt<span class="w"> </span>example.cc
+</pre></div>
+</div>
+</section>
+<section id="conditional-compilation-with-sanitize-alloc-token">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Conditional Compilation with <code class="docutils literal notranslate"><span class="pre">__SANITIZE_ALLOC_TOKEN__</span></code></a><a class="headerlink" href="#conditional-compilation-with-sanitize-alloc-token" title="Link to this heading">¶</a></h3>
+<p>In some cases, one may need to execute different code depending on whether
+AllocToken instrumentation is enabled. The <code class="docutils literal notranslate"><span class="pre">__SANITIZE_ALLOC_TOKEN__</span></code> macro
+can be used for this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#ifdef __SANITIZE_ALLOC_TOKEN__</span>
+<span class="c1">// Code specific to -fsanitize=alloc-token builds</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="SanitizerSpecialCaseList.html">Sanitizer special case list</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BoundsSafety.html"><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>: Enforcing bounds safety for C</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
