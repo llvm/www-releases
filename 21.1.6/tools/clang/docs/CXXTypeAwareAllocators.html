@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>C++ Type Aware Allocators &#8212; Clang 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clang command line argument reference" href="ClangCommandLineReference.html" />
+    <link rel="prev" title="Matrix Types" href="MatrixTypes.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 21.1.6 documentation</span></a></h1>
+        <h2 class="heading"><span>C++ Type Aware Allocators</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="MatrixTypes.html">Matrix Types</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ClangCommandLineReference.html">Clang command line argument reference</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="c-type-aware-allocators">
+<h1>C++ Type Aware Allocators<a class="headerlink" href="#c-type-aware-allocators" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#notes" id="id2">Notes</a></p>
+<ul>
+<li><p><a class="reference internal" href="#unconstrained-global-operators" id="id3">Unconstrained Global Operators</a></p></li>
+<li><p><a class="reference internal" href="#mismatching-constraints" id="id4">Mismatching Constraints</a></p></li>
+<li><p><a class="reference internal" href="#declarations-across-libraries" id="id5">Declarations Across Libraries</a></p></li>
+<li><p><a class="reference internal" href="#implicit-and-placement-parameters" id="id6">Implicit and Placement Parameters</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#publication" id="id7">Publication</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Clang includes an implementation of P2719 “Type-aware allocation and deallocation
+functions”.</p>
+<p>This is a feature that extends the semantics of <cite>new</cite>, <cite>new[]</cite>, <cite>delete</cite> and
+<cite>delete[]</cite> operators to expose the type being allocated to the operator. This
+can be used to customize allocation of types without needing to modify the
+type declaration, or via template definitions fully generic type aware
+allocators.</p>
+<p>P2719 introduces a type-identity tag as valid parameter type for all allocation
+operators. This tag is a default initialized value of type <cite>std::type_identity&lt;T&gt;</cite>
+where T is the type being allocated or deallocated.  Unlike the other placement
+arguments this tag is passed as the first parameter to the operator.</p>
+<p>The most basic use case is as follows</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;new&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;type_traits&gt;</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">S</span><span class="w"> </span><span class="p">{</span>
+<span class="w"> </span><span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="k">operator</span><span class="w"> </span><span class="k">delete</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">S</span><span class="w"> </span><span class="o">*</span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">new</span><span class="w"> </span><span class="n">S</span><span class="p">;</span><span class="w"> </span><span class="c1">// calls ::operator new(std::type_identity&lt;S&gt;(), sizeof(S), alignof(S))</span>
+<span class="w">  </span><span class="k">delete</span><span class="w"> </span><span class="n">s</span><span class="p">;</span><span class="w"> </span><span class="c1">// calls ::operator delete(std::type_identity&lt;S&gt;(), s, sizeof(S), alignof(S))</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>While this functionality alone is powerful and useful, the true power comes
+by using templates. In addition to adding the type-identity tag, P2719 allows
+the tag parameter to be a dependent specialization of <cite>std::type_identity</cite>,
+updates the overload resolution rules to support full template deduction and
+constraint semantics, and updates the definition of usual deallocation functions
+to include <cite>operator delete</cite> definitions that are templatized on the
+type-identity tag.</p>
+<p>This allows arbitrarily constrained definitions of the operators that resolve
+as would be expected for any other template function resolution, e.g (only
+showing <cite>operator new</cite> for brevity)</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">Size</span><span class="o">&gt;</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">Array</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="n">Size</span><span class="p">];</span>
+<span class="p">};</span>
+
+<span class="c1">// Starting with a concrete type</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">Array</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+
+<span class="c1">// Only care about five element arrays</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">Array</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+
+<span class="c1">// An array of N floats</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="kt">unsigned</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">Array</span><span class="o">&lt;</span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+
+<span class="c1">// Any array</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">Array</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+
+<span class="c1">// A handy concept</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span><span class="w"> </span><span class="k">concept</span><span class="w"> </span><span class="nc">Polymorphic</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">is_polymorphic_v</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="c1">// Only applies is T is Polymorphic</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="n">Polymorphic</span><span class="w"> </span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">Array</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+
+<span class="c1">// Any even length array</span>
+<span class="k">template</span><span class="w"> </span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">Array</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">)</span>
+<span class="w">    </span><span class="k">requires</span><span class="p">(</span><span class="n">N</span><span class="o">%</span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Operator selection then proceeds according to the usual rules for choosing
+the best/most constrained match.</p>
+<p>Any declaration of a type aware operator new or operator delete must include a
+matching complimentary operator defined in the same scope.</p>
+</section>
+<section id="notes">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Notes</a><a class="headerlink" href="#notes" title="Link to this heading">¶</a></h2>
+<section id="unconstrained-global-operators">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Unconstrained Global Operators</a><a class="headerlink" href="#unconstrained-global-operators" title="Link to this heading">¶</a></h3>
+<p>Declaring an unconstrained type aware global operator <cite>new</cite> or <cite>delete</cite> (or
+<cite>[]</cite> variants) creates numerous hazards, similar to, but different from, those
+created by attempting to replace the non-type aware global operators. For that
+reason unconstrained operators are strongly discouraged.</p>
+</section>
+<section id="mismatching-constraints">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Mismatching Constraints</a><a class="headerlink" href="#mismatching-constraints" title="Link to this heading">¶</a></h3>
+<p>When declaring global type aware operators you should ensure the constraints
+applied to new and delete match exactly, and declare them together. This
+limits the risk of having mismatching operators selected due to differing
+constraints resulting in changes to prioritization when determining the most
+viable candidate.</p>
+</section>
+<section id="declarations-across-libraries">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Declarations Across Libraries</a><a class="headerlink" href="#declarations-across-libraries" title="Link to this heading">¶</a></h3>
+<p>Declaring a typed allocator for a type in a separate TU or library creates
+similar hazards as different libraries and TUs may see (or select) different
+definitions.</p>
+<p>Under this model something like this would be risky</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>However this hazard is not present simply due to the use of the a type from
+another library:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">MyType</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="n">thing</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="k">operator</span><span class="w"> </span><span class="k">new</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">type_identity</span><span class="o">&lt;</span><span class="n">MyType</span><span class="o">&lt;</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&gt;&gt;</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">align_val_t</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Here we see <cite>std::vector</cite> being used, but that is not the actual type being
+allocated.</p>
+</section>
+<section id="implicit-and-placement-parameters">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Implicit and Placement Parameters</a><a class="headerlink" href="#implicit-and-placement-parameters" title="Link to this heading">¶</a></h3>
+<p>Type aware allocators are always passed both the implicit alignment and size
+parameters in all cases. Explicit placement parameters are supported after the
+mandatory implicit parameters.</p>
+</section>
+</section>
+<section id="publication">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Publication</a><a class="headerlink" href="#publication" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://wg21.link/P2719">Type-aware allocation and deallocation functions</a>.
+Louis Dionne, Oliver Hunt.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="MatrixTypes.html">Matrix Types</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ClangCommandLineReference.html">Clang command line argument reference</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2025, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
