@@ -1,0 +1,225 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Benchmarking tips &#8212; LLVM 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=2797fd66"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Using ARM NEON instructions in big-endian mode" href="BigEndianNEON.html" />
+    <link rel="prev" title="Allow Location Descriptions on the DWARF Expression Stack" href="AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack/AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="BigEndianNEON.html" title="Using ARM NEON instructions in big-endian mode"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack/AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack.html" title="Allow Location Descriptions on the DWARF Expression Stack"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Benchmarking tips</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/Benchmarking.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="benchmarking-tips">
+<h1>Benchmarking tips<a class="headerlink" href="#benchmarking-tips" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>For benchmarking a patch we want to reduce all possible sources of
+noise as much as possible. How to do that is very OS dependent.</p>
+<p>Note that low noise is required, but not sufficient. It does not
+exclude measurement bias.
+See <a class="reference external" href="https://users.cs.northwestern.edu/~robby/courses/322-2013-spring/mytkowicz-wrong-data.pdf">“Producing Wrong Data Without Doing Anything Obviously Wrong!” by Mytkowicz, Diwan, Hauswith and Sweeney (ASPLOS 2009)</a>
+for example.</p>
+</section>
+<section id="general">
+<h2>General<a class="headerlink" href="#general" title="Link to this heading">¶</a></h2>
+<ul>
+<li><p>Use a high-resolution timer, e.g., perf under Linux.</p></li>
+<li><p>Run the benchmark multiple times to be able to recognize noise.</p></li>
+<li><p>Disable as many processes or services as possible on the target system.</p></li>
+<li><p>Disable frequency scaling, Turbo Boost and address space
+randomization (see OS-specific section).</p></li>
+<li><p>Use static linking if the OS supports it. That avoids any variation that
+might be introduced by loading dynamic libraries. This can be done
+by passing <code class="docutils literal notranslate"><span class="pre">-DLLVM_BUILD_STATIC=ON</span></code> to CMake.</p></li>
+<li><p>Try to avoid storage. On some systems, you can use tmpfs. Putting the
+program, inputs and outputs on tmpfs avoids touching a real storage
+system, which can have a pretty big variability.</p>
+<p>To mount it (on Linux and FreeBSD at least):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">mount</span> <span class="o">-</span><span class="n">t</span> <span class="n">tmpfs</span> <span class="o">-</span><span class="n">o</span> <span class="n">size</span><span class="o">=&lt;</span><span class="n">XX</span><span class="o">&gt;</span><span class="n">g</span> <span class="n">none</span> <span class="n">dir_to_mount</span>
+</pre></div>
+</div>
+</li>
+</ul>
+</section>
+<section id="linux">
+<h2>Linux<a class="headerlink" href="#linux" title="Link to this heading">¶</a></h2>
+<ul>
+<li><p>Disable address space randomization:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">echo</span> <span class="mi">0</span> <span class="o">&gt;</span> <span class="o">/</span><span class="n">proc</span><span class="o">/</span><span class="n">sys</span><span class="o">/</span><span class="n">kernel</span><span class="o">/</span><span class="n">randomize_va_space</span>
+</pre></div>
+</div>
+</li>
+<li><p>Set scaling_governor to performance:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>for i in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+do
+  echo performance &gt; $i
+done
+</pre></div>
+</div>
+</li>
+<li><p>Use <a class="reference external" href="https://github.com/lpechacek/cpuset">https://github.com/lpechacek/cpuset</a> to reserve CPU cores for just the
+program you are benchmarking. If using perf, leave at least 2 cores
+so that perf runs in one and your program in another:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">cset</span> <span class="n">shield</span> <span class="o">-</span><span class="n">c</span> <span class="n">N1</span><span class="p">,</span><span class="n">N2</span> <span class="o">-</span><span class="n">k</span> <span class="n">on</span>
+</pre></div>
+</div>
+<p>This will move all threads out of N1 and N2. The <code class="docutils literal notranslate"><span class="pre">-k</span> <span class="pre">on</span></code> means
+that even kernel threads are moved out.</p>
+</li>
+<li><p>Disable the SMT pair of the cpus you will use for the benchmark. The
+pair of cpu N can be found in
+<code class="docutils literal notranslate"><span class="pre">/sys/devices/system/cpu/cpuN/topology/thread_siblings_list</span></code> and
+disabled with:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">echo</span> <span class="mi">0</span> <span class="o">&gt;</span> <span class="o">/</span><span class="n">sys</span><span class="o">/</span><span class="n">devices</span><span class="o">/</span><span class="n">system</span><span class="o">/</span><span class="n">cpu</span><span class="o">/</span><span class="n">cpuX</span><span class="o">/</span><span class="n">online</span>
+</pre></div>
+</div>
+</li>
+<li><p>Run the program with:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">cset</span> <span class="n">shield</span> <span class="o">--</span><span class="n">exec</span> <span class="o">--</span> <span class="n">perf</span> <span class="n">stat</span> <span class="o">-</span><span class="n">r</span> <span class="mi">10</span> <span class="o">&lt;</span><span class="n">cmd</span><span class="o">&gt;</span>
+</pre></div>
+</div>
+<p>This will run the command after <code class="docutils literal notranslate"><span class="pre">--</span></code> in the isolated CPU cores. The
+particular perf command runs the <code class="docutils literal notranslate"><span class="pre">&lt;cmd&gt;</span></code> 10 times and reports
+statistics.</p>
+</li>
+</ul>
+<p>With these in place you can expect perf variations of less than 0.1%.</p>
+<section id="linux-intel">
+<h3>Linux Intel<a class="headerlink" href="#linux-intel" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p>Disable Turbo Boost:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">echo</span> <span class="mi">1</span> <span class="o">&gt;</span> <span class="o">/</span><span class="n">sys</span><span class="o">/</span><span class="n">devices</span><span class="o">/</span><span class="n">system</span><span class="o">/</span><span class="n">cpu</span><span class="o">/</span><span class="n">intel_pstate</span><span class="o">/</span><span class="n">no_turbo</span>
+</pre></div>
+</div>
+</li>
+</ul>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="BigEndianNEON.html" title="Using ARM NEON instructions in big-endian mode"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack/AMDGPUDwarfExtensionAllowLocationDescriptionOnTheDwarfExpressionStack.html" title="Allow Location Descriptions on the DWARF Expression Stack"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Benchmarking tips</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-01-16.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
