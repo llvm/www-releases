@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>libc++’s ABI Guarantees &#8212; libc++  documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Contributing to libc++" href="Contributing.html" />
+    <link rel="prev" title="Vendor Documentation" href="VendorDocumentation.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>libc++  documentation</span></a></h1>
+        <h2 class="heading"><span>libc++’s ABI Guarantees</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="VendorDocumentation.html">Vendor Documentation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Contributing.html">Contributing to libc++</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="libc-s-abi-guarantees">
+<span id="abiguarantees"></span><h1>libc++’s ABI Guarantees<a class="headerlink" href="#libc-s-abi-guarantees" title="Link to this heading">¶</a></h1>
+<p>libc++ provides multiple types of ABI guarantees. These include stability of the layout of structs, the linking of TUs
+built against different versions and configurations of the library, and more. This document describes what guarantees
+libc++ provides in these different areas as well as what options exist for vendors to affect these guarantees.</p>
+<p>Note that all of the guarantees listed below come with an asterisk that there may be circumstances where we deem it
+worth it to break that guarantee. These breaks are communicated to vendors by CCing #libcxx-vendors on GitHub. If you
+are a vendor, please ask to be added to that group to be notified about changes that potentially affect you.</p>
+<section id="abi-flags">
+<h2>ABI flags<a class="headerlink" href="#abi-flags" title="Link to this heading">¶</a></h2>
+<p>All the ABI flags listed below can be added to the <code class="docutils literal notranslate"><span class="pre">__config_site</span></code> header by the vendor to opt in to an ABI breaking
+change. These flags should never be set by the user. When porting libc++ to a new platform, vendord should consider
+which flags to enable, assuming that ABI stability is relevant to them. Please contact the libc++ team on Discord or
+through other means to be able to make an informed decision on which flags make sense to enable, and to avoid enabling
+flags which may not be stable. Flags can be enabled via the <code class="docutils literal notranslate"><span class="pre">LIBCXX_ABI_DEFINES</span></code> CMake option.</p>
+</section>
+<section id="stability-of-the-layout-of-structs">
+<h2>Stability of the Layout of Structs<a class="headerlink" href="#stability-of-the-layout-of-structs" title="Link to this heading">¶</a></h2>
+<p>The layout of any user-observable struct is kept stable across versions of the library and any user-facing options
+documented <a class="reference internal" href="UserDocumentation.html#libcxx-configuration-macros"><span class="std std-ref">here</span></a>. There are a lot of structs that have internal names, but are none
+the less observable by users; for example through public aliases to these types or because they affect the layout of
+other types.</p>
+<p>There are multiple ABI flags which affect the layout of certain structs:</p>
+<section id="libcpp-abi-alternate-string-layout">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_ALTERNATE_STRING_LAYOUT</span></code><a class="headerlink" href="#libcpp-abi-alternate-string-layout" title="Link to this heading">¶</a></h3>
+<p>This changes the internal layout of <code class="docutils literal notranslate"><span class="pre">basic_string</span></code> to move the section that is used for the internal buffer to the
+front, making it eight byte aligned instead of being unaligned, improving the performance of some operations
+significantly.</p>
+</section>
+<section id="libcpp-abi-no-iterator-bases">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_NO_ITERATOR_BASES</span></code><a class="headerlink" href="#libcpp-abi-no-iterator-bases" title="Link to this heading">¶</a></h3>
+<p>This removes the <code class="docutils literal notranslate"><span class="pre">iterator</span></code> base class from <code class="docutils literal notranslate"><span class="pre">back_insert_iterator</span></code>, <code class="docutils literal notranslate"><span class="pre">front_insert_iterator</span></code>, <code class="docutils literal notranslate"><span class="pre">insert_iterator</span></code>,
+<code class="docutils literal notranslate"><span class="pre">istream_iterator</span></code>, <code class="docutils literal notranslate"><span class="pre">ostream_iterator</span></code>, <code class="docutils literal notranslate"><span class="pre">ostreambuf_iterator</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse_iterator</span></code>, and <code class="docutils literal notranslate"><span class="pre">raw_storage_iterator</span></code>.
+This doesn’t directly affect the layout of these types in most cases, but may result in more padding being used when
+they are used in combination, for example <code class="docutils literal notranslate"><span class="pre">reverse_iterator&lt;reverse_iterator&lt;T&gt;&gt;</span></code>.</p>
+</section>
+<section id="libcpp-abi-variant-index-type-optimization">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_VARIANT_INDEX_TYPE_OPTIMIZATION</span></code><a class="headerlink" href="#libcpp-abi-variant-index-type-optimization" title="Link to this heading">¶</a></h3>
+<p>This changes the index type used inside <code class="docutils literal notranslate"><span class="pre">variant</span></code> to the smallest required type to reduce the datasize of variants in
+most cases.</p>
+</section>
+<section id="libcpp-abi-optimized-function">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_OPTIMIZED_FUNCTION</span></code><a class="headerlink" href="#libcpp-abi-optimized-function" title="Link to this heading">¶</a></h3>
+<p>This significantly restructures how <code class="docutils literal notranslate"><span class="pre">function</span></code> is written to provide better performance, but is currently not ABI
+stable.</p>
+</section>
+<section id="libcpp-abi-no-random-device-compatibility-layout">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_NO_RANDOM_DEVICE_COMPATIBILITY_LAYOUT</span></code><a class="headerlink" href="#libcpp-abi-no-random-device-compatibility-layout" title="Link to this heading">¶</a></h3>
+<p>This changes the layout of <code class="docutils literal notranslate"><span class="pre">random_device</span></code> to only holds state with an implementation that gets entropy from a file
+(see <code class="docutils literal notranslate"><span class="pre">_LIBCPP_USING_DEV_RANDOM</span></code>). When switching from this implementation to another one on a platform that has
+already shipped <code class="docutils literal notranslate"><span class="pre">random_device</span></code>, one needs to retain the same object layout to remain ABI compatible. This flag
+removes these workarounds for platforms that don’t care about ABI compatibility.</p>
+</section>
+<section id="libcpp-abi-no-compressed-pair-padding">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_NO_COMPRESSED_PAIR_PADDING</span></code><a class="headerlink" href="#libcpp-abi-no-compressed-pair-padding" title="Link to this heading">¶</a></h3>
+<p>This removes artificial padding from <code class="docutils literal notranslate"><span class="pre">_LIBCPP_COMPRESSED_PAIR</span></code> and <code class="docutils literal notranslate"><span class="pre">_LIBCPP_COMPRESSED_TRIPLE</span></code>.</p>
+<p>These macros are used inside the associative and unordered containers, <code class="docutils literal notranslate"><span class="pre">deque</span></code>, <code class="docutils literal notranslate"><span class="pre">forward_list</span></code>, <code class="docutils literal notranslate"><span class="pre">future</span></code>,
+<code class="docutils literal notranslate"><span class="pre">list</span></code>, <code class="docutils literal notranslate"><span class="pre">basic_string</span></code>, <code class="docutils literal notranslate"><span class="pre">function</span></code>, <code class="docutils literal notranslate"><span class="pre">shared_ptr</span></code>, <code class="docutils literal notranslate"><span class="pre">unique_ptr</span></code>, and <code class="docutils literal notranslate"><span class="pre">vector</span></code> to stay ABI compatible with the
+legacy <code class="docutils literal notranslate"><span class="pre">__compressed_pair</span></code> type. <code class="docutils literal notranslate"><span class="pre">__compressed_pair</span></code> had historically been used to reduce storage requirements in
+the case of empty types, but has been replaced by <code class="docutils literal notranslate"><span class="pre">[[no_unique_address]]</span></code>. <code class="docutils literal notranslate"><span class="pre">[[no_unique_address]]</span></code> is significantly
+lighter in terms of compile time and debug information, and also improves the layout of structs further. However, to
+keep ABI stability, the additional improvements in layout had to be reverted by introducing artificial padding. This
+flag removes that artificial padding.</p>
+</section>
+<section id="libcpp-abi-ios-allow-arbitrary-fill-value">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_IOS_ALLOW_ARBITRARY_FILL_VALUE</span></code><a class="headerlink" href="#libcpp-abi-ios-allow-arbitrary-fill-value" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">basic_ios</span></code> uses <code class="docutils literal notranslate"><span class="pre">WEOF</span></code> to indicate that the fill value is uninitialized. However, on platforms where the size of
+<code class="docutils literal notranslate"><span class="pre">char_type</span></code> is equal to or greater than the size of <code class="docutils literal notranslate"><span class="pre">int_type</span></code> and <code class="docutils literal notranslate"><span class="pre">char_type</span></code> is unsigned,
+<code class="docutils literal notranslate"><span class="pre">char_traits&lt;char_type&gt;::eq_int_type()</span></code> cannot distinguish between <code class="docutils literal notranslate"><span class="pre">WEOF</span></code> and <code class="docutils literal notranslate"><span class="pre">WCHAR_MAX</span></code>. This flag changes
+<code class="docutils literal notranslate"><span class="pre">basic_ios</span></code> to instead track whether the fill value has been initialized using a separate boolean.</p>
+</section>
+</section>
+<section id="linking-tus-which-have-been-compiled-against-different-releases-of-libc">
+<h2>Linking TUs which have been compiled against different releases of libc++<a class="headerlink" href="#linking-tus-which-have-been-compiled-against-different-releases-of-libc" title="Link to this heading">¶</a></h2>
+<p>libc++ supports linking TUs which have been compiled against different releases of libc++ by marking symbols with
+hidden visibility and changing the mangling of header-only functions in every release.</p>
+</section>
+<section id="linking-tus-which-have-been-compiled-with-different-flags-affecting-code-gen">
+<h2>Linking TUs which have been compiled with different flags affecting code gen<a class="headerlink" href="#linking-tus-which-have-been-compiled-with-different-flags-affecting-code-gen" title="Link to this heading">¶</a></h2>
+<p>There are a lot of compiler (and library) flags which change the code generated for functions. This includes flags like
+<code class="docutils literal notranslate"><span class="pre">-O1</span></code>, which are guaranteed by the compiler to not change the observable behaviour of a correct program, as well as
+flags like <code class="docutils literal notranslate"><span class="pre">-fexceptions</span></code>, which <strong>do</strong> change the observable behaviour. libc++ allows linking of TUs which have been
+compiled with specific flags only and makes no guarantees for any of the flags not listed below.</p>
+<p>The flags allowed (in any combination) are:
+- <code class="docutils literal notranslate"><span class="pre">-f[no-]exceptions</span></code>
+- <code class="docutils literal notranslate"><span class="pre">-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE{_FAST,_EXTENSIVE,_DEBUG,_NONE}</span></code></p>
+<p>Note that this does not provide any guarantees about user-defined functions, but only that the libc++ functions linked
+behave as the flags say.</p>
+</section>
+<section id="availability-of-symbols-in-the-built-library-both-static-and-shared">
+<h2>Availability of symbols in the built library (both static and shared)<a class="headerlink" href="#availability-of-symbols-in-the-built-library-both-static-and-shared" title="Link to this heading">¶</a></h2>
+<p>In general, libc++ does not make any guarantees about forwards-compatibility. That is, a TU compiled against new headers
+may not work with an older library. Vendors who require such support can leverage availability markup. On the other
+hand, backwards compatibility is generally guaranteed.</p>
+<p>There are multiple ABI flags that change the symbols exported from the built library:</p>
+<section id="libcpp-abi-do-not-export-basic-string-common">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_DO_NOT_EXPORT_BASIC_STRING_COMMON</span></code><a class="headerlink" href="#libcpp-abi-do-not-export-basic-string-common" title="Link to this heading">¶</a></h3>
+<p>This removes <code class="docutils literal notranslate"><span class="pre">__basic_string_common&lt;true&gt;::__throw_length_error()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">__basic_string_common&lt;true&gt;::__throw_out_of_range()</span></code>. These symbols have been used by <code class="docutils literal notranslate"><span class="pre">basic_string</span></code> in the past,
+but are not referenced from the headers anymore.</p>
+</section>
+<section id="libcpp-abi-do-not-export-vector-base-common">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_DO_NOT_EXPORT_VECTOR_BASE_COMMON</span></code><a class="headerlink" href="#libcpp-abi-do-not-export-vector-base-common" title="Link to this heading">¶</a></h3>
+<p>This removes <code class="docutils literal notranslate"><span class="pre">__vector_base_common&lt;true&gt;::__throw_length_error()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">__vector_base_common&lt;true&gt;::__throw_out_of_range()</span></code>. These symbols have been used by <code class="docutils literal notranslate"><span class="pre">vector</span></code> in the past, but are
+not referenced from the headers anymore.</p>
+</section>
+<section id="libcpp-abi-do-not-export-to-chars-base-10">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_DO_NOT_EXPORT_TO_CHARS_BASE_10</span></code><a class="headerlink" href="#libcpp-abi-do-not-export-to-chars-base-10" title="Link to this heading">¶</a></h3>
+<p>This removes <code class="docutils literal notranslate"><span class="pre">__itoa::__u32toa()</span></code> and <code class="docutils literal notranslate"><span class="pre">__iota::__u64toa</span></code>. These symbols have been used by <code class="docutils literal notranslate"><span class="pre">to_chars</span></code> in the past,
+but are not referenced from the headers anymore.</p>
+</section>
+<section id="libcpp-abi-string-optimized-external-instantiation">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_STRING_OPTIMIZED_EXTERNAL_INSTANTIATION</span></code><a class="headerlink" href="#libcpp-abi-string-optimized-external-instantiation" title="Link to this heading">¶</a></h3>
+<p>This replaces the symbols that are exported for <code class="docutils literal notranslate"><span class="pre">basic_string</span></code> to avoid exporting functions which are likely to be
+inlined as well as explicitly moving paths to the built library which are slow, improving fast-path inlining of multiple
+functions. This flag is currently unstable.</p>
+</section>
+</section>
+<section id="stability-of-the-traits-of-a-type">
+<h2>Stability of the traits of a type<a class="headerlink" href="#stability-of-the-traits-of-a-type" title="Link to this heading">¶</a></h2>
+<p>Whether a particular trait of a type is kept stable depends heavily on the type in question and the trait. The most
+important trait of a type to keep stable is the triviality for the purpose of calls, since that directly affects the
+function call ABI. Which types are considered non-trivial for the purpose of calls is defined in the
+<a class="reference external" href="https://itanium-cxx-abi.github.io/cxx-abi/abi.html#definitions">Itanium ABI</a>.
+<code class="docutils literal notranslate"><span class="pre">is_trivially_copyable</span></code> should also be kept stable usually, since many programs depend on this trait for their own
+layouting. This isn’t as rigid as the previous requirement though.</p>
+<p>There are multiple ABI flags that change traits of a struct:</p>
+<section id="libcpp-abi-enable-unique-ptr-trivial-abi">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_ENABLE_UNIQUE_PTR_TRIVIAL_ABI</span></code><a class="headerlink" href="#libcpp-abi-enable-unique-ptr-trivial-abi" title="Link to this heading">¶</a></h3>
+<p>This flag adds <code class="docutils literal notranslate"><span class="pre">[[clang::trivial_abi]]</span></code> to <code class="docutils literal notranslate"><span class="pre">unique_ptr</span></code>, which makes it trivial for the purpose of calls.</p>
+</section>
+<section id="libcpp-abi-enable-shared-ptr-trivial-abi">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_ENABLE_SHARED_PTR_TRIVIAL_ABI</span></code><a class="headerlink" href="#libcpp-abi-enable-shared-ptr-trivial-abi" title="Link to this heading">¶</a></h3>
+<p>This flag adds <code class="docutils literal notranslate"><span class="pre">[[clang::trivial_abi]]</span></code> to <code class="docutils literal notranslate"><span class="pre">shared_ptr</span></code>, which makes it trivial for the purpose of calls.</p>
+</section>
+</section>
+<section id="types-that-public-aliases-reference">
+<h2>Types that public aliases reference<a class="headerlink" href="#types-that-public-aliases-reference" title="Link to this heading">¶</a></h2>
+<p>There are a lot of aliases that reference types with library internal names. For example, containers contain an
+<code class="docutils literal notranslate"><span class="pre">iterator</span></code> alias to a type with a library internal name. These have to always reference the same type, since the
+mangling of user-defined function overloads would change otherwise. A notable exception to this are the alias templates
+to type traits. There doesn’t seem to be anybody who relies on these names staying the same, so it is OK to change what
+these aliases actually reference.</p>
+<p>There are multiple ABI flags which change which type an alias references:</p>
+<section id="libcpp-abi-incomplete-types-in-deque">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_INCOMPLETE_TYPES_IN_DEQUE</span></code><a class="headerlink" href="#libcpp-abi-incomplete-types-in-deque" title="Link to this heading">¶</a></h3>
+<p>This changes <code class="docutils literal notranslate"><span class="pre">deque::iterator</span></code> to avoid requiring complete types for <code class="docutils literal notranslate"><span class="pre">deque</span></code>.</p>
+</section>
+<section id="libcpp-abi-fix-unordered-container-size-type">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_FIX_UNORDERED_CONTAINER_SIZE_TYPE</span></code><a class="headerlink" href="#libcpp-abi-fix-unordered-container-size-type" title="Link to this heading">¶</a></h3>
+<p>This changes the unordered container’s <code class="docutils literal notranslate"><span class="pre">size_types</span></code> aliases.</p>
+</section>
+<section id="libcpp-abi-use-wrap-iter-in-std-array-and-libcpp-abi-use-wrap-iter-in-std-string-view">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_USE_WRAP_ITER_IN_STD_ARRAY</span></code> and <code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_USE_WRAP_ITER_IN_STD_STRING_VIEW</span></code><a class="headerlink" href="#libcpp-abi-use-wrap-iter-in-std-array-and-libcpp-abi-use-wrap-iter-in-std-string-view" title="Link to this heading">¶</a></h3>
+<p>This changes the <code class="docutils literal notranslate"><span class="pre">iterator</span></code> and <code class="docutils literal notranslate"><span class="pre">const_iterator</span></code> of <code class="docutils literal notranslate"><span class="pre">array</span></code> and <code class="docutils literal notranslate"><span class="pre">string_view</span></code> respectively to reference
+<code class="docutils literal notranslate"><span class="pre">__wrap_iter</span></code> instead, which makes it less likely for users to depend on non-portable implementation details. This is
+especially useful because enabling bounded iterators hardening requires code not to make these assumptions.</p>
+</section>
+<section id="libcpp-abi-bounded-iterators-libcpp-abi-bounded-iterators-in-string-libcpp-abi-bounded-iterators-in-vector-and-libcpp-abi-bounded-iterators-in-std-array">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_BOUNDED_ITERATORS</span></code>, <code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_BOUNDED_ITERATORS_IN_STRING</span></code>, <code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR</span></code>, and <code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_BOUNDED_ITERATORS_IN_STD_ARRAY</span></code><a class="headerlink" href="#libcpp-abi-bounded-iterators-libcpp-abi-bounded-iterators-in-string-libcpp-abi-bounded-iterators-in-vector-and-libcpp-abi-bounded-iterators-in-std-array" title="Link to this heading">¶</a></h3>
+<p>These flags change the <code class="docutils literal notranslate"><span class="pre">iterator</span></code> member of various classes to reference hardened iterators instead. See the
+<a class="reference internal" href="Hardening.html#hardening"><span class="std std-ref">hardening documentation</span></a> for more details.</p>
+</section>
+</section>
+<section id="meaning-of-values">
+<h2>Meaning of values<a class="headerlink" href="#meaning-of-values" title="Link to this heading">¶</a></h2>
+<p>The meaning of specific values can usually not be changed, since programs compiled against older versions of the headers
+may check for these values. These specific values don’t have to be hard-coded, but can also depend on user input.</p>
+<p>There are multiple ABI flags that change the meaning of particular values:</p>
+<section id="libcpp-abi-regex-constants-nonzero">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_REGEX_CONSTANTS_NONZERO</span></code><a class="headerlink" href="#libcpp-abi-regex-constants-nonzero" title="Link to this heading">¶</a></h3>
+<p>This changes the value of <code class="docutils literal notranslate"><span class="pre">regex_constants::syntax_option-type::ECMAScript</span></code> to be standards-conforming.</p>
+</section>
+<section id="libcpp-abi-fix-cityhash-implementation">
+<h3><code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_FIX_CITYHASH_IMPLEMENTATION</span></code><a class="headerlink" href="#libcpp-abi-fix-cityhash-implementation" title="Link to this heading">¶</a></h3>
+<p>This flag fixes the implementation of CityHash used for <code class="docutils literal notranslate"><span class="pre">hash&lt;fundamental-type&gt;</span></code>. The incorrect implementation of
+CityHash has the problem that it drops some bits on the floor. Fixing the implementation changes the hash of values,
+resulting in an ABI break.</p>
+</section>
+</section>
+<section id="inline-namespaces">
+<h2>inline namespaces<a class="headerlink" href="#inline-namespaces" title="Link to this heading">¶</a></h2>
+<p>Inline namespaces which contain types that are observable by the user need to be kept the same, since they affect
+mangling. Almost all of libc++’s symbols are inside an inline namespace. By default that namespace is <code class="docutils literal notranslate"><span class="pre">__1</span></code>, but can
+be changed by the vendor by setting <cite>LIBCXX_ABI_NAMESPACE</cite> during CMake configuration. There is also
+<code class="docutils literal notranslate"><span class="pre">_LIBCPP_ABI_NO_FILESYSTEM_INLINE_NAMESPACE</span></code> to remove the <code class="docutils literal notranslate"><span class="pre">__fs</span></code> namespace from surrounding the <code class="docutils literal notranslate"><span class="pre">filesystem</span></code>
+namespace. This shortens the mangling of the filesystem symbols a bit.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="VendorDocumentation.html">Vendor Documentation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Contributing.html">Contributing to libc++</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2011-2025, LLVM Project.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
