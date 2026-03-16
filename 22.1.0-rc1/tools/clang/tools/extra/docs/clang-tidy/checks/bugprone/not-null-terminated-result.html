@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - bugprone-not-null-terminated-result &#8212; Extra Clang Tools 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=2797fd66"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="bugprone-optional-value-conversion" href="optional-value-conversion.html" />
+    <link rel="prev" title="bugprone-nondeterministic-pointer-iteration-order" href="nondeterministic-pointer-iteration-order.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 22.1.0-rc1 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - bugprone-not-null-terminated-result</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="nondeterministic-pointer-iteration-order.html">bugprone-nondeterministic-pointer-iteration-order</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="optional-value-conversion.html">bugprone-optional-value-conversion</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="bugprone-not-null-terminated-result">
+<h1>bugprone-not-null-terminated-result<a class="headerlink" href="#bugprone-not-null-terminated-result" title="Link to this heading">¶</a></h1>
+<p>Finds function calls where it is possible to cause a not null-terminated
+result. Usually the proper length of a string is <code class="docutils literal notranslate"><span class="pre">strlen(src)</span> <span class="pre">+</span> <span class="pre">1</span></code> or equal
+length of this expression, because the null terminator needs an extra space.
+Without the null terminator it can result in undefined behavior when the
+string is read.</p>
+<p>The following and their respective <code class="docutils literal notranslate"><span class="pre">wchar_t</span></code> based functions are checked:</p>
+<p><code class="docutils literal notranslate"><span class="pre">memcpy</span></code>, <code class="docutils literal notranslate"><span class="pre">memcpy_s</span></code>, <code class="docutils literal notranslate"><span class="pre">memchr</span></code>, <code class="docutils literal notranslate"><span class="pre">memmove</span></code>, <code class="docutils literal notranslate"><span class="pre">memmove_s</span></code>,
+<code class="docutils literal notranslate"><span class="pre">strerror_s</span></code>, <code class="docutils literal notranslate"><span class="pre">strncmp</span></code>, <code class="docutils literal notranslate"><span class="pre">strxfrm</span></code></p>
+<p>The following is a real-world example where the programmer forgot to increase
+the passed third argument, which is <code class="docutils literal notranslate"><span class="pre">size_t</span> <span class="pre">length</span></code>. That is why the length
+of the allocated memory is not enough to hold the null terminator.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">static</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="nf">stringCpy</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">char</span><span class="w"> </span><span class="o">*&gt;</span><span class="p">(</span><span class="n">malloc</span><span class="p">(</span><span class="n">str</span><span class="p">.</span><span class="n">size</span><span class="p">()));</span>
+<span class="w">  </span><span class="n">memcpy</span><span class="p">(</span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="n">str</span><span class="p">.</span><span class="n">data</span><span class="p">(),</span><span class="w"> </span><span class="n">str</span><span class="p">.</span><span class="n">size</span><span class="p">());</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In addition to issuing warnings, fix-it rewrites all the necessary code.
+It also tries to adjust the capacity of the destination array:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">static</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="nf">stringCpy</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="w"> </span><span class="o">&amp;</span><span class="n">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">reinterpret_cast</span><span class="o">&lt;</span><span class="kt">char</span><span class="w"> </span><span class="o">*&gt;</span><span class="p">(</span><span class="n">malloc</span><span class="p">(</span><span class="n">str</span><span class="p">.</span><span class="n">size</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">));</span>
+<span class="w">  </span><span class="n">strcpy</span><span class="p">(</span><span class="n">result</span><span class="p">,</span><span class="w"> </span><span class="n">str</span><span class="p">.</span><span class="n">data</span><span class="p">());</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Note: It cannot guarantee to rewrite every of the path-sensitive memory
+allocations.</p>
+<section id="transformation-rules-of-memcpy">
+<span id="memcpytransformation"></span><h2>Transformation rules of ‘memcpy()’<a class="headerlink" href="#transformation-rules-of-memcpy" title="Link to this heading">¶</a></h2>
+<p>It is possible to rewrite the <code class="docutils literal notranslate"><span class="pre">memcpy()</span></code> and <code class="docutils literal notranslate"><span class="pre">memcpy_s()</span></code> calls as the
+following four functions:  <code class="docutils literal notranslate"><span class="pre">strcpy()</span></code>, <code class="docutils literal notranslate"><span class="pre">strncpy()</span></code>, <code class="docutils literal notranslate"><span class="pre">strcpy_s()</span></code>,
+<code class="docutils literal notranslate"><span class="pre">strncpy_s()</span></code>, where the latter two are the safer versions of the former two.
+It rewrites the <code class="docutils literal notranslate"><span class="pre">wchar_t</span></code> based memory handler functions respectively.</p>
+<section id="rewrite-based-on-the-destination-array">
+<h3>Rewrite based on the destination array<a class="headerlink" href="#rewrite-based-on-the-destination-array" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>If copy to the destination array cannot overflow [1] the new function should
+be the older copy function (ending with <code class="docutils literal notranslate"><span class="pre">cpy</span></code>), because it is more
+efficient than the safe version.</p></li>
+<li><p>If copy to the destination array can overflow [1] and
+<a class="reference internal" href="#cmdoption-arg-WantToUseSafeFunctions"><code class="xref std std-option docutils literal notranslate"><span class="pre">WantToUseSafeFunctions</span></code></a> is set to <cite>true</cite> and it is possible to
+obtain the capacity of the destination array then the new function could be
+the safe version (ending with <code class="docutils literal notranslate"><span class="pre">cpy_s</span></code>).</p></li>
+<li><p>If the new function is could be safe version and C++ files are analyzed and
+the destination array is plain <code class="docutils literal notranslate"><span class="pre">char</span></code>/<code class="docutils literal notranslate"><span class="pre">wchar_t</span></code> without <code class="docutils literal notranslate"><span class="pre">un/signed</span></code>
+then the length of the destination array can be omitted.</p></li>
+<li><p>If the new function is could be safe version and the destination array is
+<code class="docutils literal notranslate"><span class="pre">un/signed</span></code> it needs to be casted to plain <code class="docutils literal notranslate"><span class="pre">char</span> <span class="pre">*</span></code>/<code class="docutils literal notranslate"><span class="pre">wchar_t</span> <span class="pre">*</span></code>.</p></li>
+</ul>
+<dl class="simple">
+<dt>[1] It is possible to overflow:</dt><dd><ul class="simple">
+<li><p>If the capacity of the destination array is unknown.</p></li>
+<li><p>If the given length is equal to the destination array’s capacity.</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="rewrite-based-on-the-length-of-the-source-string">
+<h3>Rewrite based on the length of the source string<a class="headerlink" href="#rewrite-based-on-the-length-of-the-source-string" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>If the given length is <code class="docutils literal notranslate"><span class="pre">strlen(source)</span></code> or equal length of this expression
+then the new function should be the older copy function (ending with
+<code class="docutils literal notranslate"><span class="pre">cpy</span></code>), as it is more efficient than the safe version (ending with
+<code class="docutils literal notranslate"><span class="pre">cpy_s</span></code>).</p></li>
+<li><p>Otherwise we assume that the programmer wanted to copy ‘N’ characters, so the
+new function is <code class="docutils literal notranslate"><span class="pre">ncpy</span></code>-like which copies ‘N’ characters.</p></li>
+</ul>
+</section>
+</section>
+<section id="transformations-with-strlen-or-equal-length-of-this-expression">
+<h2>Transformations with ‘strlen()’ or equal length of this expression<a class="headerlink" href="#transformations-with-strlen-or-equal-length-of-this-expression" title="Link to this heading">¶</a></h2>
+<p>It transforms the <code class="docutils literal notranslate"><span class="pre">wchar_t</span></code> based memory and string handler functions
+respectively (where only <code class="docutils literal notranslate"><span class="pre">strerror_s</span></code> does not have <code class="docutils literal notranslate"><span class="pre">wchar_t</span></code> based alias).</p>
+<section id="memory-handler-functions">
+<h3>Memory handler functions<a class="headerlink" href="#memory-handler-functions" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">memcpy</span></code>
+Please visit the
+<a class="reference internal" href="#memcpytransformation"><span class="std std-ref">Transformation rules of ‘memcpy()’</span></a> section.</p>
+<p><code class="docutils literal notranslate"><span class="pre">memchr</span></code>
+Usually there is a C-style cast and it is needed to be removed, because the
+new function <code class="docutils literal notranslate"><span class="pre">strchr</span></code>’s return type is correct. The given length is going
+to be removed.</p>
+<p><code class="docutils literal notranslate"><span class="pre">memmove</span></code>
+If safe functions are available the new function is <code class="docutils literal notranslate"><span class="pre">memmove_s</span></code>, which has
+a new second argument which is the length of the destination array, it is
+adjusted, and the length of the source string is incremented by one.
+If safe functions are not available the given length is incremented by one.</p>
+<p><code class="docutils literal notranslate"><span class="pre">memmove_s</span></code>
+The given length is incremented by one.</p>
+</section>
+<section id="string-handler-functions">
+<h3>String handler functions<a class="headerlink" href="#string-handler-functions" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">strerror_s</span></code>
+The given length is incremented by one.</p>
+<p><code class="docutils literal notranslate"><span class="pre">strncmp</span></code>
+If the third argument is the first or the second argument’s <code class="docutils literal notranslate"><span class="pre">length</span> <span class="pre">+</span> <span class="pre">1</span></code>
+it has to be truncated without the <code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">1</span></code> operation.</p>
+<p><code class="docutils literal notranslate"><span class="pre">strxfrm</span></code>
+The given length is incremented by one.</p>
+</section>
+</section>
+<section id="options">
+<h2>Options<a class="headerlink" href="#options" title="Link to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-WantToUseSafeFunctions">
+<span class="sig-name descname"><span class="pre">WantToUseSafeFunctions</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-arg-WantToUseSafeFunctions" title="Link to this definition">¶</a></dt>
+<dd><p>The value <cite>true</cite> specifies that the target environment is considered to
+implement ‘_s’ suffixed memory and string handler functions which are safer
+than older versions (e.g. ‘memcpy_s()’). The default value is <cite>true</cite>.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="nondeterministic-pointer-iteration-order.html">bugprone-nondeterministic-pointer-iteration-order</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="optional-value-conversion.html">bugprone-optional-value-conversion</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

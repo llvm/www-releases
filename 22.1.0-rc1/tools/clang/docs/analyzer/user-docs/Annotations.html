@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>2.7. Source Annotations &#8212; Clang 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../../_static/documentation_options.js?v=2797fd66"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="2.8. FAQ and How to Deal with Common False Positives" href="FAQ.html" />
+    <link rel="prev" title="2.6. Taint Analysis Configuration" href="TaintAnalysisConfiguration.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 22.1.0-rc1 documentation</span></a></h1>
+        <h2 class="heading"><span>2.7. Source Annotations</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="TaintAnalysisConfiguration.html"><span class="section-number">2.6. </span>Taint Analysis Configuration</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="FAQ.html"><span class="section-number">2.8. </span>FAQ and How to Deal with Common False Positives</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="source-annotations">
+<h1><span class="section-number">2.7. </span>Source Annotations<a class="headerlink" href="#source-annotations" title="Link to this heading">¶</a></h1>
+<p>The Clang frontend supports several source-level annotations in the form of
+<a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc/Attribute-Syntax.html">GCC-style attributes</a>
+and pragmas that can help make using the Clang Static Analyzer more useful.
+These annotations can both help suppress false positives as well as enhance the
+analyzer’s ability to find bugs.</p>
+<p>This page gives a practical overview of such annotations. For more technical
+specifics regarding Clang-specific annotations please see the Clang’s list of
+<a class="reference external" href="https://clang.llvm.org/docs/LanguageExtensions.html">language extensions</a>.
+Details of “standard” GCC attributes (that Clang also supports) can
+be found in the <a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc/">GCC manual</a>, with the
+majority of the relevant attributes being in the section on
+<a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html">function attributes</a>.</p>
+<p>Note that attributes that are labeled <strong>Clang-specific</strong> are not
+recognized by GCC. Their use can be conditioned using preprocessor macros
+(examples included on this page).</p>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#general-purpose-annotations" id="id2">General Purpose Annotations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#null-pointer-checking" id="id3">Null Pointer Checking</a></p>
+<ul>
+<li><p><a class="reference internal" href="#attribute-nonnull" id="id4">Attribute ‘nonnull’</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#custom-assertion-handlers" id="id5">Custom Assertion Handlers</a></p>
+<ul>
+<li><p><a class="reference internal" href="#attribute-noreturn" id="id6">Attribute ‘noreturn’</a></p></li>
+<li><p><a class="reference internal" href="#attribute-analyzer-noreturn-clang-specific" id="id7">Attribute ‘analyzer_noreturn’ (Clang-specific)</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#dynamic-memory-modeling-annotations" id="id8">Dynamic Memory Modeling Annotations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#attribute-ownership-returns-clang-specific" id="id9">Attribute ‘ownership_returns’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-ownership-takes-clang-specific" id="id10">Attribute ‘ownership_takes’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-ownership-holds-clang-specific" id="id11">Attribute ‘ownership_holds’ (Clang-specific)</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#mac-os-x-api-annotations" id="id12">Mac OS X API Annotations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#cocoa-core-foundation-memory-management-annotations" id="id13">Cocoa &amp; Core Foundation Memory Management Annotations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#attribute-ns-returns-retained-clang-specific" id="id14">Attribute ‘ns_returns_retained’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-ns-returns-not-retained-clang-specific" id="id15">Attribute ‘ns_returns_not_retained’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-cf-returns-retained-clang-specific" id="id16">Attribute ‘cf_returns_retained’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-cf-returns-not-retained-clang-specific" id="id17">Attribute ‘cf_returns_not_retained’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-ns-consumed-clang-specific" id="id18">Attribute ‘ns_consumed’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-cf-consumed-clang-specific" id="id19">Attribute ‘cf_consumed’ (Clang-specific)</a></p></li>
+<li><p><a class="reference internal" href="#attribute-ns-consumes-self-clang-specific" id="id20">Attribute ‘ns_consumes_self’ (Clang-specific)</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#libkern-memory-management-annotations" id="id21">Libkern Memory Management Annotations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#attribute-os-returns-retained" id="id22">Attribute ‘os_returns_retained’</a></p></li>
+<li><p><a class="reference internal" href="#attribute-os-returns-not-retained" id="id23">Attribute ‘os_returns_not_retained’</a></p></li>
+<li><p><a class="reference internal" href="#attribute-os-consumed" id="id24">Attribute ‘os_consumed’</a></p></li>
+<li><p><a class="reference internal" href="#attribute-os-consumes-this" id="id25">Attribute ‘os_consumes_this’</a></p></li>
+<li><p><a class="reference internal" href="#out-parameters" id="id26">Out Parameters</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="general-purpose-annotations">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink"><span class="section-number">2.7.1. </span>General Purpose Annotations</a><a class="headerlink" href="#general-purpose-annotations" title="Link to this heading">¶</a></h2>
+<section id="null-pointer-checking">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink"><span class="section-number">2.7.1.1. </span>Null Pointer Checking</a><a class="headerlink" href="#null-pointer-checking" title="Link to this heading">¶</a></h3>
+<section id="attribute-nonnull">
+<h4><a class="toc-backref" href="#id4" role="doc-backlink"><span class="section-number">2.7.1.1.1. </span>Attribute ‘nonnull’</a><a class="headerlink" href="#attribute-nonnull" title="Link to this heading">¶</a></h4>
+<p>The analyzer recognizes the GCC attribute ‘nonnull’, which indicates that a
+function expects that a given function parameter is not a null pointer.
+Specific details of the syntax of using the ‘nonnull’ attribute can be found in
+<a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-nonnull-function-attribute">GCC’s documentation</a>.</p>
+<p>Both the Clang compiler and GCC will flag warnings for simple cases where a
+null pointer is directly being passed to a function with a ‘nonnull’ parameter
+(e.g., as a constant). The analyzer extends this checking by using its deeper
+symbolic analysis to track what pointer values are potentially null and then
+flag warnings when they are passed in a function call via a ‘nonnull’
+parameter.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="o">*</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">q</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">nonnull</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">3</span><span class="p">)));</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">q</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">   </span><span class="k">return</span><span class="w"> </span><span class="o">!</span><span class="n">p</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">bar</span><span class="p">(</span><span class="n">q</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">)</span>
+<span class="w">             </span><span class="o">:</span><span class="w"> </span><span class="n">bar</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="n">q</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Running <code class="docutils literal notranslate"><span class="pre">scan-build</span></code> over this source produces the following output:</p>
+<img alt="../../_images/example_attribute_nonnull.png" src="../../_images/example_attribute_nonnull.png" />
+</section>
+</section>
+<section id="custom-assertion-handlers">
+<span id="id1"></span><h3><a class="toc-backref" href="#id5" role="doc-backlink"><span class="section-number">2.7.1.2. </span>Custom Assertion Handlers</a><a class="headerlink" href="#custom-assertion-handlers" title="Link to this heading">¶</a></h3>
+<p>The analyzer exploits code assertions by pruning off paths where the
+assertion condition is false. The idea is capture any program invariants
+specified in the assertion that the developer may know but is not immediately
+apparent in the code itself. In this way assertions make implicit assumptions
+explicit in the code, which not only makes the analyzer more accurate when
+finding bugs, but can help others better able to understand your code as well.
+It can also help remove certain kinds of analyzer false positives by pruning off
+false paths.</p>
+<p>In order to exploit assertions, however, the analyzer must understand when it
+encounters an “assertion handler”. Typically assertions are
+implemented with a macro, with the macro performing a check for the assertion
+condition and, when the check fails, calling an assertion handler.  For
+example, consider the following code fragment:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">assert</span><span class="p">(</span><span class="n">p</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>When this code is preprocessed on Mac OS X it expands to the following:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">(</span><span class="n">__builtin_expect</span><span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="n">p</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">__assert_rtn</span><span class="p">(</span><span class="n">__func__</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;t.c&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;p != NULL&quot;</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="kt">void</span><span class="p">)</span><span class="mi">0</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In this example, the assertion handler is <code class="docutils literal notranslate"><span class="pre">__assert_rtn</span></code>. When called,
+most assertion handlers typically print an error and terminate the program. The
+analyzer can exploit such semantics by ending the analysis of a path once it
+hits a call to an assertion handler.</p>
+<p>The trick, however, is that the analyzer needs to know that a called function
+is an assertion handler; otherwise the analyzer might assume the function call
+returns and it will continue analyzing the path where the assertion condition
+failed. This can lead to false positives, as the assertion condition usually
+implies a safety condition (e.g., a pointer is not null) prior to performing
+some action that depends on that condition (e.g., dereferencing a pointer).</p>
+<p>The analyzer knows about several well-known assertion handlers, but can
+automatically infer if a function should be treated as an assertion handler if
+it is annotated with the ‘noreturn’ attribute or the (Clang-specific)
+‘analyzer_noreturn’ attribute. Note that, currently, clang does not support
+these attributes on Objective-C methods and C++ methods.</p>
+<section id="attribute-noreturn">
+<h4><a class="toc-backref" href="#id6" role="doc-backlink"><span class="section-number">2.7.1.2.1. </span>Attribute ‘noreturn’</a><a class="headerlink" href="#attribute-noreturn" title="Link to this heading">¶</a></h4>
+<p>The ‘noreturn’ attribute is a GCC attribute that can be placed on the
+declarations of functions. It means exactly what its name implies: a function
+with a ‘noreturn’ attribute should never return.</p>
+<p>Specific details of the syntax of using the ‘noreturn’ attribute can be found
+in <a class="reference external" href="https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-noreturn-function-attribute">GCC’s documentation</a>.</p>
+<p>Not only does the analyzer exploit this information when pruning false paths,
+but the compiler also takes it seriously and will generate different code (and
+possibly better optimized) under the assumption that the function does not
+return.</p>
+<p><strong>Example</strong></p>
+<p>On Mac OS X, the function prototype for <code class="docutils literal notranslate"><span class="pre">__assert_rtn</span></code> (declared in
+<code class="docutils literal notranslate"><span class="pre">assert.h</span></code>) is specifically annotated with the ‘noreturn’ attribute:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">__assert_rtn</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">__noreturn__</span><span class="p">));</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-analyzer-noreturn-clang-specific">
+<h4><a class="toc-backref" href="#id7" role="doc-backlink"><span class="section-number">2.7.1.2.2. </span>Attribute ‘analyzer_noreturn’ (Clang-specific)</a><a class="headerlink" href="#attribute-analyzer-noreturn-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The Clang-specific ‘analyzer_noreturn’ attribute is almost identical to
+‘noreturn’ except that it is ignored by the compiler for the purposes of code
+generation.</p>
+<p>This attribute is useful for annotating assertion handlers that actually
+<em>can</em> return, but for the purpose of using the analyzer we want to
+pretend that such functions do not return.</p>
+<p>Because this attribute is Clang-specific, its use should be conditioned with
+the use of preprocessor macros.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#ifndef CLANG_ANALYZER_NORETURN</span>
+<span class="cp">#if __has_feature(attribute_analyzer_noreturn)</span>
+<span class="cp">#define CLANG_ANALYZER_NORETURN __attribute__((analyzer_noreturn))</span>
+<span class="cp">#else</span>
+<span class="cp">#define CLANG_ANALYZER_NORETURN</span>
+<span class="cp">#endif</span>
+<span class="cp">#endif</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">my_assert_rtn</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="n">CLANG_ANALYZER_NORETURN</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="dynamic-memory-modeling-annotations">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink"><span class="section-number">2.7.1.3. </span>Dynamic Memory Modeling Annotations</a><a class="headerlink" href="#dynamic-memory-modeling-annotations" title="Link to this heading">¶</a></h3>
+<p>If a project uses custom functions for dynamic memory management (that e.g. act as wrappers around <code class="docutils literal notranslate"><span class="pre">malloc</span></code>/<code class="docutils literal notranslate"><span class="pre">free</span></code> or <code class="docutils literal notranslate"><span class="pre">new</span></code>/<code class="docutils literal notranslate"><span class="pre">delete</span></code> in C++) and the analyzer cannot “see” the _definitions_ of these functions, it’s possible to annotate their declarations to let the analyzer model their behavior. (Otherwise the analyzer cannot know that the opaque <code class="docutils literal notranslate"><span class="pre">my_free()</span></code> is basically equivalent to a standard <code class="docutils literal notranslate"><span class="pre">free()</span></code> call.)</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>This page only provides a brief list of these annotations.</strong> For a full documentation, see the main <a class="reference external" href="../../AttributeReference.html#ownership-holds-ownership-returns-ownership-takes-clang-static-analyzer">Attributes in Clang</a> page.</p>
+</div>
+<section id="attribute-ownership-returns-clang-specific">
+<h4><a class="toc-backref" href="#id9" role="doc-backlink"><span class="section-number">2.7.1.3.1. </span>Attribute ‘ownership_returns’ (Clang-specific)</a><a class="headerlink" href="#attribute-ownership-returns-clang-specific" title="Link to this heading">¶</a></h4>
+<p>Use this attribute to mark functions that return dynamically allocated memory. Takes a single argument, the type of the allocation (e.g. <code class="docutils literal notranslate"><span class="pre">malloc</span></code> or <code class="docutils literal notranslate"><span class="pre">new</span></code>).</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">__attribute</span><span class="p">((</span><span class="n">ownership_returns</span><span class="p">(</span><span class="n">malloc</span><span class="p">)))</span><span class="w"> </span><span class="o">*</span><span class="n">my_malloc</span><span class="p">(</span><span class="kt">size_t</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-ownership-takes-clang-specific">
+<h4><a class="toc-backref" href="#id10" role="doc-backlink"><span class="section-number">2.7.1.3.2. </span>Attribute ‘ownership_takes’ (Clang-specific)</a><a class="headerlink" href="#attribute-ownership-takes-clang-specific" title="Link to this heading">¶</a></h4>
+<p>Use this attribute to mark functions that deallocate memory. Takes two arguments: the type of the allocation (e.g. <code class="docutils literal notranslate"><span class="pre">malloc</span></code> or <code class="docutils literal notranslate"><span class="pre">new</span></code>) and the index of the parameter that is being deallocated (counting from 1).</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">__attribute</span><span class="p">((</span><span class="n">ownership_takes</span><span class="p">(</span><span class="n">malloc</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)))</span><span class="w"> </span><span class="n">my_free</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-ownership-holds-clang-specific">
+<h4><a class="toc-backref" href="#id11" role="doc-backlink"><span class="section-number">2.7.1.3.3. </span>Attribute ‘ownership_holds’ (Clang-specific)</a><a class="headerlink" href="#attribute-ownership-holds-clang-specific" title="Link to this heading">¶</a></h4>
+<p>Use this attribute to mark functions that take ownership of memory and will deallocate it at some unspecified point in the future. Takes two arguments: the type of the allocation (e.g. <code class="docutils literal notranslate"><span class="pre">malloc</span></code> or <code class="docutils literal notranslate"><span class="pre">new</span></code>) and the index of the parameter that is being held (counting from 1).</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">__attribute</span><span class="p">((</span><span class="n">ownership_holds</span><span class="p">(</span><span class="n">malloc</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)))</span><span class="w"> </span><span class="n">store_in_table</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="n">record_t</span><span class="w"> </span><span class="o">*</span><span class="n">val</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The annotations <code class="docutils literal notranslate"><span class="pre">ownership_takes</span></code> and <code class="docutils literal notranslate"><span class="pre">ownership_holds</span></code> both prevent memory leak reports (concerning the specified argument); the difference between them is that using taken memory is a use-after-free error, while using held memory is assumed to be legitimate.</p>
+</section>
+</section>
+</section>
+<section id="mac-os-x-api-annotations">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink"><span class="section-number">2.7.2. </span>Mac OS X API Annotations</a><a class="headerlink" href="#mac-os-x-api-annotations" title="Link to this heading">¶</a></h2>
+<section id="cocoa-core-foundation-memory-management-annotations">
+<span id="cocoa-mem"></span><h3><a class="toc-backref" href="#id13" role="doc-backlink"><span class="section-number">2.7.2.1. </span>Cocoa &amp; Core Foundation Memory Management Annotations</a><a class="headerlink" href="#cocoa-core-foundation-memory-management-annotations" title="Link to this heading">¶</a></h3>
+<p>The analyzer supports the proper management of retain counts for
+both Cocoa and Core Foundation objects. This checking is largely based on
+enforcing Cocoa and Core Foundation naming conventions for Objective-C methods
+(Cocoa) and C functions (Core Foundation). Not strictly following these
+conventions can cause the analyzer to miss bugs or flag false positives.</p>
+<p>One can educate the analyzer (and others who read your code) about methods or
+functions that deviate from the Cocoa and Core Foundation conventions using the
+attributes described here. However, you should consider using proper naming
+conventions or the <a class="reference external" href="https://clang.llvm.org/docs/LanguageExtensions.html#the-objc-method-family-attribute">objc_method_family</a>
+attribute, if applicable.</p>
+<section id="attribute-ns-returns-retained-clang-specific">
+<span id="ns-returns-retained"></span><h4><a class="toc-backref" href="#id14" role="doc-backlink"><span class="section-number">2.7.2.1.1. </span>Attribute ‘ns_returns_retained’ (Clang-specific)</a><a class="headerlink" href="#attribute-ns-returns-retained-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The GCC-style (Clang-specific) attribute ‘ns_returns_retained’ allows one to
+annotate an Objective-C method or C function as returning a retained Cocoa
+object that the caller is responsible for releasing (via sending a
+<code class="docutils literal notranslate"><span class="pre">release</span></code> message to the object). The Foundation framework defines a
+macro <code class="docutils literal notranslate"><span class="pre">NS_RETURNS_RETAINED</span></code> that is functionally equivalent to the
+one shown below.</p>
+<p><strong>Placing on Objective-C methods</strong>: For Objective-C methods, this
+annotation essentially tells the analyzer to treat the method as if its name
+begins with “alloc” or “new” or contains the word
+“copy”.</p>
+<p><strong>Placing on C functions</strong>: For C functions returning Cocoa objects, the
+analyzer typically does not make any assumptions about whether or not the object
+is returned retained. Explicitly adding the ‘ns_returns_retained’ attribute to C
+functions allows the analyzer to perform extra checking.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-objc notranslate"><div class="highlight"><pre><span></span><span class="cp">#import &lt;Foundation/Foundation.h&gt;;</span>
+
+<span class="cp">#ifndef __has_feature      </span><span class="c1">// Optional.</span>
+<span class="cp">#define __has_feature(x) 0 </span><span class="c1">// Compatibility with non-clang compilers.</span>
+<span class="cp">#endif</span>
+
+<span class="cp">#ifndef NS_RETURNS_RETAINED</span>
+<span class="cp">#if __has_feature(attribute_ns_returns_retained)</span>
+<span class="cp">#define NS_RETURNS_RETAINED __attribute__((ns_returns_retained))</span>
+<span class="cp">#else</span>
+<span class="cp">#define NS_RETURNS_RETAINED</span>
+<span class="cp">#endif</span>
+<span class="cp">#endif</span>
+
+<span class="k">@interface</span> <span class="bp">MyClass</span> : <span class="bp">NSObject</span> <span class="p">{}</span>
+<span class="p">-</span> <span class="p">(</span><span class="bp">NSString</span><span class="o">*</span><span class="p">)</span> <span class="nf">returnsRetained</span><span class="w"> </span><span class="n">NS_RETURNS_RETAINED</span><span class="p">;</span>
+<span class="p">-</span> <span class="p">(</span><span class="bp">NSString</span><span class="o">*</span><span class="p">)</span> <span class="nf">alsoReturnsRetained</span><span class="p">;</span>
+<span class="k">@end</span>
+
+<span class="k">@implementation</span> <span class="bp">MyClass</span>
+<span class="p">-</span> <span class="p">(</span><span class="bp">NSString</span><span class="o">*</span><span class="p">)</span> <span class="nf">returnsRetained</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">[[</span><span class="bp">NSString</span><span class="w"> </span><span class="n">alloc</span><span class="p">]</span><span class="w"> </span><span class="n">initWithCString</span><span class="o">:</span><span class="s">&quot;no leak here&quot;</span><span class="p">];</span>
+<span class="p">}</span>
+<span class="p">-</span> <span class="p">(</span><span class="bp">NSString</span><span class="o">*</span><span class="p">)</span> <span class="nf">alsoReturnsRetained</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">[[</span><span class="bp">NSString</span><span class="w"> </span><span class="n">alloc</span><span class="p">]</span><span class="w"> </span><span class="n">initWithCString</span><span class="o">:</span><span class="s">&quot;flag a leak&quot;</span><span class="p">];</span>
+<span class="p">}</span>
+<span class="k">@end</span>
+</pre></div>
+</div>
+<p>Running <code class="docutils literal notranslate"><span class="pre">scan-build</span></code> on this source file produces the following output:</p>
+<img alt="../../_images/example_ns_returns_retained.png" src="../../_images/example_ns_returns_retained.png" />
+</section>
+<section id="attribute-ns-returns-not-retained-clang-specific">
+<span id="ns-returns-not-retained"></span><h4><a class="toc-backref" href="#id15" role="doc-backlink"><span class="section-number">2.7.2.1.2. </span>Attribute ‘ns_returns_not_retained’ (Clang-specific)</a><a class="headerlink" href="#attribute-ns-returns-not-retained-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The ‘ns_returns_not_retained’ attribute is the complement of
+‘<a class="reference internal" href="#ns-returns-retained">ns_returns_retained</a>’. Where a function or method may appear to obey the
+Cocoa conventions and return a retained Cocoa object, this attribute can be
+used to indicate that the object reference returned should not be considered as
+an “owning” reference being returned to the caller. The Foundation
+framework defines a macro <code class="docutils literal notranslate"><span class="pre">NS_RETURNS_NOT_RETAINED</span></code> that is functionally
+equivalent to the one shown below.</p>
+<p>Usage is identical to <a class="reference internal" href="#ns-returns-retained">ns_returns_retained</a>.  When using the
+attribute, be sure to declare it within the proper macro that checks for
+its availability, as it is not available in earlier versions of the analyzer:</p>
+</section>
+<section id="attribute-cf-returns-retained-clang-specific">
+<span id="cf-returns-retained"></span><h4><a class="toc-backref" href="#id16" role="doc-backlink"><span class="section-number">2.7.2.1.3. </span>Attribute ‘cf_returns_retained’ (Clang-specific)</a><a class="headerlink" href="#attribute-cf-returns-retained-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The GCC-style (Clang-specific) attribute ‘cf_returns_retained’ allows one to
+annotate an Objective-C method or C function as returning a retained Core
+Foundation object that the caller is responsible for releasing. The
+CoreFoundation framework defines a macro <code class="docutils literal notranslate"><span class="pre">CF_RETURNS_RETAINED</span></code> that is
+functionally equivalent to the one shown below.</p>
+<p><strong>Placing on Objective-C methods</strong>: With respect to Objective-C methods.,
+this attribute is identical in its behavior and usage to ‘ns_returns_retained’
+except for the distinction of returning a Core Foundation object instead of a
+Cocoa object.</p>
+<p>This distinction is important for the following reason: as Core Foundation is a
+C API, the analyzer cannot always tell that a pointer return value refers to a
+Core Foundation object. In contrast, it is trivial for the analyzer to
+recognize if a pointer refers to a Cocoa object (given the Objective-C type
+system).</p>
+<p><strong>Placing on C functions</strong>: When placing the attribute
+‘cf_returns_retained’ on the declarations of C functions, the analyzer
+interprets the function as:</p>
+<ol class="arabic simple">
+<li><p>Returning a Core Foundation Object</p></li>
+<li><p>Treating the function as if it its name contained the keywords
+“create” or “copy”. This means the returned object as a
++1 retain count that must be released by the caller, either by sending a
+<code class="docutils literal notranslate"><span class="pre">release</span></code> message (via toll-free bridging to an Objective-C object
+pointer), or calling <code class="docutils literal notranslate"><span class="pre">CFRelease</span></code> or a similar function.</p></li>
+</ol>
+<p><strong>Example</strong></p>
+<p>Running <code class="docutils literal notranslate"><span class="pre">scan-build</span></code> on this example produces the following output:</p>
+<img alt="../../_images/example_cf_returns_retained.png" src="../../_images/example_cf_returns_retained.png" />
+</section>
+<section id="attribute-cf-returns-not-retained-clang-specific">
+<h4><a class="toc-backref" href="#id17" role="doc-backlink"><span class="section-number">2.7.2.1.4. </span>Attribute ‘cf_returns_not_retained’ (Clang-specific)</a><a class="headerlink" href="#attribute-cf-returns-not-retained-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The ‘cf_returns_not_retained’ attribute is the complement of
+‘<a class="reference internal" href="#cf-returns-retained">cf_returns_retained</a>’. Where a function or method may appear to obey the
+Core Foundation or Cocoa conventions and return a retained Core Foundation
+object, this attribute can be used to indicate that the object reference
+returned should not be considered as an “owning” reference being
+returned to the caller. The CoreFoundation framework defines a macro
+<strong>``CF_RETURNS_NOT_RETAINED``</strong> that is functionally equivalent to the one
+shown below.</p>
+<p>Usage is identical to <a class="reference internal" href="#cf-returns-retained">cf_returns_retained</a>. When using the attribute, be sure
+to declare it within the proper macro that checks for its availability, as it
+is not available in earlier versions of the analyzer:</p>
+</section>
+<section id="attribute-ns-consumed-clang-specific">
+<span id="ns-consumed"></span><h4><a class="toc-backref" href="#id18" role="doc-backlink"><span class="section-number">2.7.2.1.5. </span>Attribute ‘ns_consumed’ (Clang-specific)</a><a class="headerlink" href="#attribute-ns-consumed-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The ‘ns_consumed’ attribute can be placed on a specific parameter in either
+the declaration of a function or an Objective-C method. It indicates to the
+static analyzer that a <code class="docutils literal notranslate"><span class="pre">release</span></code> message is implicitly sent to the
+parameter upon completion of the call to the given function or method. The
+Foundation framework defines a macro <code class="docutils literal notranslate"><span class="pre">NS_RELEASES_ARGUMENT</span></code> that
+is functionally equivalent to the <code class="docutils literal notranslate"><span class="pre">NS_CONSUMED</span></code> macro shown below.</p>
+<p><strong>Example</strong></p>
+</section>
+<section id="attribute-cf-consumed-clang-specific">
+<h4><a class="toc-backref" href="#id19" role="doc-backlink"><span class="section-number">2.7.2.1.6. </span>Attribute ‘cf_consumed’ (Clang-specific)</a><a class="headerlink" href="#attribute-cf-consumed-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The ‘cf_consumed’ attribute is practically identical to <a class="reference internal" href="#ns-consumed">ns_consumed</a>. The
+attribute can be placed on a specific parameter in either the declaration of a
+function or an Objective-C method. It indicates to the static analyzer that the
+object reference is implicitly passed to a call to <code class="docutils literal notranslate"><span class="pre">CFRelease</span></code> upon
+completion of the call to the given function or method. The CoreFoundation
+framework defines a macro <code class="docutils literal notranslate"><span class="pre">CF_RELEASES_ARGUMENT</span></code> that is functionally
+equivalent to the <code class="docutils literal notranslate"><span class="pre">CF_CONSUMED</span></code> macro shown below.</p>
+<p>Operationally this attribute is nearly identical to ‘ns_consumed’.</p>
+<p><strong>Example</strong></p>
+</section>
+<section id="attribute-ns-consumes-self-clang-specific">
+<span id="ns-consumes-self"></span><h4><a class="toc-backref" href="#id20" role="doc-backlink"><span class="section-number">2.7.2.1.7. </span>Attribute ‘ns_consumes_self’ (Clang-specific)</a><a class="headerlink" href="#attribute-ns-consumes-self-clang-specific" title="Link to this heading">¶</a></h4>
+<p>The ‘ns_consumes_self’ attribute can be placed only on an Objective-C method
+declaration. It indicates that the receiver of the message is
+“consumed” (a single reference count decremented) after the message
+is sent. This matches the semantics of all “init” methods.</p>
+<p>One use of this attribute is declare your own init-like methods that do not
+follow the standard Cocoa naming conventions.</p>
+<p><strong>Example</strong></p>
+<p>In this example, <code class="docutils literal notranslate"><span class="pre">-nonstandardInitWith:</span></code> has the same ownership
+semantics as the init method <code class="docutils literal notranslate"><span class="pre">-initWith:</span></code>. The static analyzer will
+observe that the method consumes the receiver, and then returns an object with
+a +1 retain count.</p>
+<p>The Foundation framework defines a macro <code class="docutils literal notranslate"><span class="pre">NS_REPLACES_RECEIVER</span></code> which is
+functionally equivalent to the combination of <code class="docutils literal notranslate"><span class="pre">NS_CONSUMES_SELF</span></code> and
+<code class="docutils literal notranslate"><span class="pre">NS_RETURNS_RETAINED</span></code> shown above.</p>
+</section>
+</section>
+<section id="libkern-memory-management-annotations">
+<h3><a class="toc-backref" href="#id21" role="doc-backlink"><span class="section-number">2.7.2.2. </span>Libkern Memory Management Annotations</a><a class="headerlink" href="#libkern-memory-management-annotations" title="Link to this heading">¶</a></h3>
+<p><a class="reference external" href="https://developer.apple.com/documentation/kernel/osobject?language=objc">Libkern</a>
+requires developers to inherit all heap allocated objects from <code class="docutils literal notranslate"><span class="pre">OSObject</span></code> and
+to perform manual reference counting. The reference counting model is very
+similar to MRR (manual retain-release) mode in
+<a class="reference external" href="https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/MemoryMgmt/Articles/mmRules.html">Objective-C</a>
+or to CoreFoundation reference counting.
+Freshly-allocated objects start with a reference count of 1, and calls to
+<code class="docutils literal notranslate"><span class="pre">retain</span></code> increment it, while calls to <code class="docutils literal notranslate"><span class="pre">release</span></code> decrement it. The object is
+deallocated whenever its reference count reaches zero.</p>
+<p>Manually incrementing and decrementing reference counts is error-prone:
+over-retains lead to leaks, and over-releases lead to uses-after-free.
+The analyzer can help the programmer to check for unbalanced
+retain/release calls.</p>
+<p>The reference count checking is based on the principle of <em>locality</em>: it should
+be possible to establish correctness (lack of leaks/uses after free) by looking
+at each function body, and the declarations (not the definitions) of all the
+functions it interacts with.</p>
+<p>In order to support such reasoning, it should be possible to <em>summarize</em> the
+behavior of each function, with respect to reference count of its returned
+values and attributes.</p>
+<p>By default, the following summaries are assumed:</p>
+<ul class="simple">
+<li><p>All functions starting with <code class="docutils literal notranslate"><span class="pre">get</span></code> or <code class="docutils literal notranslate"><span class="pre">Get</span></code>, unless they are returning
+subclasses of <code class="docutils literal notranslate"><span class="pre">OSIterator</span></code>, are assumed to be returning at +0. That is, the
+caller has no reference count <em>obligations</em> with respect to the reference
+count of the returned object and should leave it untouched.</p></li>
+<li><p>All other functions are assumed to return at +1. That is, the caller has an
+<em>obligation</em> to release such objects.</p></li>
+<li><p>Functions are assumed not to change the reference count of their parameters,
+including the implicit <code class="docutils literal notranslate"><span class="pre">this</span></code> parameter.</p></li>
+</ul>
+<p>These summaries can be overriden with the following
+<a class="reference external" href="https://clang.llvm.org/docs/AttributeReference.html#os-returns-not-retained">attributes</a>:</p>
+<section id="attribute-os-returns-retained">
+<h4><a class="toc-backref" href="#id22" role="doc-backlink"><span class="section-number">2.7.2.2.1. </span>Attribute ‘os_returns_retained’</a><a class="headerlink" href="#attribute-os-returns-retained" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">os_returns_retained</span></code> attribute (accessed through the macro
+<code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_RETAINED</span></code>) plays a role identical to <a class="reference internal" href="#ns-returns-retained">ns_returns_retained</a>
+for functions returning <code class="docutils literal notranslate"><span class="pre">OSObject</span></code> subclasses. The attribute indicates that
+it is a callers responsibility to release the returned object.</p>
+</section>
+<section id="attribute-os-returns-not-retained">
+<h4><a class="toc-backref" href="#id23" role="doc-backlink"><span class="section-number">2.7.2.2.2. </span>Attribute ‘os_returns_not_retained’</a><a class="headerlink" href="#attribute-os-returns-not-retained" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">os_returns_not_retained</span></code> attribute (accessed through the macro
+<code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_NOT_RETAINED</span></code>) plays a role identical to
+<a class="reference internal" href="#ns-returns-not-retained">ns_returns_not_retained</a> for functions returning <code class="docutils literal notranslate"><span class="pre">OSObject</span></code> subclasses. The
+attribute indicates that the caller should not change the retain count of the
+returned object.</p>
+<p><strong>Example</strong></p>
+</section>
+<section id="attribute-os-consumed">
+<h4><a class="toc-backref" href="#id24" role="doc-backlink"><span class="section-number">2.7.2.2.3. </span>Attribute ‘os_consumed’</a><a class="headerlink" href="#attribute-os-consumed" title="Link to this heading">¶</a></h4>
+<p>Similarly to <a class="reference internal" href="#ns-consumed">ns_consumed</a> attribute, <code class="docutils literal notranslate"><span class="pre">os_consumed</span></code> (accessed through
+<code class="docutils literal notranslate"><span class="pre">LIBKERN_CONSUMED</span></code>) attribute, applied to a parameter, indicates that the
+call to the function <em>consumes</em> the parameter: the callee should either release
+it or store it and release it in the destructor, while the caller should assume
+one is subtracted from the reference count after the call.</p>
+</section>
+<section id="attribute-os-consumes-this">
+<h4><a class="toc-backref" href="#id25" role="doc-backlink"><span class="section-number">2.7.2.2.4. </span>Attribute ‘os_consumes_this’</a><a class="headerlink" href="#attribute-os-consumes-this" title="Link to this heading">¶</a></h4>
+<p>Similarly to <a class="reference internal" href="#ns-consumes-self">ns_consumes_self</a>, the <code class="docutils literal notranslate"><span class="pre">os_consumes_self</span></code> attribute indicates
+that the method call <em>consumes</em> the implicit <code class="docutils literal notranslate"><span class="pre">this</span></code> argument: the caller
+should assume one was subtracted from the reference count of the object after
+the call, and the callee has on obligation to either release the argument, or
+store it and eventually release it in the destructor.</p>
+</section>
+<section id="out-parameters">
+<h4><a class="toc-backref" href="#id26" role="doc-backlink"><span class="section-number">2.7.2.2.5. </span>Out Parameters</a><a class="headerlink" href="#out-parameters" title="Link to this heading">¶</a></h4>
+<p>A function can also return an object to a caller by a means of an out parameter
+(a pointer-to-OSObject-pointer is passed, and a callee writes a pointer to an
+object into an argument). Currently the analyzer does not track unannotated out
+parameters by default, but with annotations we distinguish four separate cases:</p>
+<p><strong>1. Non-retained out parameters</strong>, identified using
+<code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_NOT_RETAINED</span></code> applied to parameters, e.g.:</p>
+<p>Such functions write a non-retained object into an out parameter, and the
+caller has no further obligations.</p>
+<p><strong>2. Retained out parameters</strong>, identified using <code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_RETAINED</span></code>:</p>
+<p>In such cases a retained object is written into an out parameter, which the caller has then to release in order to avoid a leak.</p>
+<p>These two cases are simple - but in practice a functions returning an
+out-parameter usually also return a return code, and then an out parameter may
+or may not be written, which conditionally depends on the exit code, e.g.:</p>
+<p>For such functions, the usual semantics is that an object is written into on “success”, and not written into on “failure”.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_RETAINED</span></code> we assume the following definition of
+success:</p>
+<ul class="simple">
+<li><p>For functions returning <code class="docutils literal notranslate"><span class="pre">OSReturn</span></code> or <code class="docutils literal notranslate"><span class="pre">IOReturn</span></code> (any typedef to
+<code class="docutils literal notranslate"><span class="pre">kern_return_t</span></code>) success is defined as having an output of zero
+(<code class="docutils literal notranslate"><span class="pre">kIOReturnSuccess</span></code> is zero).</p></li>
+<li><p>For all others, success is non-zero (e.g. non-nullptr for pointers)</p></li>
+</ul>
+<p><strong>3. Retained out parameters on zero return</strong> The annotation
+<code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_RETAINED_ON_ZERO</span></code> states that a retained object is written
+into if and only if the function returns a zero value:</p>
+<p>Then the caller has to release an object if the function has returned zero.</p>
+<p><strong>4. Retained out parameters on non-zero return</strong> Similarly,
+<code class="docutils literal notranslate"><span class="pre">LIBKERN_RETURNS_RETAINED_ON_NONZERO</span></code> specifies that a retained object is
+written into the parameter if and only if the function has returned a non-zero
+value.</p>
+<p>Note that for non-retained out parameters conditionals do not matter, as the
+caller has no obligations regardless of whether an object is written into or
+not.</p>
+</section>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="TaintAnalysisConfiguration.html"><span class="section-number">2.6. </span>Taint Analysis Configuration</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="FAQ.html"><span class="section-number">2.8. </span>FAQ and How to Deal with Common False Positives</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
