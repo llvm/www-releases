@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - cppcoreguidelines-avoid-capturing-lambda-coroutines &#8212; Extra Clang Tools 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=106f770c"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="cppcoreguidelines-avoid-const-or-ref-data-members" href="avoid-const-or-ref-data-members.html" />
+    <link rel="prev" title="cppcoreguidelines-avoid-c-arrays" href="avoid-c-arrays.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 22.1.0-rc2 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - cppcoreguidelines-avoid-capturing-lambda-coroutines</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="avoid-c-arrays.html">cppcoreguidelines-avoid-c-arrays</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="avoid-const-or-ref-data-members.html">cppcoreguidelines-avoid-const-or-ref-data-members</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="cppcoreguidelines-avoid-capturing-lambda-coroutines">
+<h1>cppcoreguidelines-avoid-capturing-lambda-coroutines<a class="headerlink" href="#cppcoreguidelines-avoid-capturing-lambda-coroutines" title="Link to this heading">¶</a></h1>
+<p>Flags C++20 coroutine lambdas with non-empty capture lists that may cause
+use-after-free errors and suggests avoiding captures or ensuring the lambda
+closure object has a guaranteed lifetime.</p>
+<p>This check implements <a class="reference external" href="https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#rcoro-capture">CP.51</a>
+from the C++ Core Guidelines.</p>
+<p>Using coroutine lambdas with non-empty capture lists can be risky, as capturing
+variables can lead to accessing freed memory after the first suspension point.
+This issue can occur even with refcounted smart pointers and copyable types.
+When a lambda expression creates a coroutine, it results in a closure object
+with storage, which is often on the stack and will eventually go out of scope.
+When the closure object goes out of scope, its captures also go out of scope.
+While normal lambdas finish executing before this happens, coroutine lambdas
+may resume from suspension after the closure object has been destructed,
+resulting in use-after-free memory access for all captures.</p>
+<p>Consider the following example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_value</span><span class="p">();</span>
+<span class="n">std</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">Foo</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sharedFoo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_foo</span><span class="p">();</span>
+<span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">lambda</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="n">value</span><span class="p">,</span><span class="w"> </span><span class="n">sharedFoo</span><span class="p">]()</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">future</span><span class="o">&lt;</span><span class="kt">void</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">        </span><span class="k">co_await</span><span class="w"> </span><span class="n">something</span><span class="p">();</span>
+<span class="w">        </span><span class="c1">// &quot;sharedFoo&quot; and &quot;value&quot; have already been destroyed</span>
+<span class="w">        </span><span class="c1">// the &quot;shared&quot; pointer didn&#39;t accomplish anything</span>
+<span class="w">    </span><span class="p">};</span>
+<span class="w">    </span><span class="n">lambda</span><span class="p">();</span>
+<span class="p">}</span><span class="w"> </span><span class="c1">// the lambda closure object has now gone out of scope</span>
+</pre></div>
+</div>
+<p>In this example, the lambda object is defined with two captures: value and
+<code class="docutils literal notranslate"><span class="pre">sharedFoo</span></code>. When <code class="docutils literal notranslate"><span class="pre">lambda()</span></code> is called, the lambda object is created on the
+stack, and the captures are copied into the closure object. When the coroutine
+is suspended, the lambda object goes out of scope, and the closure object is
+destroyed. When the coroutine is resumed, the captured variables may have been
+destroyed, resulting in use-after-free bugs.</p>
+<p>In conclusion, the use of coroutine lambdas with non-empty capture lists can
+lead to use-after-free errors when resuming the coroutine after the closure
+object has been destroyed. This check helps prevent such errors by flagging
+C++20 coroutine lambdas with non-empty capture lists and suggesting avoiding
+captures or ensuring the lambda closure object has a guaranteed lifetime.</p>
+<p>Following these guidelines can help ensure the safe and reliable use of
+coroutine lambdas in C++ code.</p>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="avoid-c-arrays.html">cppcoreguidelines-avoid-c-arrays</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="avoid-const-or-ref-data-members.html">cppcoreguidelines-avoid-const-or-ref-data-members</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
