@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>clang-tidy - abseil-unchecked-statusor-access &#8212; Extra Clang Tools 22.1.0-rc3 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="../../../_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="../../../_static/documentation_options.js?v=b417f315"></script>
+    <script src="../../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="abseil-upgrade-duration-conversions" href="upgrade-duration-conversions.html" />
+    <link rel="prev" title="abseil-time-subtraction" href="time-subtraction.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../../index.html">
+          <span>Extra Clang Tools 22.1.0-rc3 documentation</span></a></h1>
+        <h2 class="heading"><span>clang-tidy - abseil-unchecked-statusor-access</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="time-subtraction.html">abseil-time-subtraction</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="upgrade-duration-conversions.html">abseil-upgrade-duration-conversions</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="abseil-unchecked-statusor-access">
+<h1>abseil-unchecked-statusor-access<a class="headerlink" href="#abseil-unchecked-statusor-access" title="Link to this heading">¶</a></h1>
+<p>This check identifies unsafe accesses to values contained in
+<code class="docutils literal notranslate"><span class="pre">absl::StatusOr&lt;T&gt;</span></code> objects. Below we will refer to this type as
+<code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code>.</p>
+<p>An access to the value of an <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> occurs when one of its
+<code class="docutils literal notranslate"><span class="pre">value</span></code>, <code class="docutils literal notranslate"><span class="pre">operator*</span></code>, or <code class="docutils literal notranslate"><span class="pre">operator-&gt;</span></code> member functions is invoked.
+To align with common misconceptions, the check considers these member
+functions as equivalent, even though there are subtle differences
+related to exceptions vs. undefined behavior.</p>
+<p>An access to the value of a <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> is considered safe if and
+only if code in the local scope (e.g. function body) ensures that the
+status of the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> is ok in all possible execution paths that
+can reach the access. That should happen either through an explicit
+check, using the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;::ok</span></code> member function, or by constructing
+the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> in a way that shows that its status is unambiguously
+ok (e.g. by passing a value to its constructor).</p>
+<p>Below we list some examples of safe and unsafe <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> access
+patterns.</p>
+<p>Note: If the check isn’t behaving as you would have expected on a code
+snippet, please <a class="reference external" href="http://github.com/llvm/llvm-project/issues/new">report it</a>.</p>
+<section id="false-negatives">
+<h2>False negatives<a class="headerlink" href="#false-negatives" title="Link to this heading">¶</a></h2>
+<p>This check generally does <strong>not</strong> generate false negatives. That means that if
+an access is not marked as unsafe, it is provably safe. If it cannot prove an
+access safe, it is assumed to be unsafe. In some cases, the static analysis
+cannot prove an access safe even though it is, for a variety of reasons (e.g.
+unmodelled invariants of functions called). In these cases, the analysis does
+produce false positive reports.</p>
+<p>That being said, there are some heuristics used that in very rare cases might
+be incorrect:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="#functionstability">a const method accessor (without arguments) that returns different
+values when called multiple times</a>.</p></li>
+</ul>
+<p>If you think the check generated a false negative, please <a class="reference external" href="http://github.com/llvm/llvm-project/issues/new">report
+it</a>.</p>
+</section>
+<section id="known-limitations">
+<h2>Known limitations<a class="headerlink" href="#known-limitations" title="Link to this heading">¶</a></h2>
+<p>This is a non-exhaustive list of constructs that are currently not
+modelled in the check and will lead to false positives:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="#lambdas">Checking a StatusOr and then capturing it in a lambda</a></p></li>
+<li><p><a class="reference external" href="#containers">Indexing into a container with the same index</a></p></li>
+<li><p><a class="reference external" href="#uncommonapi">Project specific helper-functions</a>,</p></li>
+<li><p><a class="reference external" href="#functionstability">Functions with a stable return value</a></p></li>
+<li><p><strong>Any</strong> <a class="reference external" href="#crossfunction">cross-function reasoning</a>. This is by
+design and will not change in the future.</p></li>
+</ul>
+</section>
+<section id="checking-if-the-status-is-ok-then-accessing-the-value">
+<h2>Checking if the status is ok, then accessing the value<a class="headerlink" href="#checking-if-the-status-is-ok-then-accessing-the-value" title="Link to this heading">¶</a></h2>
+<p>The check recognizes all straightforward ways for checking the status
+and accessing the value contained in a <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> object. For
+example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="checking-if-the-status-is-ok-then-accessing-the-value-from-a-copy">
+<h2>Checking if the status is ok, then accessing the value from a copy<a class="headerlink" href="#checking-if-the-status-is-ok-then-accessing-the-value-from-a-copy" title="Link to this heading">¶</a></h2>
+<p>The criteria that the check uses is semantic, not syntactic. It
+recognizes when a copy of the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> object being accessed is
+known to have ok status. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor1</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">absl</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sor1</span><span class="p">;</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor2</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="ensuring-that-the-status-is-ok-using-common-macros">
+<h2>Ensuring that the status is ok using common macros<a class="headerlink" href="#ensuring-that-the-status-is-ok-using-common-macros" title="Link to this heading">¶</a></h2>
+<p>The check is aware of common macros like <code class="docutils literal notranslate"><span class="pre">ABSL_CHECK</span></code> and <code class="docutils literal notranslate"><span class="pre">ASSERT_THAT</span></code>.
+Those can be used to ensure that the status of a <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> object
+is ok. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">ABSL_DCHECK_OK</span><span class="p">(</span><span class="n">sor</span><span class="p">);</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="ensuring-that-the-status-is-ok-then-accessing-the-value-in-a-correlated-branch">
+<h2>Ensuring that the status is ok, then accessing the value in a correlated branch<a class="headerlink" href="#ensuring-that-the-status-is-ok-then-accessing-the-value-in-a-correlated-branch" title="Link to this heading">¶</a></h2>
+<p>The check is aware of correlated branches in the code and can figure out
+when a <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> object is ensured to have ok status on all
+execution paths that lead to an access. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">bool</span><span class="w"> </span><span class="n">safe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">false</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">()</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">SomeOtherCondition</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">safe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c1">// ... more code...</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">safe</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="accessing-the-value-without-checking-the-status">
+<h2>Accessing the value without checking the status<a class="headerlink" href="#accessing-the-value-without-checking-the-status" title="Link to this heading">¶</a></h2>
+<p>The check flags accesses to the value that are not locally guarded by a
+status check:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f1</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sor` is ok.</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f2</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="n">MyStruct</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">sor</span><span class="o">-&gt;</span><span class="n">member</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sor` is ok.</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f3</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">value</span><span class="p">());</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sor` is ok.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Use <code class="docutils literal notranslate"><span class="pre">ABSL_CHECK_OK</span></code> to signal that you knowingly want to crash on
+non-OK values.</p>
+<p>NOTE: Even though using <code class="docutils literal notranslate"><span class="pre">.value()</span></code>  on a non-<code class="docutils literal notranslate"><span class="pre">ok()</span></code> <code class="docutils literal notranslate"><span class="pre">StatusOr</span></code> is defined
+to crash, it is often unintentional. That is why our checker flags those as
+well.</p>
+</section>
+<section id="accessing-the-value-in-the-wrong-branch">
+<h2>Accessing the value in the wrong branch<a class="headerlink" href="#accessing-the-value-in-the-wrong-branch" title="Link to this heading">¶</a></h2>
+<p>The check is aware of the state of a <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> object in different
+branches of the code. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is clear that the status of `sor` is *not* ok.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="assuming-a-function-result-to-be-stable">
+<span id="functionstability"></span><h2>Assuming a function result to be stable<a class="headerlink" href="#assuming-a-function-result-to-be-stable" title="Link to this heading">¶</a></h2>
+<p>The check is aware that function results might not be stable. That is,
+consecutive calls to the same function might return different values.
+For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">foo</span><span class="p">.</span><span class="n">sor</span><span class="p">().</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">.</span><span class="n">sor</span><span class="p">());</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `foo.sor()` is ok.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In such cases it is best to store the result of the function call in a
+local variable and use it to access the value. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">foo_sor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">foo</span><span class="p">.</span><span class="n">sor</span><span class="p">();</span><span class="w"> </span><span class="n">foo_sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo_sor</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The check <strong>does</strong> assume that <code class="docutils literal notranslate"><span class="pre">const</span></code>-qualified accessor functions
+return a stable value if no non-const function was called between the
+two calls:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">get</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="p">[...];</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">foo</span><span class="p">.</span><span class="n">get</span><span class="p">().</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If there is a call to a non-<code class="docutils literal notranslate"><span class="pre">const</span></code>-qualified function, the check
+assumes the return value of the accessor was mutated.</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">get</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="p">[...];</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="n">mutate</span><span class="p">();</span>
+<span class="p">}</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">foo</span><span class="p">.</span><span class="n">get</span><span class="p">().</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">foo</span><span class="p">.</span><span class="n">mutate</span><span class="p">();</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">.</span><span class="n">get</span><span class="p">());</span><span class="w"> </span><span class="c1">// unsafe: mutate might have changed the state of the object</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="relying-on-invariants-of-uncommon-apis">
+<span id="uncommonapi"></span><h2>Relying on invariants of uncommon APIs<a class="headerlink" href="#relying-on-invariants-of-uncommon-apis" title="Link to this heading">¶</a></h2>
+<p>The check is unaware of invariants of uncommon APIs. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">foo</span><span class="p">.</span><span class="n">HasProperty</span><span class="p">(</span><span class="s">&quot;bar&quot;</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">foo</span><span class="p">.</span><span class="n">GetProperty</span><span class="p">(</span><span class="s">&quot;bar&quot;</span><span class="p">));</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `foo.GetProperty(&quot;bar&quot;)` is ok.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In such cases it is best to check explicitly that the status of the
+<code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> object is ok. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">Foo</span><span class="w"> </span><span class="n">foo</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">property</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">foo</span><span class="p">.</span><span class="n">GetProperty</span><span class="p">(</span><span class="s">&quot;bar&quot;</span><span class="p">);</span><span class="w"> </span><span class="n">property</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">property</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="checking-if-the-status-is-ok-then-passing-the-statusor-t-to-another-function">
+<span id="crossfunction"></span><h2>Checking if the status is ok, then passing the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> to another function<a class="headerlink" href="#checking-if-the-status-is-ok-then-passing-the-statusor-t-to-another-function" title="Link to this heading">¶</a></h2>
+<p>The check relies on local reasoning. The check and value access must
+both happen in the same function. An access is considered unsafe even if
+the caller of the function performing the access ensures that the status
+of the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> is ok. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sor` is ok.</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">g</span><span class="p">(</span><span class="n">sor</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In such cases it is best to either pass the value directly when calling
+a function or check that the status of the <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> is ok in the
+local scope of the callee. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">val</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="n">val</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">g</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="aliases-created-via-using-declarations">
+<h2>Aliases created via <code class="docutils literal notranslate"><span class="pre">using</span></code> declarations<a class="headerlink" href="#aliases-created-via-using-declarations" title="Link to this heading">¶</a></h2>
+<p>The check is aware of aliases of <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> types that are created
+via <code class="docutils literal notranslate"><span class="pre">using</span></code> declarations. For example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="n">StatusOrInt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">StatusOrInt</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sor` is ok.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="containers">
+<h2>Containers<a class="headerlink" href="#containers" title="Link to this heading">¶</a></h2>
+<p>The check is more strict than necessary when it comes to containers of
+<code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> values. Simply checking that the status of an element of
+a container is ok is not sufficient to deem accessing it safe. For
+example:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">sors</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sors</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sors</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sors[0]` is ok.</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>One needs to grab a reference to a particular object and use that
+instead:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">vector</span><span class="o">&lt;</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="n">sors</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;&amp;</span><span class="w"> </span><span class="n">sor0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sors</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor0</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor0</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>A future version could improve the understanding of more safe usage
+patterns that involve containers.</p>
+</section>
+<section id="lambdas">
+<h2>Lambdas<a class="headerlink" href="#lambdas" title="Link to this heading">¶</a></h2>
+<p>The check is capable of reporting unsafe <code class="docutils literal notranslate"><span class="pre">StatusOr&lt;T&gt;</span></code> accesses in
+lambdas, but isn’t smart enough to propagate information from the
+surrounding context through the lambda. This means that the following
+pattern will be reported as an unsafe access:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="p">[</span><span class="o">&amp;</span><span class="n">sor</span><span class="p">]()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span><span class="w"> </span><span class="c1">// unsafe: it is unclear whether the status of `sor` is ok.</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>To avoid the issue, you should grab a reference to the contained object
+and capture that instead</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="o">&amp;</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="n">sor</span><span class="p">;</span>
+<span class="w">    </span><span class="p">[</span><span class="o">&amp;</span><span class="n">s</span><span class="p">]()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">use</span><span class="p">(</span><span class="n">s</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Alternatively you could add a check inside the lambda where the value is
+accessed:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">(</span><span class="n">absl</span><span class="o">::</span><span class="n">StatusOr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="n">sor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">[</span><span class="o">&amp;</span><span class="n">sor</span><span class="p">]()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">sor</span><span class="p">.</span><span class="n">ok</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">use</span><span class="p">(</span><span class="o">*</span><span class="n">sor</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="time-subtraction.html">abseil-time-subtraction</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="upgrade-duration-conversions.html">abseil-upgrade-duration-conversions</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
