@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>1. ClangIR ABI Lowering Design Document &#8212; Clang 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="2. ClangIR Cleanup and Exception Handling Design" href="CleanupAndEHDesign.html" />
+    <link rel="prev" title="ClangIR" href="index.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../index.html">
+          <span>Clang 23.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>1. ClangIR ABI Lowering Design Document</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="index.html">ClangIR</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="CleanupAndEHDesign.html"><span class="section-number">2. </span>ClangIR Cleanup and Exception Handling Design</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="clangir-abi-lowering-design-document">
+<h1><span class="section-number">1. </span>ClangIR ABI Lowering Design Document<a class="headerlink" href="#clangir-abi-lowering-design-document" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p>
+<ul>
+<li><p><a class="reference internal" href="#design-goals" id="id2">Design Goals</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#background-and-context" id="id3">Background and Context</a></p>
+<ul>
+<li><p><a class="reference internal" href="#what-is-calling-convention-lowering" id="id4">What is Calling Convention Lowering?</a></p></li>
+<li><p><a class="reference internal" href="#existing-implementations" id="id5">Existing Implementations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#classic-clang-codegen" id="id6">Classic Clang CodeGen</a></p></li>
+<li><p><a class="reference internal" href="#cir-incubator" id="id7">CIR Incubator</a></p></li>
+<li><p><a class="reference internal" href="#llvm-abi-lowering-library" id="id8">LLVM ABI Lowering Library</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#requirements-for-mlir-dialects" id="id9">Requirements for MLIR Dialects</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#proposed-solution" id="id10">Proposed Solution</a></p></li>
+<li><p><a class="reference internal" href="#design-overview" id="id11">Design Overview</a></p>
+<ul>
+<li><p><a class="reference internal" href="#architecture-diagram" id="id12">Architecture Diagram</a></p></li>
+<li><p><a class="reference internal" href="#abi-library-adapter-and-dialect-layers" id="id13">ABI Library, Adapter, and Dialect Layers</a></p></li>
+<li><p><a class="reference internal" href="#key-components" id="id14">Key Components</a></p></li>
+<li><p><a class="reference internal" href="#abi-lowering-flow-how-the-pieces-fit-together" id="id15">ABI Lowering Flow: How the Pieces Fit Together</a></p>
+<ul>
+<li><p><a class="reference internal" href="#step-1-function-signature-analysis" id="id16">Step 1: Function Signature Analysis</a></p></li>
+<li><p><a class="reference internal" href="#step-2-type-mapping-via-abitypemapper" id="id17">Step 2: Type Mapping via ABITypeMapper</a></p></li>
+<li><p><a class="reference internal" href="#step-3-abi-classification" id="id18">Step 3: ABI Classification</a></p></li>
+<li><p><a class="reference internal" href="#step-4-function-signature-rewriting" id="id19">Step 4: Function Signature Rewriting</a></p></li>
+<li><p><a class="reference internal" href="#step-5-argument-expansion" id="id20">Step 5: Argument Expansion</a></p></li>
+<li><p><a class="reference internal" href="#step-6-return-value-handling" id="id21">Step 6: Return Value Handling</a></p></li>
+<li><p><a class="reference internal" href="#complete-flow-diagram" id="id22">Complete Flow Diagram</a></p></li>
+<li><p><a class="reference internal" href="#key-interactions-between-components" id="id23">Key Interactions Between Components</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#abirewritecontext-and-target-registry" id="id24">ABIRewriteContext and Target Registry</a></p>
+<ul>
+<li><p><a class="reference internal" href="#abirewritecontext-interface" id="id25">ABIRewriteContext Interface</a></p></li>
+<li><p><a class="reference internal" href="#target-registry" id="id26">Target Registry</a></p></li>
+<li><p><a class="reference internal" href="#cir-pass-pipeline-position" id="id27">CIR Pass Pipeline Position</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#open-questions" id="id28">Open Questions</a></p>
+<ul>
+<li><p><a class="reference internal" href="#how-to-handle-clang-targetinfo-dependency-in-mlir" id="id29">How to Handle clang::TargetInfo Dependency in MLIR?</a></p></li>
+<li><p><a class="reference internal" href="#scope-c-calling-convention-vs-arbitrary-calling-conventions" id="id30">Scope: C Calling Convention vs.  Arbitrary Calling Conventions</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink"><span class="section-number">1.1. </span>Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>This design describes calling convention lowering that builds on the LLVM ABI
+Lowering Library in <code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code>: we use its <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> and target ABI
+logic and add an MLIR integration layer (ABITypeMapper, ABI lowering pass, and
+dialect rewriters).  The framework relies on the LLVM ABI library as the single
+source of truth for ABI classification.  MLIR dialects use it via an adapter
+layer.  The design provides a way to perform ABI-compliant calling convention
+lowering that can be used by any MLIR dialect that implements the necessary
+interfaces.  Inputs are high-level function signatures in CIR, FIR, or other
+MLIR dialect.  Outputs are ABI-lowered signatures and call sites.  Lowering
+runs as an MLIR pass in the compilation pipeline.</p>
+<section id="design-goals">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink"><span class="section-number">1.1.1. </span>Design Goals</a><a class="headerlink" href="#design-goals" title="Link to this heading">¶</a></h3>
+<p>Building on the LLVM ABI library and adding an MLIR integration layer avoids
+duplicating complex ABI logic across MLIR dialects, reduces maintenance, and
+keeps a single source of ABI compliance in <code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code>.  The separation
+between the ABI library (classification) and dialect-specific ABIRewriteContext
+(rewriting) enables clearer testing and a straightforward migration path from
+the CIR incubator by porting useful algorithms into the ABI library where
+appropriate.</p>
+<p>A central goal is that generated code be call-compatible with Classic Clang
+CodeGen and other compilers.  Parity is with Classic Clang CodeGen output,
+not only with the incubator.  Success means CIR correctly lowers x86_64 and
+AArch64 calling conventions with full ABI compliance using the LLVM ABI library
+and MLIR integration layer; FIR can adopt the same infrastructure with minimal
+dialect-specific adaptation (e.g.  cdecl when calling C from Fortran).  ABI
+compliance will be validated through differential testing against Classic Clang
+CodeGen, and performance overhead should remain under 5% compared to a direct,
+dialect-specific implementation.  Initial scope focuses on fixed-argument
+functions; variadic support (varargs) is deferred.</p>
+</section>
+</section>
+<section id="background-and-context">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink"><span class="section-number">1.2. </span>Background and Context</a><a class="headerlink" href="#background-and-context" title="Link to this heading">¶</a></h2>
+<section id="what-is-calling-convention-lowering">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink"><span class="section-number">1.2.1. </span>What is Calling Convention Lowering?</a><a class="headerlink" href="#what-is-calling-convention-lowering" title="Link to this heading">¶</a></h3>
+<p>Calling convention lowering transforms high-level function signatures to match
+target ABI (Application Binary Interface) requirements.  When a function is
+declared at the source level with convenient, language-level types, these types
+must be translated into the specific register assignments, memory layouts, and
+calling sequences that the target architecture expects.  For example, on x86_64
+System V ABI, a struct containing two 64-bit integers might be “expanded” into
+two separate arguments passed in registers, rather than being passed as a single
+aggregate:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">//</span> <span class="n">High</span><span class="o">-</span><span class="n">level</span> <span class="n">CIR</span>
+<span class="n">func</span> <span class="nd">@foo</span><span class="p">(</span><span class="n">i32</span><span class="p">,</span> <span class="n">struct</span><span class="o">&lt;</span><span class="n">i64</span><span class="p">,</span> <span class="n">i64</span><span class="o">&gt;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">i32</span>
+
+<span class="o">//</span> <span class="n">After</span> <span class="n">ABI</span> <span class="n">lowering</span>
+<span class="n">func</span> <span class="nd">@foo</span><span class="p">(</span><span class="n">i32</span> <span class="o">%</span><span class="n">arg0</span><span class="p">,</span> <span class="n">i64</span> <span class="o">%</span><span class="n">arg1</span><span class="p">,</span> <span class="n">i64</span> <span class="o">%</span><span class="n">arg2</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">i32</span>
+<span class="o">//</span>        <span class="o">^</span>       <span class="o">^</span>            <span class="o">^</span>        <span class="o">^</span>
+<span class="o">//</span>        <span class="o">|</span>       <span class="o">|</span>            <span class="o">+--------+</span> <span class="n">struct</span> <span class="n">expanded</span> <span class="n">into</span> <span class="n">fields</span>
+<span class="o">//</span>        <span class="o">|</span>       <span class="o">+----</span> <span class="n">first</span> <span class="n">field</span> <span class="n">passed</span> <span class="ow">in</span> <span class="n">register</span>
+<span class="o">//</span>        <span class="o">+----</span> <span class="n">small</span> <span class="n">integer</span> <span class="n">passed</span> <span class="ow">in</span> <span class="n">register</span>
+</pre></div>
+</div>
+<p>Calling convention lowering is complex for several reasons: it is highly
+target-specific (each architecture has different rules for registers vs.
+memory), type-dependent (rules differ for integers, floats, structs, unions,
+arrays), and context-sensitive (varargs, virtual calls, conventions like
+vectorcall or preserve_most).  The same target may have multiple ABI variants
+(e.g.  x86_64 System V vs.  Windows x64), adding further complexity.</p>
+</section>
+<section id="existing-implementations">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink"><span class="section-number">1.2.2. </span>Existing Implementations</a><a class="headerlink" href="#existing-implementations" title="Link to this heading">¶</a></h3>
+<section id="classic-clang-codegen">
+<h4><a class="toc-backref" href="#id6" role="doc-backlink"><span class="section-number">1.2.2.1. </span>Classic Clang CodeGen</a><a class="headerlink" href="#classic-clang-codegen" title="Link to this heading">¶</a></h4>
+<p>Classic Clang CodeGen (located in <code class="docutils literal notranslate"><span class="pre">clang/lib/CodeGen/</span></code>) transforms calling
+conventions during the AST-to-LLVM-IR lowering process.  This implementation is
+mature and well-tested, handling all supported targets with comprehensive ABI
+coverage.  However, it’s tightly coupled to both Clang’s AST representation and
+LLVM IR, making it difficult to reuse for MLIR-based frontends.</p>
+</section>
+<section id="cir-incubator">
+<h4><a class="toc-backref" href="#id7" role="doc-backlink"><span class="section-number">1.2.2.2. </span>CIR Incubator</a><a class="headerlink" href="#cir-incubator" title="Link to this heading">¶</a></h4>
+<p>The CIR incubator includes a calling convention lowering pass in
+<code class="docutils literal notranslate"><span class="pre">clang/lib/CIR/Dialect/Transforms/TargetLowering/</span></code> that transforms CIR
+operations into ABI-lowered CIR operations as an MLIR pass.  This implementation
+successfully adapted logic from Classic Clang CodeGen to work within the MLIR
+framework.  However, it relies on CIR-specific types and operations, preventing
+reuse by other MLIR dialects.</p>
+</section>
+<section id="llvm-abi-lowering-library">
+<h4><a class="toc-backref" href="#id8" role="doc-backlink"><span class="section-number">1.2.2.3. </span>LLVM ABI Lowering Library</a><a class="headerlink" href="#llvm-abi-lowering-library" title="Link to this heading">¶</a></h4>
+<p>A 2025 Google Summer of Code project produced <a class="reference external" href="https://github.com/llvm/llvm-project/pull/140112">PR
+#140112</a>, which proposes
+extracting Clang’s ABI logic into a reusable library in <code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code>.  The
+design centers on a shadow type system (<code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>) separate from both
+Clang’s AST types and LLVM IR types, enabling the ABI classification algorithms
+to work independently of any specific frontend representation.  The library
+includes abstract <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> base classes and target-specific implementations
+(e.g. x86_64, BPF) and provides QualTypeMapper for Clang to map <code class="docutils literal notranslate"><span class="pre">QualType</span></code> to
+<code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>.</p>
+<p>Our approach is to complete and extend this library and use it as the single
+source of truth for ABI classification.  One implementation in one place reduces
+duplication, simplifies bug fixes, and creates a path for Classic Clang CodeGen
+to use the same logic in the future.  MLIR dialects (CIR, FIR, and others) will
+use the library via an adapter layer rather than reimplementing ABI logic.</p>
+<p><strong>Current state.</strong> The x86_64 implementation is largely complete and under
+review.  AArch64 and some other targets are not yet implemented; there is no
+MLIR integration today.  The work is being upstreamed in smaller parts (e.g.
+<a class="reference external" href="https://github.com/llvm/llvm-project/pull/158329">PR 158329</a>); progress is
+limited by reviewer bandwidth.  The overhead of the shadow type system
+(converting to and from <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>) has been measured at under 0.1% for clang
+-O0, so it is negligible for CIR.  Our approach therefore depends on the ABI
+library being merged upstream or our contributions to it being accepted.</p>
+<p><strong>Our approach.</strong> The approach is to complete and extend the ABI library (e.g.
+AArch64, review feedback, tests) and add an <strong>MLIR integration layer</strong> so that
+MLIR dialects can use it:</p>
+<ul class="simple">
+<li><p><strong>ABITypeMapper</strong>: maps <code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>, analogous to
+QualTypeMapper for Clang.</p></li>
+<li><p><strong>MLIR ABI lowering pass</strong>: uses the library’s <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> for classification,
+then performs dialect-specific rewriting via <code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code> for CIR,
+FIR, and other dialects.</p></li>
+</ul>
+<p>The CIR incubator serves as a <strong>reference only</strong> (e.g. for AArch64 algorithms).
+We do not upstream the incubator’s CIR-specific ABI implementation as the
+long-term solution; we port useful algorithms into the ABI library where
+appropriate.</p>
+</section>
+</section>
+<section id="requirements-for-mlir-dialects">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink"><span class="section-number">1.2.3. </span>Requirements for MLIR Dialects</a><a class="headerlink" href="#requirements-for-mlir-dialects" title="Link to this heading">¶</a></h3>
+<p>CIR needs to lower C/C++ calling conventions correctly, with initial support for
+x86_64 and AArch64 targets.  It must handle structs, unions, and complex types,
+as well as support instance methods and virtual calls.  FIR’s initial need is
+<strong>cdecl for calling C from Fortran</strong> (C interop); that is in scope.
+Fortran-specific ABI semantics (e.g.  CHARACTER hidden length parameters, array
+descriptors) are out of initial scope; full Fortran ABI lowering is a broader
+goal.  Both dialects share common requirements: strict target ABI compliance,
+efficient lowering with minimal overhead, extensibility for adding new target
+architectures, and comprehensive testability and validation capabilities.</p>
+</section>
+</section>
+<section id="proposed-solution">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink"><span class="section-number">1.3. </span>Proposed Solution</a><a class="headerlink" href="#proposed-solution" title="Link to this heading">¶</a></h2>
+<p><strong>Core.</strong> The LLVM ABI library in <code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code> performs ABI classification
+on <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>.  It provides <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> and target-specific implementations
+(x86_64, BPF, and eventually AArch64 and others).  This is the single place
+where ABI rules are implemented.</p>
+<p><strong>MLIR side.</strong> To use this library from MLIR dialects we add an integration
+layer: (1) <strong>ABITypeMapper</strong> maps <code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> (analogous to
+QualTypeMapper for Clang).  (2) A <strong>generic ABI lowering pass</strong> invokes the
+library’s <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> for classification, then (3) performs <strong>dialect-specific
+rewriting</strong> via the <code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code> interface—each dialect (CIR, FIR,
+etc.) implements only the glue to create its own operations (e.g. <code class="docutils literal notranslate"><span class="pre">cir.call</span></code>,
+<code class="docutils literal notranslate"><span class="pre">fir.call</span></code>).  Classification logic is shared; operation creation is
+dialect-specific.</p>
+<p>The following diagram shows the layering.  At the top, the ABI library holds
+the ABI logic.  In the middle, adapters connect frontends to it: Classic Clang
+CodeGen uses QualTypeMapper; MLIR uses ABITypeMapper and the ABI lowering pass.
+At the bottom, each dialect implements <code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code> only; FIR is shown
+as a consumer for cdecl/C interop (e.g. calling C from Fortran).</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>┌─────────────────────────────────────────────────────────────────┐
+│  LLVM ABI Library (llvm/lib/ABI/)                               │
+│  ABIInfo, abi::Type*, target implementations (X86, AArch64,…)   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+            ┌─────────────────┴─────────────────┐
+            │                                   │
+            ▼                                   ▼
+┌───────────────────────┐         ┌───────────────────────────────┐
+│  Classic CodeGen      │         │  MLIR adapter                 │
+│  QualTypeMapper       │         │  ABITypeMapper + ABI pass     │
+└───────────────────────┘         └───────────────────────────────┘
+                                                │
+                               ┌────────────────┼────────────────┐
+                               │                │                │
+                               ▼                ▼                ▼
+                         ┌────────────┐   ┌────────────┐   ┌────────────┐
+                         │ CIR        │   │ FIR        │   │ Future     │
+                         │ ABIRewrite │   │ (cdecl/C   │   │ Dialects   │
+                         │ Context    │   │  interop)  │   │            │
+                         └────────────┘   └────────────┘   └────────────┘
+</pre></div>
+</div>
+</section>
+<section id="design-overview">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink"><span class="section-number">1.4. </span>Design Overview</a><a class="headerlink" href="#design-overview" title="Link to this heading">¶</a></h2>
+<section id="architecture-diagram">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink"><span class="section-number">1.4.1. </span>Architecture Diagram</a><a class="headerlink" href="#architecture-diagram" title="Link to this heading">¶</a></h3>
+<p>The following diagram shows how the design builds on the ABI library (Section
+3).  At the top, the ABI library holds the classification logic.  The middle
+layer adapts MLIR to the ABI library: ABITypeMapper converts <code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to
+<code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>, and the MLIR ABI lowering pass invokes the library’s <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code>
+and uses the classification to drive rewriting.  At the bottom, each dialect
+implements only <code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code> for operation creation; there is no
+separate type abstraction layer in MLIR for classification—that lives in the ABI
+library.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>┌─────────────────────────────────────────────────────────────────────────┐
+│  LLVM ABI Library (llvm/lib/ABI/) — single source of truth              │
+│  abi::Type*, ABIInfo, target implementations (X86_64, AArch64, …)       │
+│  Input: abi::Type*  →  Output: classification (ABIArgInfo, etc.)        │
+└─────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  MLIR adapter                                                           │
+│  ABITypeMapper (mlir::Type → abi::Type*)  +  MLIR ABI lowering pass     │
+│  (1) Map types  (2) Call ABIInfo  (3) Drive rewriting from              │
+│  classification result                                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+                                      │
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+              ┌────────────┐    ┌────────────┐    ┌────────────┐
+              │ CIR        │    │ FIR        │    │ Future     │
+              │ ABIRewrite │    │ ABIRewrite │    │ Dialects   │
+              │ Context    │    │ Context    │    │            │
+              └────────────┘    └────────────┘    └────────────┘
+              Dialect-specific operation creation only (no type
+              abstraction for classification in MLIR)
+</pre></div>
+</div>
+</section>
+<section id="abi-library-adapter-and-dialect-layers">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink"><span class="section-number">1.4.2. </span>ABI Library, Adapter, and Dialect Layers</a><a class="headerlink" href="#abi-library-adapter-and-dialect-layers" title="Link to this heading">¶</a></h3>
+<p>The architecture has three parts.  <strong>The ABI library</strong> (<code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code>) is
+the single source of truth for ABI classification: it operates on <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>
+and produces classification results (e.g.  ABIArgInfo, ABIFunctionInfo).
+Target-specific <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> implementations (X86_64, AArch64, etc.) live there.
+The <strong>adapter layer</strong> is MLIR-specific: ABITypeMapper maps <code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to
+<code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>, and the MLIR ABI lowering pass (1) maps types, (2) calls the
+library’s ABIInfo, and (3) uses the classification to drive rewriting.  The
+<strong>dialect layer</strong> is only ABIRewriteContext: each dialect (CIR, FIR) implements
+operation creation (createFunction, createCall, createExtractValue, etc.).
+There is no type abstraction layer in MLIR for classification; type queries for
+ABI are performed on <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> inside the ABI library.</p>
+</section>
+<section id="key-components">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink"><span class="section-number">1.4.3. </span>Key Components</a><a class="headerlink" href="#key-components" title="Link to this heading">¶</a></h3>
+<p>The framework is built from the following components.  <strong>The ABI library</strong>
+(<code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code>) provides the single source of truth for ABI classification:
+the <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> type system, the <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> base and target-specific
+implementations (e.g.  X86_64, AArch64), and the classification result types
+(e.g.  ABIArgInfo, ABIFunctionInfo).  <strong>ABITypeMapper</strong> maps <code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to
+<code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> so that MLIR dialect types can be classified by the ABI library.
+The generic mapper relies on existing MLIR type interfaces (e.g.
+<code class="docutils literal notranslate"><span class="pre">DataLayoutTypeInterface</span></code>) for size and alignment, and pattern-matches on
+standard type categories (integers, floats, pointers, structs, arrays,
+vectors) to build <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>.  Dialects whose types do not conform to
+standard MLIR type categories (e.g.  CIR’s <code class="docutils literal notranslate"><span class="pre">cir::IntType</span></code> is not
+<code class="docutils literal notranslate"><span class="pre">mlir::IntegerType</span></code>) may need dialect-aware mapping alongside the generic
+mapper to preserve semantics such as signedness, pointer identity, and
+record field structure.</p>
+<p>The <strong>MLIR ABI lowering pass</strong> orchestrates the flow: it uses ABITypeMapper,
+calls the library’s ABIInfo, and drives rewriting from the classification
+result.  <strong>ABIRewriteContext</strong> is the dialect-specific interface for operation
+creation (each dialect implements it to produce e.g.  cir.call, fir.call).  A
+<strong>target registry</strong> (or equivalent) is used to select the appropriate ABIInfo
+for the compilation target.  There is no ABITypeInterface or separate “ABIInfo
+in MLIR”; classification lives entirely in the ABI library.</p>
+</section>
+<section id="abi-lowering-flow-how-the-pieces-fit-together">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink"><span class="section-number">1.4.4. </span>ABI Lowering Flow: How the Pieces Fit Together</a><a class="headerlink" href="#abi-lowering-flow-how-the-pieces-fit-together" title="Link to this heading">¶</a></h3>
+<p>This section describes the end-to-end flow of ABI lowering, showing how all
+interfaces and components work together.</p>
+<section id="step-1-function-signature-analysis">
+<h4><a class="toc-backref" href="#id16" role="doc-backlink"><span class="section-number">1.4.4.1. </span>Step 1: Function Signature Analysis</a><a class="headerlink" href="#step-1-function-signature-analysis" title="Link to this heading">¶</a></h4>
+<p>The ABI lowering pass begins by analyzing the function signature.  Function
+operations are identified via MLIR’s <code class="docutils literal notranslate"><span class="pre">FunctionOpInterface</span></code>, which provides
+access to the function type, argument types, and return types.  The pass
+extracts the parameter types and return type to prepare them for classification.
+At this stage, the types are still in their high-level, dialect-specific form
+(e.g., <code class="docutils literal notranslate"><span class="pre">!cir.struct</span></code> for CIR, or <code class="docutils literal notranslate"><span class="pre">!fir.type</span></code> for FIR).  The pass collect
+these types into a list that will be fed to the classification logic in the next
+step.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>Input: func @foo(%arg0: !cir.int&lt;u, 32&gt;,
+       %arg1: !cir.struct&lt;{!cir.int&lt;u, 64&gt;,
+                            !cir.int&lt;u, 64&gt;}&gt;) -&gt; !cir.int&lt;u, 32&gt;
+</pre></div>
+</div>
+</section>
+<section id="step-2-type-mapping-via-abitypemapper">
+<h4><a class="toc-backref" href="#id17" role="doc-backlink"><span class="section-number">1.4.4.2. </span>Step 2: Type Mapping via ABITypeMapper</a><a class="headerlink" href="#step-2-type-mapping-via-abitypemapper" title="Link to this heading">¶</a></h4>
+<p>For each argument and the return type, the pass maps <code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to
+<code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> using ABITypeMapper.  The mapper produces the representation that
+the library’s ABIInfo expects; optionally, it can map back to MLIR types for
+coercion types when needed.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Map dialect types to the library&#39;s type system</span>
+<span class="n">ABITypeMapper</span><span class="w"> </span><span class="nf">abiTypeMapper</span><span class="p">(</span><span class="k">module</span><span class="p">.</span><span class="n">getDataLayout</span><span class="p">());</span>
+<span class="n">abi</span><span class="o">::</span><span class="n">Type</span><span class="w"> </span><span class="o">*</span><span class="n">arg0Abi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">abiTypeMapper</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">arg0Type</span><span class="p">);</span><span class="w">   </span><span class="c1">// i32 -&gt; IntegerType</span>
+<span class="n">abi</span><span class="o">::</span><span class="n">Type</span><span class="w"> </span><span class="o">*</span><span class="n">arg1Abi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">abiTypeMapper</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">arg1Type</span><span class="p">);</span><span class="w">   </span><span class="c1">// struct -&gt; RecordType</span>
+<span class="n">abi</span><span class="o">::</span><span class="n">Type</span><span class="w"> </span><span class="o">*</span><span class="n">retAbi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">abiTypeMapper</span><span class="p">.</span><span class="n">map</span><span class="p">(</span><span class="n">returnType</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Key Point</strong>: Classification runs in the ABI library on <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>;
+ABITypeMapper is the only bridge from dialect types to that representation.</p>
+</section>
+<section id="step-3-abi-classification">
+<h4><a class="toc-backref" href="#id18" role="doc-backlink"><span class="section-number">1.4.4.3. </span>Step 3: ABI Classification</a><a class="headerlink" href="#step-3-abi-classification" title="Link to this heading">¶</a></h4>
+<p>The library’s target-specific <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> (e.g.  X86_64) performs classification
+on <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code> and produces the library’s classification result
+(e.g.  ABIFunctionInfo and ABIArgInfo as defined in <code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI/</span></code>):</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// The MLIR ABI lowering pass obtains the ABIInfo from the target</span>
+<span class="c1">// registry based on the module&#39;s target triple (see Section 5.2).</span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">abi</span><span class="o">::</span><span class="n">ABIInfo</span><span class="w"> </span><span class="o">*</span><span class="n">abiInfo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getABIInfo</span><span class="p">();</span><span class="w">  </span><span class="c1">// e.g. X86_64</span>
+<span class="n">llvm</span><span class="o">::</span><span class="n">abi</span><span class="o">::</span><span class="n">ABIFunctionInfo</span><span class="w"> </span><span class="n">abiFI</span><span class="p">;</span>
+<span class="n">abiInfo</span><span class="o">-&gt;</span><span class="n">computeInfo</span><span class="p">(</span><span class="n">abiFI</span><span class="p">,</span><span class="w"> </span><span class="n">arg0Abi</span><span class="p">,</span><span class="w"> </span><span class="n">arg1Abi</span><span class="p">,</span><span class="w"> </span><span class="n">retAbi</span><span class="p">);</span>
+<span class="c1">// For struct&lt;i64,i64&gt; on x86_64: produces Expand (two i64 args)</span>
+</pre></div>
+</div>
+<p>Output: the library’s classification (e.g.  ABIFunctionInfo) for all arguments
+and return:
+* <code class="docutils literal notranslate"><span class="pre">%arg0</span> <span class="pre">(i32)</span></code> → Direct (pass as-is)
+* <code class="docutils literal notranslate"><span class="pre">%arg1</span> <span class="pre">(struct)</span></code> → Expand (split into two i64 fields)
+* Return type → Direct</p>
+</section>
+<section id="step-4-function-signature-rewriting">
+<h4><a class="toc-backref" href="#id19" role="doc-backlink"><span class="section-number">1.4.4.4. </span>Step 4: Function Signature Rewriting</a><a class="headerlink" href="#step-4-function-signature-rewriting" title="Link to this heading">¶</a></h4>
+<p>After the library’s classification is complete, the pass rewrites the function
+to match the ABI requirements using the dialect’s <cite>ABIRewriteContext</cite>.  The
+classification result (from the ABI library) describes the lowered signature;
+the rewrite context creates the actual dialect operations.  For example, if a
+struct is classified as “Expand”, the new function signature will have multiple
+scalar parameters instead of the single struct parameter.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">ABIRewriteContext</span><span class="w"> </span><span class="o">&amp;</span><span class="n">ctx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getDialectRewriteContext</span><span class="p">();</span>
+
+<span class="c1">// Create new function with lowered signature</span>
+<span class="n">FunctionType</span><span class="w"> </span><span class="n">newType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w"> </span><span class="c1">// (i32, i64, i64) -&gt; i32</span>
+<span class="n">Operation</span><span class="w"> </span><span class="o">*</span><span class="n">newFunc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">createFunction</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;foo&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">newType</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Key Point</strong>: The original function had signature <code class="docutils literal notranslate"><span class="pre">(i32,</span> <span class="pre">struct)</span> <span class="pre">-&gt;</span> <span class="pre">i32</span></code>, but
+the ABI-lowered function has signature <code class="docutils literal notranslate"><span class="pre">(i32,</span> <span class="pre">i64,</span> <span class="pre">i64)</span> <span class="pre">-&gt;</span> <span class="pre">i32</span></code> with the
+struct expanded into its constituent fields.</p>
+</section>
+<section id="step-5-argument-expansion">
+<h4><a class="toc-backref" href="#id20" role="doc-backlink"><span class="section-number">1.4.4.5. </span>Step 5: Argument Expansion</a><a class="headerlink" href="#step-5-argument-expansion" title="Link to this heading">¶</a></h4>
+<p>With the function signature rewritten, the pass updates all call sites to match
+the new signature, using the classification from the ABI library to drive
+rewriting via <code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code>.  For arguments classified as “Expand”, the
+pass breaks down the aggregate into its constituent parts (e.g.  struct into two
+i64 values). The rewrite context provides operations to extract fields and
+construct the new call with the expanded argument list.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Original call: call @foo(%val0, %structVal)</span>
+<span class="c1">// Need to extract struct fields:</span>
+
+<span class="n">Value</span><span class="w"> </span><span class="n">field0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">createExtractValue</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="n">structVal</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="mi">0</span><span class="p">});</span><span class="w"> </span><span class="c1">// extract 1st i64</span>
+<span class="n">Value</span><span class="w"> </span><span class="n">field1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">createExtractValue</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="n">structVal</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">});</span><span class="w"> </span><span class="c1">// extract 2nd i64</span>
+
+<span class="c1">// New call with expanded arguments</span>
+<span class="n">ctx</span><span class="p">.</span><span class="n">createCall</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="n">newFunc</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="n">resultType</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="n">val0</span><span class="p">,</span><span class="w"> </span><span class="n">field0</span><span class="p">,</span><span class="w"> </span><span class="n">field1</span><span class="p">});</span>
+</pre></div>
+</div>
+<p><strong>Key Point</strong>: <code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code> abstracts the dialect-specific operation
+creation, so the lowering logic doesn’t need to know about CIR operations.</p>
+</section>
+<section id="step-6-return-value-handling">
+<h4><a class="toc-backref" href="#id21" role="doc-backlink"><span class="section-number">1.4.4.6. </span>Step 6: Return Value Handling</a><a class="headerlink" href="#step-6-return-value-handling" title="Link to this heading">¶</a></h4>
+<p>For functions returning large structs (indirect return):</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// If return type is classified as Indirect:</span>
+<span class="n">Value</span><span class="w"> </span><span class="n">sretPtr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">createAlloca</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="n">retType</span><span class="p">,</span><span class="w"> </span><span class="n">alignment</span><span class="p">);</span>
+<span class="n">ctx</span><span class="p">.</span><span class="n">createCall</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="n">func</span><span class="p">,</span><span class="w"> </span><span class="p">{},</span><span class="w"> </span><span class="p">{</span><span class="n">sretPtr</span><span class="p">,</span><span class="w"> </span><span class="p">...</span><span class="n">otherArgs</span><span class="p">});</span>
+<span class="n">Value</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ctx</span><span class="p">.</span><span class="n">createLoad</span><span class="p">(</span><span class="n">loc</span><span class="p">,</span><span class="w"> </span><span class="n">sretPtr</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="complete-flow-diagram">
+<h4><a class="toc-backref" href="#id22" role="doc-backlink"><span class="section-number">1.4.4.7. </span>Complete Flow Diagram</a><a class="headerlink" href="#complete-flow-diagram" title="Link to this heading">¶</a></h4>
+<p>The diagram below combines the three-layer architecture (Section 4.1) with the
+step-by-step flow, showing which layer owns each step.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span> ┌─────────────────────────────────────────────────────────┐
+ │ Input: High-Level Function (CIR/FIR/other dialect)      │
+ │   func @foo(%arg0: i32, %arg1: struct&lt;i64,i64&gt;) -&gt; i32  │
+ └──────────────────────────┬──────────────────────────────┘
+                            │
+╔═══════════════════════════╪═══════════════════════════════╗
+║  MLIR Adapter Layer       │                               ║
+║                           ▼                               ║
+║  Step 1: Extract types from FunctionOpInterface           ║
+║            arg0: mlir::Type, arg1: mlir::Type, ret: …     ║
+║                           │                               ║
+║                           ▼                               ║
+║  Step 2: ABITypeMapper    │                               ║
+║            mlir::Type ──&gt; abi::Type*                      ║
+║            (uses DataLayoutTypeInterface for size/align)  ║
+╚═══════════════════════════╪═══════════════════════════════╝
+                            │
+╔═══════════════════════════╪═══════════════════════════════╗
+║  LLVM ABI Library         │  (llvm/lib/ABI/)              ║
+║                           ▼                               ║
+║  Step 3: ABIInfo::computeInfo() on abi::Type*             ║
+║            Applies target rules (e.g. x86_64 System V)    ║
+║            Produces: ABIArgInfo per arg/return            ║
+║              arg0 (i32)   → Direct                        ║
+║              arg1 (struct)→ Expand (two i64 fields)       ║
+║              return (i32) → Direct                        ║
+╚═══════════════════════════╪═══════════════════════════════╝
+                            │
+╔═══════════════════════════╪═══════════════════════════════╗
+║  Dialect-Specific Layer   │  (ABIRewriteContext)          ║
+║                           ▼                               ║
+║  Step 4: Rewrite function signature                       ║
+║            (i32, struct) -&gt; i32                           ║
+║            becomes (i32, i64, i64) -&gt; i32                 ║
+║                           │                               ║
+║                           ▼                               ║
+║  Step 5: Rewrite call sites                               ║
+║            createExtractValue() to expand struct args     ║
+║            createCall() with lowered arg list             ║
+║                           │                               ║
+║                           ▼                               ║
+║  Step 6: Handle return values                             ║
+║            Indirect: createAlloca + sret pointer          ║
+║            Coerced: memory-based reinterpretation         ║
+╚═══════════════════════════╪═══════════════════════════════╝
+                            │
+                            ▼
+ ┌─────────────────────────────────────────────────────────┐
+ │ Output: ABI-Lowered Function                            │
+ │   func @foo(%arg0: i32, %arg1: i64, %arg2: i64) -&gt; i32  │
+ └─────────────────────────────────────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="key-interactions-between-components">
+<h4><a class="toc-backref" href="#id23" role="doc-backlink"><span class="section-number">1.4.4.8. </span>Key Interactions Between Components</a><a class="headerlink" href="#key-interactions-between-components" title="Link to this heading">¶</a></h4>
+<p>Classification lives in the ABI library: <code class="docutils literal notranslate"><span class="pre">ABIInfo</span></code> operates on <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>
+and produces classification results (e.g.  ABIArgInfo, ABIFunctionInfo).  MLIR
+types reach the ABI library only via ABITypeMapper, which converts
+<code class="docutils literal notranslate"><span class="pre">mlir::Type</span></code> to <code class="docutils literal notranslate"><span class="pre">abi::Type*</span></code>.  The lowering pass (1) maps types with
+ABITypeMapper, (2) calls the library’s ABIInfo to get classification, and (3)
+uses that result to drive rewriting through the dialect’s ABIRewriteContext.</p>
+<p>ABIRewriteContext consumes the classification (e.g.  “Expand” for a struct) and
+performs the actual IR changes: createFunction with the lowered signature,
+createExtractValue and createCall at call sites.  Each dialect implements
+ABIRewriteContext to produce its own operations (e.g.  cir.call, fir.call).
+This keeps classification in one place (the ABI library) and limits dialect code
+to operation creation.</p>
+</section>
+</section>
+</section>
+<section id="abirewritecontext-and-target-registry">
+<h2><a class="toc-backref" href="#id24" role="doc-backlink"><span class="section-number">1.5. </span>ABIRewriteContext and Target Registry</a><a class="headerlink" href="#abirewritecontext-and-target-registry" title="Link to this heading">¶</a></h2>
+<section id="abirewritecontext-interface">
+<h3><a class="toc-backref" href="#id25" role="doc-backlink"><span class="section-number">1.5.1. </span>ABIRewriteContext Interface</a><a class="headerlink" href="#abirewritecontext-interface" title="Link to this heading">¶</a></h3>
+<p>ABIRewriteContext is the only dialect-specific layer: CIR and FIR each
+implement it to create their own dialect operations (e.g.  cir.call, fir.call).
+In a module with mixed dialect content, the pass selects the appropriate
+ABIRewriteContext for each function based on the dialect of its operations.
+Classification is performed by the library’s ABIInfo and produces the library’s
+result (e.g.  ABIFunctionInfo, ABIArgInfo); ABIRewriteContext consumes that
+classification to perform the actual IR rewriting.  ABIRewriteContext is also
+responsible for updating ABI-related attributes (e.g.  sret, byval, signext,
+zeroext, inreg) on the rewritten function signatures and call sites as indicated
+by the classification result.</p>
+<p>The interface defines two high-level methods:
+<code class="docutils literal notranslate"><span class="pre">rewriteFunctionDefinition(funcOp,</span> <span class="pre">classification,</span> <span class="pre">builder)</span></code> rewrites a
+function’s signature and body (coercing return values, adapting arguments,
+handling sret), and <code class="docutils literal notranslate"><span class="pre">rewriteCallSite(callOp,</span> <span class="pre">classification,</span> <span class="pre">builder)</span></code>
+rewrites a call to match the lowered callee (coercing arguments, handling
+coerced returns).  Each method encapsulates the full rewriting logic for its
+scope, using the dialect’s own builder operations internally
+(e.g.  <code class="docutils literal notranslate"><span class="pre">cir::CastOp</span></code>, <code class="docutils literal notranslate"><span class="pre">cir::AllocaOp</span></code>, <code class="docutils literal notranslate"><span class="pre">cir::StoreOp</span></code>).  Each dialect
+handles operation creation using its own builder internally.</p>
+<p>Each dialect implementing ABI lowering must provide a concrete
+<code class="docutils literal notranslate"><span class="pre">ABIRewriteContext</span></code> subclass.  This is a significant but one-time cost:
+CIR implements <code class="docutils literal notranslate"><span class="pre">CIRABIRewriteContext</span></code>, FIR implements <code class="docutils literal notranslate"><span class="pre">FIRABIRewriteContext</span></code>,
+and any future dialect reuses the shared classification infrastructure by
+providing its own context implementation.  The alternative—reimplementing the
+entire ABI classification logic per dialect—would require 8,000-15,000 lines per
+dialect (the combined size of x86_64 and AArch64 classification code plus all
+supporting infrastructure), introduce divergent behavior across dialects, and
+create a maintenance burden where ABI bug fixes must be propagated to every
+dialect independently.</p>
+</section>
+<section id="target-registry">
+<h3><a class="toc-backref" href="#id26" role="doc-backlink"><span class="section-number">1.5.2. </span>Target Registry</a><a class="headerlink" href="#target-registry" title="Link to this heading">¶</a></h3>
+<p>We use the library’s target selection or registry to obtain the appropriate
+ABIInfo for the compilation target (e.g.  X86_64, AArch64).  We do not introduce
+a separate MLIR TargetRegistry unless the MLIR ABI pass needs it for pass
+options or configuration.  The dependency direction is: the MLIR ABI pass
+depends on <code class="docutils literal notranslate"><span class="pre">llvm/lib/ABI</span></code>; there is no reverse dependency from the ABI library
+to MLIR dialects.</p>
+</section>
+<section id="cir-pass-pipeline-position">
+<h3><a class="toc-backref" href="#id27" role="doc-backlink"><span class="section-number">1.5.3. </span>CIR Pass Pipeline Position</a><a class="headerlink" href="#cir-pass-pipeline-position" title="Link to this heading">¶</a></h3>
+<p>For the CIR dialect, the calling-convention lowering pass is named
+<code class="docutils literal notranslate"><span class="pre">cir-call-conv-lowering</span></code> and runs late in the CIR-to-LLVM pipeline:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cir-target-lowering</span></code> legalizes target-specific operations (e.g.
+atomic synchronization scopes).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cir-cxxabi-lowering</span></code> lowers C++-specific high-level types (member
+pointers, vtable lookups, etc.) to ABI-specific representations.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cir-call-conv-lowering</span></code> rewrites function signatures and call sites
+to match the target ABI’s calling convention rules.</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">cir-call-conv-lowering</span></code> requires a <code class="docutils literal notranslate"><span class="pre">dlti.dl_spec</span></code> attribute on the
+module so it can query type sizes and alignments through MLIR’s
+<code class="docutils literal notranslate"><span class="pre">DataLayout</span></code>.  When the attribute is missing, the pass emits a
+diagnostic and fails rather than silently using a default layout.</p>
+<p>The pass takes one of two driver modes via pass options:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">target=&lt;name&gt;</span></code> selects a real ABI target.  The first supported value
+is <code class="docutils literal notranslate"><span class="pre">test</span></code> (the MLIR test target in <code class="docutils literal notranslate"><span class="pre">mlir/lib/ABI/Targets/Test/</span></code>,
+used for testing the rewriter without depending on the in-progress
+LLVM ABI library targets).  Real targets (<code class="docutils literal notranslate"><span class="pre">x86_64</span></code>, <code class="docutils literal notranslate"><span class="pre">aarch64</span></code>,
+…) will be added as the LLVM ABI library ships them.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">classification-attr=&lt;name&gt;</span></code> reads a pre-built <code class="docutils literal notranslate"><span class="pre">FunctionClassifica</span>
+<span class="pre">tion</span></code> from a <code class="docutils literal notranslate"><span class="pre">DictionaryAttr</span></code> named <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;</span></code> on each <code class="docutils literal notranslate"><span class="pre">cir.func</span></code>
+and rewrites accordingly.  This driver is for tests that need to
+exercise rewriter behavior against arbitrary classifications without
+routing through any real classifier.</p></li>
+</ul>
+<p>Exactly one of the two options must be set.</p>
+</section>
+</section>
+<section id="open-questions">
+<h2><a class="toc-backref" href="#id28" role="doc-backlink"><span class="section-number">1.6. </span>Open Questions</a><a class="headerlink" href="#open-questions" title="Link to this heading">¶</a></h2>
+<p>The following items are open for discussion.  This section may be revised,
+shortened, or removed before final merge.</p>
+<section id="how-to-handle-clang-targetinfo-dependency-in-mlir">
+<h3><a class="toc-backref" href="#id29" role="doc-backlink"><span class="section-number">1.6.1. </span>How to Handle clang::TargetInfo Dependency in MLIR?</a><a class="headerlink" href="#how-to-handle-clang-targetinfo-dependency-in-mlir" title="Link to this heading">¶</a></h3>
+<p>The CIR incubator currently uses <code class="docutils literal notranslate"><span class="pre">clang::TargetInfo</span></code> to query target-specific
+properties needed for ABI decisions, such as pointer width, alignment,
+endianness, and calling convention availability.  Moving this functionality to
+MLIR dialect-agnostic infrastructure raises an architectural question: should
+MLIR code depend on a Clang library, or should it use MLIR-based mechanisms?</p>
+<p>Three approaches are under consideration.</p>
+<ol class="arabic simple">
+<li><p>Continue using <code class="docutils literal notranslate"><span class="pre">clang::TargetInfo</span></code> directly, accepting an MLIR→Clang
+dependency for this target-specific infrastructure.  This approach requires
+no additional implementation since it already works in the CIR incubator,
+and <code class="docutils literal notranslate"><span class="pre">clang::TargetInfo</span></code> provides comprehensive, battle-tested coverage of
+all target properties.  However, it creates a dependency relationship that
+may violate MLIR’s architectural principle of being a peer to Clang rather
+than dependent on it.</p></li>
+<li><p>Combine <code class="docutils literal notranslate"><span class="pre">llvm::Triple</span></code> with MLIR’s <code class="docutils literal notranslate"><span class="pre">DataLayoutInterface</span></code>, supplemented by
+module-level attributes for ABI-specific properties not covered by the data
+layout.  This approach maintains clean layering with no Clang dependency and
+follows MLIR patterns, but requires defining approximately 10-15 additional
+attributes and some upfront design work.</p></li>
+<li><p>Create a new <code class="docutils literal notranslate"><span class="pre">mlir::target::TargetInfo</span></code> abstraction with minimal methods
+tailored specifically for ABI needs (approximately 15-20 methods).  This
+provides clean layering without Clang dependency but requires implementing
+and maintaining target-specific code that duplicates some knowledge from
+<code class="docutils literal notranslate"><span class="pre">clang::TargetInfo</span></code>.</p></li>
+</ol>
+<p>Option 2 is recommended as the preferred approach.  It maintains MLIR’s
+independence from Clang, which is important for MLIR’s mission to be reusable by
+non-Clang frontends like Rust, Julia, and Swift.  Target information is input
+metadata rather than an output format, so it should be expressible through
+MLIR’s existing mechanisms rather than requiring external dependencies.  Option
+3 serves as an acceptable fallback if Option 2 proves insufficient during
+prototyping, while Option 1 is not recommended due to the architectural concerns
+around MLIR depending on Clang.</p>
+</section>
+<section id="scope-c-calling-convention-vs-arbitrary-calling-conventions">
+<h3><a class="toc-backref" href="#id30" role="doc-backlink"><span class="section-number">1.6.2. </span>Scope: C Calling Convention vs.  Arbitrary Calling Conventions</a><a class="headerlink" href="#scope-c-calling-convention-vs-arbitrary-calling-conventions" title="Link to this heading">¶</a></h3>
+<p>This design focuses on the <strong>C calling convention layer</strong> (e.g. cdecl, System V,
+AAPCS).  C++ ABI concerns such as non-trivial copy constructors or destructors
+are largely handled elsewhere in the compilation pipeline; the ABI library and
+MLIR integration layer address how arguments and return values are passed at the
+C ABI boundary.  An open question is whether the design should remain explicitly
+scoped to C calling conventions only, or be general enough to support arbitrary
+calling conventions (e.g. vectorcall, preserve_most) via extensible interfaces.
+Clarifying this scope will guide the design of the LLVM ABI library integration
+and the MLIR pass.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="index.html">ClangIR</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="CleanupAndEHDesign.html"><span class="section-number">2. </span>ClangIR Cleanup and Exception Handling Design</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ThreadSanitizer &#8212; Clang 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="MemorySanitizer" href="MemorySanitizer.html" />
+    <link rel="prev" title="AddressSanitizer" href="AddressSanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 23.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>ThreadSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AddressSanitizer.html">AddressSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="MemorySanitizer.html">MemorySanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="threadsanitizer">
+<h1>ThreadSanitizer<a class="headerlink" href="#threadsanitizer" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>ThreadSanitizer is a tool that detects data races. It consists of a compiler
+instrumentation module and a run-time library. Typical slowdown introduced by
+ThreadSanitizer is about <strong>5x-15x</strong>. Typical memory overhead introduced by
+ThreadSanitizer is about <strong>5x-10x</strong>.</p>
+</section>
+<section id="how-to-build">
+<h2>How to build<a class="headerlink" href="#how-to-build" title="Link to this heading">¶</a></h2>
+<p>Build LLVM/Clang with <a class="reference external" href="https://llvm.org/docs/CMake.html">CMake</a>.</p>
+</section>
+<section id="supported-platforms">
+<h2>Supported Platforms<a class="headerlink" href="#supported-platforms" title="Link to this heading">¶</a></h2>
+<p>ThreadSanitizer is supported on the following OS:</p>
+<ul class="simple">
+<li><p>Android aarch64, x86_64</p></li>
+<li><p>Darwin arm64, x86_64</p></li>
+<li><p>FreeBSD</p></li>
+<li><p>Linux aarch64, x86_64, powerpc64, powerpc64le</p></li>
+<li><p>NetBSD</p></li>
+</ul>
+<p>Support for other 64-bit architectures is possible, contributions are welcome.
+Support for 32-bit platforms is problematic and is not planned.</p>
+</section>
+<section id="usage">
+<h2>Usage<a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>Simply compile and link your program with <code class="docutils literal notranslate"><span class="pre">-fsanitize=thread</span></code>. To get a
+reasonable performance add <code class="docutils literal notranslate"><span class="pre">-O1</span></code> or higher. Use <code class="docutils literal notranslate"><span class="pre">-g</span></code> to get file names
+and line numbers in the warning messages.</p>
+<p>Example:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>cat<span class="w"> </span>projects/compiler-rt/lib/tsan/lit_tests/tiny_race.c
+<span class="gp">#</span>include<span class="w"> </span>&lt;pthread.h&gt;
+<span class="go">int Global;</span>
+<span class="go">void *Thread1(void *x) {</span>
+<span class="go">  Global = 42;</span>
+<span class="go">  return x;</span>
+<span class="go">}</span>
+<span class="go">int main() {</span>
+<span class="go">  pthread_t t;</span>
+<span class="go">  pthread_create(&amp;t, NULL, Thread1, NULL);</span>
+<span class="go">  Global = 43;</span>
+<span class="go">  pthread_join(t, NULL);</span>
+<span class="go">  return Global;</span>
+<span class="go">}</span>
+
+<span class="gp">$ </span>clang<span class="w"> </span>-fsanitize<span class="o">=</span>thread<span class="w"> </span>-g<span class="w"> </span>-O1<span class="w"> </span>tiny_race.c
+</pre></div>
+</div>
+<p>If a bug is detected, the program will print an error message to stderr.
+Currently, ThreadSanitizer symbolizes its output using an external
+<code class="docutils literal notranslate"><span class="pre">addr2line</span></code> process (this will be fixed in future).</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>%<span class="w"> </span>./a.out
+WARNING:<span class="w"> </span>ThreadSanitizer:<span class="w"> </span>data<span class="w"> </span>race<span class="w"> </span><span class="o">(</span><span class="nv">pid</span><span class="o">=</span><span class="m">19219</span><span class="o">)</span>
+<span class="w">  </span>Write<span class="w"> </span>of<span class="w"> </span>size<span class="w"> </span><span class="m">4</span><span class="w"> </span>at<span class="w"> </span>0x7fcf47b21bc0<span class="w"> </span>by<span class="w"> </span>thread<span class="w"> </span>T1:
+<span class="w">    </span><span class="c1">#0 Thread1 tiny_race.c:4 (exe+0x00000000a360)</span>
+
+<span class="w">  </span>Previous<span class="w"> </span>write<span class="w"> </span>of<span class="w"> </span>size<span class="w"> </span><span class="m">4</span><span class="w"> </span>at<span class="w"> </span>0x7fcf47b21bc0<span class="w"> </span>by<span class="w"> </span>main<span class="w"> </span>thread:
+<span class="w">    </span><span class="c1">#0 main tiny_race.c:10 (exe+0x00000000a3b4)</span>
+
+<span class="w">  </span>Thread<span class="w"> </span>T1<span class="w"> </span><span class="o">(</span>running<span class="o">)</span><span class="w"> </span>created<span class="w"> </span>at:
+<span class="w">    </span><span class="c1">#0 pthread_create tsan_interceptors.cc:705 (exe+0x00000000c790)</span>
+<span class="w">    </span><span class="c1">#1 main tiny_race.c:9 (exe+0x00000000a3a4)</span>
+</pre></div>
+</div>
+</section>
+<section id="has-feature-thread-sanitizer">
+<h2><code class="docutils literal notranslate"><span class="pre">__has_feature(thread_sanitizer)</span></code><a class="headerlink" href="#has-feature-thread-sanitizer" title="Link to this heading">¶</a></h2>
+<p>In some cases one may need to execute different code depending on whether
+ThreadSanitizer is enabled.
+<a class="reference internal" href="LanguageExtensions.html#langext-has-feature-has-extension"><span class="std std-ref">__has_feature</span></a> can be used for
+this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature)</span>
+<span class="cp">#  if __has_feature(thread_sanitizer)</span>
+<span class="c1">// code that builds only under ThreadSanitizer</span>
+<span class="cp">#  endif</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-no-sanitize-thread">
+<h2><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;thread&quot;)))</span></code><a class="headerlink" href="#attribute-no-sanitize-thread" title="Link to this heading">¶</a></h2>
+<p>Some code should not be instrumented by ThreadSanitizer. One may use the
+function attribute <code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;thread&quot;)</span></code> to disable instrumentation of plain
+(non-atomic) loads/stores in a particular function. ThreadSanitizer still
+instruments such functions to avoid false positives and provide meaningful stack
+traces. This attribute may not be supported by other compilers, so we suggest
+to use it together with <code class="docutils literal notranslate"><span class="pre">__has_feature(thread_sanitizer)</span></code>.</p>
+</section>
+<section id="attribute-disable-sanitizer-instrumentation">
+<h2><code class="docutils literal notranslate"><span class="pre">__attribute__((disable_sanitizer_instrumentation))</span></code><a class="headerlink" href="#attribute-disable-sanitizer-instrumentation" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">disable_sanitizer_instrumentation</span></code> attribute can be applied to functions
+to prevent all kinds of instrumentation. As a result, it may introduce false
+positives and incorrect stack traces. Therefore, it should be used with care,
+and only if absolutely required; for example for certain code that cannot
+tolerate any instrumentation and resulting side-effects. This attribute
+overrides <code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;thread&quot;)</span></code>.</p>
+</section>
+<section id="interaction-of-inlining-with-disabling-sanitizer-instrumentation">
+<h2>Interaction of Inlining with Disabling Sanitizer Instrumentation<a class="headerlink" href="#interaction-of-inlining-with-disabling-sanitizer-instrumentation" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>A <code class="docutils literal notranslate"><span class="pre">no_sanitize</span></code> function will not be inlined heuristically by the compiler into a sanitized function.</p></li>
+<li><p>An <code class="docutils literal notranslate"><span class="pre">always_inline</span></code> function will adopt the instrumentation status of the function it is inlined into.</p></li>
+<li><p>Forcibly combining <code class="docutils literal notranslate"><span class="pre">no_sanitize</span></code> and <code class="docutils literal notranslate"><span class="pre">__attribute__((always_inline))</span></code> is not supported, and will often lead to unexpected results. To avoid mixing these attributes, use:</p></li>
+</ul>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// Note, __has_feature test for sanitizers is deprecated, and Clang will support __SANITIZE_&lt;sanitizer&gt;__ similar to GCC.</span>
+<span class="cp">#if __has_feature(thread_sanitizer) || defined(__SANITIZE_THREAD__) || ... &lt;other sanitizers&gt;</span>
+<span class="cp">#define ALWAYS_INLINE_IF_UNINSTRUMENTED</span>
+<span class="cp">#else</span>
+<span class="cp">#define ALWAYS_INLINE_IF_UNINSTRUMENTED __attribute__((always_inline))</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+<section id="explicit-sanitizer-checks-with-builtin-allow-sanitize-check">
+<h2>Explicit Sanitizer Checks with <code class="docutils literal notranslate"><span class="pre">__builtin_allow_sanitize_check</span></code><a class="headerlink" href="#explicit-sanitizer-checks-with-builtin-allow-sanitize-check" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">__builtin_allow_sanitize_check(&quot;thread&quot;)</span></code> builtin can be used to
+conditionally execute code depending on whether ThreadSanitizer checks are
+enabled and permitted by the current policy (after inlining). This is
+particularly useful for inserting explicit, sanitizer-specific checks around
+operations like syscalls or inline assembly, which might otherwise be unchecked
+by the sanitizer.</p>
+<p>Example:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">__tsan_read8</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+
+<span class="kr">inline</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">always_inline</span><span class="p">))</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">my_helper</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">addr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">__builtin_allow_sanitize_check</span><span class="p">(</span><span class="s">&quot;thread&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="n">__tsan_read8</span><span class="p">(</span><span class="n">addr</span><span class="p">);</span>
+<span class="w">  </span><span class="c1">// ... actual logic, e.g. inline assembly ...</span>
+<span class="w">  </span><span class="k">asm</span><span class="w"> </span><span class="k">volatile</span><span class="w"> </span><span class="p">(</span><span class="s">&quot;...&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="s">&quot;r&quot;</span><span class="w"> </span><span class="p">(</span><span class="n">addr</span><span class="p">)</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="s">&quot;memory&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">instrumented_function</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">my_helper</span><span class="p">(</span><span class="o">&amp;</span><span class="n">shared_data</span><span class="p">);</span><span class="w"> </span><span class="c1">// checks are active</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+
+<span class="n">__attribute__</span><span class="p">((</span><span class="n">no_sanitize</span><span class="p">(</span><span class="s">&quot;thread&quot;</span><span class="p">)))</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">uninstrumented_function</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">my_helper</span><span class="p">(</span><span class="o">&amp;</span><span class="n">shared_data</span><span class="p">);</span><span class="w"> </span><span class="c1">// checks are skipped</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="ignorelist">
+<h2>Ignorelist<a class="headerlink" href="#ignorelist" title="Link to this heading">¶</a></h2>
+<p>ThreadSanitizer supports <code class="docutils literal notranslate"><span class="pre">src</span></code> and <code class="docutils literal notranslate"><span class="pre">fun</span></code> entity types in
+<a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>, that can be used to suppress data race reports
+in the specified source files or functions. Unlike functions marked with
+<code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;thread&quot;)</span></code> attribute, ignored functions are not instrumented
+at all. This can lead to false positives due to missed synchronization via
+atomic operations and missed stack frames in reports.</p>
+<p>Example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Ignore exactly this function (the names are mangled in C++)</span>
+fun:_Z8MyFooBarv
+<span class="c1"># Ignore all functions containing MyFooBar</span>
+fun:*MyFooBar*
+<span class="c1"># Ignore the whole file</span>
+src:file_with_tricky_code.cc
+</pre></div>
+</div>
+</section>
+<section id="limitations">
+<h2>Limitations<a class="headerlink" href="#limitations" title="Link to this heading">¶</a></h2>
+<ul>
+<li><p>ThreadSanitizer uses more real memory than a native run. At the default
+settings the memory overhead is 5x plus 1Mb per each thread. Settings with 3x
+(less accurate analysis) and 9x (more accurate analysis) overhead are also
+available.</p></li>
+<li><p>ThreadSanitizer maps (but does not reserve) a lot of virtual address space.
+This means that tools like <code class="docutils literal notranslate"><span class="pre">ulimit</span></code> may not work as usually expected.</p></li>
+<li><p>Libc/libstdc++ static linking is not supported.</p></li>
+<li><p>Non-position-independent executables are not supported. Therefore, the
+<code class="docutils literal notranslate"><span class="pre">fsanitize=thread</span></code> flag will cause Clang to act as though the <code class="docutils literal notranslate"><span class="pre">-fPIE</span></code>
+flag had been supplied if compiling without <code class="docutils literal notranslate"><span class="pre">-fPIC</span></code>, and as though the
+<code class="docutils literal notranslate"><span class="pre">-pie</span></code> flag had been supplied if linking an executable.</p></li>
+<li><p>ThreadSanitizer generally requires all code to be compiled with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=thread</span></code>. If some code (such as pre-compiled dynamic libraries)
+is not compiled with the flag, TSan may fail to detect races or may report
+false positives. Refer to the <code class="docutils literal notranslate"><span class="pre">ignore_interceptors_accesses</span></code> and
+<code class="docutils literal notranslate"><span class="pre">ignore_noninstrumented_modules</span></code> run-time options to work around issues
+arising from non-instrumented modules.</p></li>
+<li><p>On Linux, disabling ASLR may cause ThreadSanitizer to fail to allocate shadow
+memory, printing the error <code class="docutils literal notranslate"><span class="pre">FATAL:</span> <span class="pre">ThreadSanitizer</span> <span class="pre">can</span> <span class="pre">not</span> <span class="pre">mmap</span> <span class="pre">the</span> <span class="pre">shadow</span> <span class="pre">memory</span> <span class="pre">(something</span> <span class="pre">is</span> <span class="pre">mapped</span> <span class="pre">at</span> <span class="pre">...)</span></code>.
+Note that GDB disables ASLR by default. To debug ThreadSanitizer binaries under
+GDB, configure it to preserve ASLR by running:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>gdb<span class="w"> </span>-ex<span class="w"> </span><span class="s1">&#39;set disable-randomization off&#39;</span><span class="w"> </span>--args<span class="w"> </span>./a.out
+</pre></div>
+</div>
+</li>
+</ul>
+</section>
+<section id="security-considerations">
+<h2>Security Considerations<a class="headerlink" href="#security-considerations" title="Link to this heading">¶</a></h2>
+<p>ThreadSanitizer is a bug detection tool and its runtime is not meant to be
+linked against production executables. While it may be useful for testing,
+ThreadSanitizer’s runtime was not developed with security-sensitive
+constraints in mind and may compromise the security of the resulting executable.</p>
+</section>
+<section id="current-status">
+<h2>Current Status<a class="headerlink" href="#current-status" title="Link to this heading">¶</a></h2>
+<p>ThreadSanitizer is in beta stage. It is known to work on large C++ programs
+using pthreads, but we do not promise anything (yet). C++11 threading is
+supported with llvm libc++. The test suite is integrated into CMake build
+and can be run with <code class="docutils literal notranslate"><span class="pre">make</span> <span class="pre">check-tsan</span></code> command.</p>
+<p>We are actively working on enhancing the tool — stay tuned. Any help,
+especially in the form of minimized standalone tests is more than welcome.</p>
+</section>
+<section id="run-time-flags">
+<h2>Run-time Flags<a class="headerlink" href="#run-time-flags" title="Link to this heading">¶</a></h2>
+<p>ThreadSanitizer supports a number of run-time flags, which can be specified
+in the <code class="docutils literal notranslate"><span class="pre">TSAN_OPTIONS</span></code> environment variable. Separate flags are separated
+with spaces.</p>
+<p>Example:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="s2">&quot;history_size=7 halt_on_error=1&quot;</span><span class="w"> </span>./myprogram
+</pre></div>
+</div>
+<p>The most common run-time flags are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">detect_deadlocks</span></code> (default: <code class="docutils literal notranslate"><span class="pre">true</span></code>): Controls whether deadlock detection is
+enabled.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">exitcode</span></code> (default: <code class="docutils literal notranslate"><span class="pre">66</span></code>): Override the exit status if an error is found. Note
+that for ThreadSanitizer the default exitcode is 66, unlike other sanitizers.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">force_seq_cst_atomics</span></code> (default: <code class="docutils literal notranslate"><span class="pre">false</span></code>): If set, all atomic operations are
+treated as sequentially consistent (seq_cst). Useful for debugging relaxed atomic
+ordering bugs.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">halt_on_error</span></code> (default: <code class="docutils literal notranslate"><span class="pre">false</span></code>): Exit after the first reported error.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">history_size</span></code> (default: <code class="docutils literal notranslate"><span class="pre">0</span></code>): Controls per-thread history size, which
+determines how many previous memory accesses are remembered per thread. If
+you see “failed to restore the stack” reports, try increasing this flag
+(values from 0 to 7 are supported).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ignore_interceptors_accesses</span></code> (default: <code class="docutils literal notranslate"><span class="pre">false</span></code> on Linux/Windows, <code class="docutils literal notranslate"><span class="pre">true</span></code>
+on Apple platforms): Ignore reads and writes from all interceptors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ignore_noninstrumented_modules</span></code> (default: <code class="docutils literal notranslate"><span class="pre">false</span></code> on Linux/Windows, <code class="docutils literal notranslate"><span class="pre">true</span></code>
+on Apple platforms): Ignore interceptors called from non-instrumented modules.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">log_path</span></code> (default: <code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code>): If set, write logs to <code class="docutils literal notranslate"><span class="pre">log_path.pid</span></code> instead of
+stderr. Special values are <code class="docutils literal notranslate"><span class="pre">stdout</span></code> and <code class="docutils literal notranslate"><span class="pre">stderr</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">print_full_thread_history</span></code> (default: <code class="docutils literal notranslate"><span class="pre">false</span></code>): Print creation stack traces for
+all threads involved in the report and their ancestor threads back to the main thread.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">report_atomic_races</span></code> (default: <code class="docutils literal notranslate"><span class="pre">true</span></code>): Report races between atomic and
+plain memory accesses.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">suppressions</span></code> (default: <code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code>): Path to a suppressions file.</p></li>
+</ul>
+<p>To see the complete list of flags and their descriptions, run an instrumented
+binary with the <code class="docutils literal notranslate"><span class="pre">help=1</span></code> option:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="s2">&quot;help=1&quot;</span><span class="w"> </span>./myprogram
+</pre></div>
+</div>
+<p>You can also refer to the source declarations in the LLVM repository under
+<code class="docutils literal notranslate"><span class="pre">compiler-rt/lib/tsan/rtl/tsan_flags.inc</span></code> (ThreadSanitizer-specific flags)
+and <code class="docutils literal notranslate"><span class="pre">compiler-rt/lib/sanitizer_common/sanitizer_flags.inc</span></code> (common sanitizer
+flags).</p>
+</section>
+<section id="suppressions">
+<h2>Suppressions<a class="headerlink" href="#suppressions" title="Link to this heading">¶</a></h2>
+<p>If you have a data race or thread leak that you are already aware of but cannot
+fix right away (e.g., in a third-party library), you can suppress the reports
+at run-time using a suppressions file.</p>
+<p>Specify the suppressions file path via the <code class="docutils literal notranslate"><span class="pre">suppressions</span></code> flag in the
+<code class="docutils literal notranslate"><span class="pre">TSAN_OPTIONS</span></code> environment variable:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="s2">&quot;suppressions=/path/to/suppressions.supp&quot;</span><span class="w"> </span>./myprogram
+</pre></div>
+</div>
+<p>Each non-empty line of the suppressions file represents one suppression of the
+form:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">suppression_type</span><span class="p">:</span><span class="n">suppression_pattern</span>
+</pre></div>
+</div>
+<p>The supported <code class="docutils literal notranslate"><span class="pre">suppression_type</span></code> values are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">race</span></code>: Suppresses data race reports. The pattern is matched against function
+names, source file names, or global variable names in the stacks of the report.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">thread</span></code>: Suppresses thread leak reports. The pattern is matched against the
+name of the leaked thread.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">called_from_lib</span></code>: Suppresses reports if the call originated from a specific
+non-instrumented library.</p></li>
+</ul>
+<p>The pattern can contain the <code class="docutils literal notranslate"><span class="pre">*</span></code> wildcard, which matches any substring. By
+default, <code class="docutils literal notranslate"><span class="pre">*</span></code> is automatically prepended and appended to each pattern. You can
+use <code class="docutils literal notranslate"><span class="pre">^</span></code> and <code class="docutils literal notranslate"><span class="pre">$</span></code> to anchor patterns to the beginning and end of the string.
+Lines starting with <code class="docutils literal notranslate"><span class="pre">#</span></code> are treated as comments.</p>
+<p>Example of a suppressions file:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># Suppress data races in a third-party library &#39;foobar&#39;
+race:foobar
+# Suppress data races in a specific function
+race:NuclearRocket::Launch
+# Suppress data races in a specific source file
+race:src/surgery/laser_scalpel.cc
+# Suppress data races on a specific global variable
+race:global_var
+# Suppress a leaked thread by name
+thread:MonitoringThread
+# Suppress warnings called from an uninstrumented library
+called_from_lib:libzmq.so
+</pre></div>
+</div>
+</section>
+<section id="adaptive-delay">
+<h2>Adaptive Delay<a class="headerlink" href="#adaptive-delay" title="Link to this heading">¶</a></h2>
+<section id="overview">
+<h3>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h3>
+<p>Adaptive Delay is an optional ThreadSanitizer feature that injects delays at
+synchronization points to explore novel thread interleavings and increase the
+likelihood of exposing data races. By perturbing thread scheduling, adaptive
+delay creates more opportunities for concurrent accesses to shared data,
+improving race detection.</p>
+<p>Adaptive delay is particularly useful for:</p>
+<ul class="simple">
+<li><p>Detecting races in rarely-executed thread interleavings or code paths</p></li>
+<li><p>Testing parallel data structures and algorithms</p></li>
+</ul>
+<p>When enabled, adaptive delay maintains a configurable time budget to balance
+race exposure against performance overhead. The delays can be</p>
+<blockquote>
+<div><ul class="simple">
+<li><p>random amount of spin cycles</p></li>
+<li><p>a single yield to the OS scheduler</p></li>
+<li><p>random usleep</p></li>
+</ul>
+</div></blockquote>
+<p>The strategy prioritizes high-value synchronization points:</p>
+<ul class="simple">
+<li><p>Relaxed atomic operations receive cheap delays (spin cycles) with low sampling</p></li>
+<li><p>Synchronizing atomic operations (acquire/release/seq_cst) receive moderate
+delays with higher sampling</p></li>
+<li><p>Mutex and thread lifecycle operations receive the longest delays with highest
+sampling</p></li>
+</ul>
+<p>The delays focus on synchronization points with clear happens-before relationships,
+as those are most likely to expose data races.</p>
+</section>
+<section id="enabling-adaptive-delay">
+<h3>Enabling Adaptive Delay<a class="headerlink" href="#enabling-adaptive-delay" title="Link to this heading">¶</a></h3>
+<p>Adaptive delay is disabled by default. Enable it by setting the
+<code class="docutils literal notranslate"><span class="pre">enable_adaptive_delay</span></code> flag:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="nv">enable_adaptive_delay</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./myapp
+</pre></div>
+</div>
+</section>
+<section id="configuration-options">
+<h3>Configuration Options<a class="headerlink" href="#configuration-options" title="Link to this heading">¶</a></h3>
+<table class="docutils align-default" id="adaptive-delay-options-table">
+<caption><span class="caption-text">Adaptive Delay Options</span><a class="headerlink" href="#adaptive-delay-options-table" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 35.0%" />
+<col style="width: 10.0%" />
+<col style="width: 15.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Flag</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_adaptive_delay</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>false</p></td>
+<td><p>Enable adaptive delay injection to expose data races.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">adaptive_delay_aggressiveness</span></code></p></td>
+<td><p>int</p></td>
+<td><p>25</p></td>
+<td><p>Controls delay injection intensity for race detection. Higher values inject
+more delays to expose races. Value must be greater than 0. Suggested values:
+10 (minimal), 50 (moderate), 200 (aggressive). This is a tuning parameter;
+actual overhead varies by workload and platform.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">adaptive_delay_relaxed_sample_rate</span></code></p></td>
+<td><p>int</p></td>
+<td><p>10000</p></td>
+<td><p>Sample 1 in N relaxed atomic operations for delay injection. Relaxed atomics
+have minimal synchronization, so sampling helps avoid excessive overhead.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">adaptive_delay_sync_atomic_sample_rate</span></code></p></td>
+<td><p>int</p></td>
+<td><p>100</p></td>
+<td><p>Sample 1 in N acquire/release/seq_cst atomic operations for delay injection.
+These synchronizing atomics are more likely to expose races, so are sampled
+more often.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">adaptive_delay_mutex_sample_rate</span></code></p></td>
+<td><p>int</p></td>
+<td><p>10</p></td>
+<td><p>Sample 1 in N mutex/condition variable operations for delay injection. Mutex
+ops are high-value synchronization points and are sampled frequently.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">adaptive_delay_max_atomic</span></code></p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;sleep_us=50&quot;</span></code></p></td>
+<td><p>Maximum delay for atomic operations. Format: <code class="docutils literal notranslate"><span class="pre">&quot;spin=N&quot;</span></code> (N spin cycles,
+1 &lt;= N &lt;= 10,000), <code class="docutils literal notranslate"><span class="pre">&quot;yield&quot;</span></code> (one yield to the OS), or <code class="docutils literal notranslate"><span class="pre">&quot;sleep_us=N&quot;</span></code>
+(up to N microseconds). The delay is randomly chosen up to the specified
+maximum N.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">adaptive_delay_max_sync</span></code></p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;sleep_us=500&quot;</span></code></p></td>
+<td><p>Maximum delay for synchronization operations (mutex and thread lifecycle
+operations). Format: same as <code class="docutils literal notranslate"><span class="pre">adaptive_delay_max_atomic</span></code>. Typically set
+longer than atomic delays since these operations involve waking blocked threads
+and may be more likely to expose races.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="examples">
+<h3>Examples<a class="headerlink" href="#examples" title="Link to this heading">¶</a></h3>
+<p>Enable adaptive delay with moderate aggressiveness:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="nv">enable_adaptive_delay</span><span class="o">=</span><span class="m">1</span>:adaptive_delay_aggressiveness<span class="o">=</span><span class="m">50</span><span class="w"> </span>./myapp
+</pre></div>
+</div>
+<p>Enable aggressive delay injection:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="nv">enable_adaptive_delay</span><span class="o">=</span><span class="m">1</span>:adaptive_delay_aggressiveness<span class="o">=</span><span class="m">200</span><span class="w"> </span>./myapp
+</pre></div>
+</div>
+<p>Increase sampling frequency for mutex operations:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span><span class="nv">TSAN_OPTIONS</span><span class="o">=</span><span class="nv">enable_adaptive_delay</span><span class="o">=</span><span class="m">1</span>:adaptive_delay_mutex_sample_rate<span class="o">=</span><span class="m">5</span><span class="w"> </span>./myapp
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AddressSanitizer.html">AddressSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="MemorySanitizer.html">MemorySanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

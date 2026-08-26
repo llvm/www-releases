@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>1. Force-Linker Headers &#8212; Clang 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../../_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="2. How to Extend the Framework" href="HowToExtend.html" />
+    <link rel="prev" title="Developer Documentation" href="index.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 23.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>1. Force-Linker Headers</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="index.html">Developer Documentation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="HowToExtend.html"><span class="section-number">2. </span>How to Extend the Framework</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="force-linker-headers">
+<h1><span class="section-number">1. </span>Force-Linker Headers<a class="headerlink" href="#force-linker-headers" title="Link to this heading">¶</a></h1>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>The framework is rapidly evolving.
+The documentation might be out-of-sync with the implementation.
+The purpose of this documentation is to give context for upcoming reviews.</p>
+</div>
+<section id="the-problem">
+<h2><span class="section-number">1.1. </span>The problem<a class="headerlink" href="#the-problem" title="Link to this heading">¶</a></h2>
+<p>SSAF uses <a class="reference external" href="https://llvm.org/doxygen/classllvm_1_1Registry.html">llvm::Registry&lt;&gt;</a>
+for decentralized registration of summary extractors and serialization formats.
+Each registration is a file-scope static object whose constructor adds an entry
+to the global registry:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// In MyExtractor.cpp</span>
+<span class="k">static</span><span class="w"> </span><span class="n">TUSummaryExtractorRegistry</span><span class="o">::</span><span class="n">Add</span><span class="o">&lt;</span><span class="n">MyExtractor</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="n">RegisterExtractor</span><span class="p">(</span><span class="s">&quot;MyExtractor&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;My summary extractor&quot;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>When the translation unit containing this static object is compiled into a
+<strong>static library</strong> (<code class="docutils literal notranslate"><span class="pre">.a</span></code> / <code class="docutils literal notranslate"><span class="pre">.lib</span></code>), the static linker will only pull in
+object files that resolve an undefined symbol in the consuming binary.
+Because no code ever calls anything in <code class="docutils literal notranslate"><span class="pre">MyExtractor.o</span></code> directly, the linker
+discards the object file — and the registration never runs.</p>
+<p>This is not a problem for <strong>shared libraries</strong> (<code class="docutils literal notranslate"><span class="pre">.so</span></code> / <code class="docutils literal notranslate"><span class="pre">.dylib</span></code>), because
+the dynamic linker loads the entire shared object and runs all global
+constructors unconditionally.</p>
+</section>
+<section id="the-solution-anchor-symbols">
+<h2><span class="section-number">1.2. </span>The solution: anchor symbols<a class="headerlink" href="#the-solution-anchor-symbols" title="Link to this heading">¶</a></h2>
+<p>Each registration translation unit defines a <code class="docutils literal notranslate"><span class="pre">volatile</span> <span class="pre">int</span></code> <strong>anchor symbol</strong>:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// In MyExtractor.cpp - next to the registry Add&lt;&gt; object in the ``clang::ssaf`` namespace</span>
+<span class="c1">// NOLINTNEXTLINE(misc-use-internal-linkage)</span>
+<span class="k">volatile</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">MyExtractorAnchorSource</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>For <strong>in-tree</strong> anchors, add a single <code class="docutils literal notranslate"><span class="pre">ANCHOR(...)</span></code> entry to
+<code class="docutils literal notranslate"><span class="pre">BuiltinAnchorSources.def</span></code> (in alphabetical order):</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// In clang/include/clang/ScalableStaticAnalysis/BuiltinAnchorSources.def</span>
+<span class="n">ANCHOR</span><span class="p">(</span><span class="n">JSONFormatAnchorSource</span><span class="p">)</span>
+<span class="n">ANCHOR</span><span class="p">(</span><span class="n">MyExtractorAnchorSource</span><span class="p">)</span><span class="w"> </span><span class="c1">// &lt;-- Add here, in alphabetical order</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">SSAFBuiltinForceLinker.h</span></code> includes this <code class="docutils literal notranslate"><span class="pre">.def</span></code> file automatically to
+generate the <code class="docutils literal notranslate"><span class="pre">extern</span></code> declarations and the <code class="docutils literal notranslate"><span class="pre">AnchorSources</span></code> array — there is
+no need to edit that header directly.</p>
+<p>Any translation unit that <code class="docutils literal notranslate"><span class="pre">#include</span></code>s this header now has a reference to
+<code class="docutils literal notranslate"><span class="pre">MyExtractorAnchorSource</span></code>, which forces the linker to pull in
+<code class="docutils literal notranslate"><span class="pre">MyExtractor.o</span></code> — and with it, the static <code class="docutils literal notranslate"><span class="pre">Add&lt;&gt;</span></code> registration object.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">volatile</span></code> qualifier is essential: without it the compiler could
+constant-fold the <code class="docutils literal notranslate"><span class="pre">0</span></code> and eliminate the reference entirely.</p>
+<p>These anchor symbols must be mutable (not <code class="docutils literal notranslate"><span class="pre">const</span></code>), because otherwise on MSVC
+<code class="docutils literal notranslate"><span class="pre">const</span> <span class="pre">volatile</span></code> variables would still have <strong>internal linkage</strong> — despite
+that the standard specifies that these should have <strong>external linkage</strong>.</p>
+<section id="header-hierarchy">
+<h3><span class="section-number">1.2.1. </span>Header hierarchy<a class="headerlink" href="#header-hierarchy" title="Link to this heading">¶</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>SSAFForceLinker.h                   (umbrella — include this in binaries)
+└── SSAFBuiltinForceLinker.h        (upstream built-in anchors only)
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">clang/include/clang/ScalableStaticAnalysis/SSAFBuiltinForceLinker.h</span></code> — anchors for
+upstream-provided (built-in) extractors and formats (e.g. <code class="docutils literal notranslate"><span class="pre">JSONFormat</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">clang/include/clang/ScalableStaticAnalysis/SSAFForceLinker.h</span></code> — umbrella header
+that includes <code class="docutils literal notranslate"><span class="pre">SSAFBuiltinForceLinker.h</span></code>.  This is the header that
+downstream projects should modify to add their own force-linker includes
+(see <a class="reference internal" href="HowToExtend.html"><span class="doc">How to Extend the Framework</span></a>).</p></li>
+</ul>
+<p>Include the umbrella header with <code class="docutils literal notranslate"><span class="pre">//</span> <span class="pre">IWYU</span> <span class="pre">pragma:</span> <span class="pre">keep</span></code> in any translation
+unit that must guarantee all registrations are active — typically the entry
+point of a binary that uses <code class="docutils literal notranslate"><span class="pre">clangScalableStaticAnalysisCore</span></code>:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// In ExecuteCompilerInvocation.cpp</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;clang/ScalableStaticAnalysis/SSAFForceLinker.h&quot;</span><span class="c1"> // IWYU pragma: keep</span>
+</pre></div>
+</div>
+</section>
+<section id="naming-convention">
+<h3><span class="section-number">1.2.2. </span>Naming convention<a class="headerlink" href="#naming-convention" title="Link to this heading">¶</a></h3>
+<p>Anchor symbols follow the pattern <code class="docutils literal notranslate"><span class="pre">&lt;Component&gt;AnchorSource</span></code> in the <code class="docutils literal notranslate"><span class="pre">clang::ssaf</span></code> namespace.
+For example:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">JSONFormatAnchorSource</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">MyExtractorAnchorSource</span></code></p></li>
+</ul>
+<p>All anchor sources are aggregated into a single <code class="docutils literal notranslate"><span class="pre">BuiltinAnchorDestination</span></code>
+lambda in the force-linker header (see <code class="docutils literal notranslate"><span class="pre">SSAFBuiltinForceLinker.h</span></code>).</p>
+</section>
+</section>
+<section id="considered-alternatives">
+<h2><span class="section-number">1.3. </span>Considered alternatives<a class="headerlink" href="#considered-alternatives" title="Link to this heading">¶</a></h2>
+<section id="whole-archive-force-load">
+<h3><span class="section-number">1.3.1. </span><code class="docutils literal notranslate"><span class="pre">--whole-archive</span></code> / <code class="docutils literal notranslate"><span class="pre">-force_load</span></code><a class="headerlink" href="#whole-archive-force-load" title="Link to this heading">¶</a></h3>
+<p>The linker can be instructed to include <em>every</em> object file from a static
+library, regardless of whether any symbols are referenced:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># GNU ld / lld (Linux, BSD)</span>
+-Wl,--whole-archive<span class="w"> </span>-lclangScalableStaticAnalysisCore<span class="w"> </span>-Wl,--no-whole-archive
+
+<span class="c1"># Apple ld</span>
+-Wl,-force_load,libclangScalableStaticAnalysisCore.a
+</pre></div>
+</div>
+<p>Since CMake 3.24, the <code class="docutils literal notranslate"><span class="pre">$&lt;LINK_LIBRARY:WHOLE_ARCHIVE,...&gt;</span></code> generator expression
+provides a portable way to do the same:</p>
+<div class="highlight-cmake notranslate"><div class="highlight"><pre><span></span><span class="nb">target_link_libraries</span><span class="p">(</span><span class="s">clang</span><span class="w"> </span><span class="s">PRIVATE</span>
+<span class="w">  </span><span class="s2">&quot;$&lt;LINK_LIBRARY:WHOLE_ARCHIVE,clangScalableStaticAnalysisCore&gt;&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Why we did not choose this approach</strong>:</p>
+<ul class="simple">
+<li><p>It is a blunt instrument — <em>all</em> object files in the library are pulled in,
+increasing binary size.</p></li>
+<li><p>The anchor approach only targets specific object files: only registrations
+whose anchors are referenced in a force-linker header are pulled in.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--whole-archive</span></code> semantics vary across platforms and toolchains, requiring
+platform-specific CMake logic or the relatively new <code class="docutils literal notranslate"><span class="pre">WHOLE_ARCHIVE</span></code>
+generator expression.</p></li>
+</ul>
+</section>
+<section id="explicit-initialization-functions">
+<h3><span class="section-number">1.3.2. </span>Explicit initialization functions<a class="headerlink" href="#explicit-initialization-functions" title="Link to this heading">¶</a></h3>
+<p>An alternative is a central <code class="docutils literal notranslate"><span class="pre">initializeSSAFRegistrations()</span></code> function that
+explicitly calls into each registration module:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">initializeSSAFRegistrations</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">initializeJSONFormat</span><span class="p">();</span>
+<span class="w">  </span><span class="n">initializeMyExtractor</span><span class="p">();</span>
+<span class="w">  </span><span class="c1">// ... one entry per registration</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Why we did not choose this approach</strong>:</p>
+<ul class="simple">
+<li><p>It reintroduces a centralized list that must be maintained manually, defeating
+the decoupled-registration benefit of <code class="docutils literal notranslate"><span class="pre">llvm::Registry</span></code>.</p></li>
+<li><p>Adding a new extractor or format requires modifying a central file, which
+increases merge-conflict risk for downstream users.</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="index.html">Developer Documentation</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="HowToExtend.html"><span class="section-number">2. </span>How to Extend the Framework</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

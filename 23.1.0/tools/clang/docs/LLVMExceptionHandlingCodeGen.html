@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>LLVM IR Generation for EH and Cleanups &#8212; Clang 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Constant Interpreter" href="ConstantInterpreter.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 23.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>LLVM IR Generation for EH and Cleanups</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ConstantInterpreter.html">Constant Interpreter</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="llvm-ir-generation-for-eh-and-cleanups">
+<h1>LLVM IR Generation for EH and Cleanups<a class="headerlink" href="#llvm-ir-generation-for-eh-and-cleanups" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id2">Overview</a></p></li>
+<li><p><a class="reference internal" href="#core-model" id="id3">Core Model</a></p></li>
+<li><p><a class="reference internal" href="#key-components" id="id4">Key Components</a></p></li>
+<li><p><a class="reference internal" href="#cleanup-destination-routing" id="id5">Cleanup Destination Routing</a></p>
+<ul>
+<li><p><a class="reference internal" href="#branch-fixups-for-forward-gotos" id="id6">Branch Fixups for Forward Gotos</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#exceptional-cleanups-and-eh-dispatch" id="id7">Exceptional Cleanups and EH Dispatch</a></p></li>
+<li><p><a class="reference internal" href="#personality-and-abi-selection" id="id8">Personality and ABI Selection</a></p></li>
+<li><p><a class="reference internal" href="#example-array-of-objects-with-throwing-constructor" id="id9">Example: Array of Objects with Throwing Constructor</a></p>
+<ul>
+<li><p><a class="reference internal" href="#high-level-behavior" id="id10">High-level behavior</a></p></li>
+<li><p><a class="reference internal" href="#codegen-flow-and-key-components" id="id11">Codegen flow and key components</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#example-temporary-object-materialization" id="id12">Example: Temporary object materialization</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id1" id="id13">High-level behavior</a></p></li>
+<li><p><a class="reference internal" href="#codegen-flow-and-key-functions" id="id14">Codegen flow and key functions</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="overview">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>This document describes how Clang’s LLVM IR generation represents exception
+handling (EH) and C++ cleanups. It focuses on the data structures and control
+flow patterns used to model normal and exceptional exits, and it outlines how
+the generated IR differs across common ABI models.</p>
+<p>For details on the LLVM IR representation of exception handling, see
+<a class="reference external" href="https://llvm.org/docs/ExceptionHandling.html">LLVM Exception Handling</a>.</p>
+</section>
+<section id="core-model">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Core Model</a><a class="headerlink" href="#core-model" title="Link to this heading">¶</a></h2>
+<p>EH and cleanup handling is centered around an <code class="docutils literal notranslate"><span class="pre">EHScopeStack</span></code> that records
+nested scopes for:</p>
+<ul class="simple">
+<li><p><strong>Cleanups</strong>, which run on normal control flow, exceptional control flow, or
+both. These are used for destructors, full-expression cleanups, and other
+scope-exit actions.</p></li>
+<li><p><strong>Catch scopes</strong>, which represent <code class="docutils literal notranslate"><span class="pre">try</span></code>/<code class="docutils literal notranslate"><span class="pre">catch</span></code> handlers.</p></li>
+<li><p><strong>Filter scopes</strong>, used to model dynamic exception specifications and some
+platform-specific filters.</p></li>
+<li><p><strong>Terminate scopes</strong>, used for <code class="docutils literal notranslate"><span class="pre">noexcept</span></code> and similar termination paths.</p></li>
+</ul>
+<p>Each cleanup is a small object with an <code class="docutils literal notranslate"><span class="pre">Emit</span></code> method. When a cleanup scope is
+popped, the IR generator decides whether it must materialize a normal cleanup
+block (for fallthrough, branch-through, or unresolved <code class="docutils literal notranslate"><span class="pre">goto</span></code> fixups) and/or an
+EH cleanup entry (when exceptional control flow can reach the cleanup). This
+results in a flattened CFG where cleanup lifetime is represented by the blocks
+and edges that flow into those blocks.</p>
+</section>
+<section id="key-components">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Key Components</a><a class="headerlink" href="#key-components" title="Link to this heading">¶</a></h2>
+<p>The LLVM IR generation for EH and cleanups is spread across several core
+components:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenModule</span></code> owns module-wide state such as the LLVM module, target
+information, and the selected EH personality function. It provides access to
+ABI helpers via <code class="docutils literal notranslate"><span class="pre">CGCXXABI</span></code> and target-specific hooks.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction</span></code> manages per-function state and IR building. It owns the
+<code class="docutils literal notranslate"><span class="pre">EHScopeStack</span></code>, tracks the current insertion point, and emits blocks, calls,
+and branches. Most cleanup and EH control flow is built here.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EHScopeStack</span></code> is the central stack of scopes used to model EH and cleanup
+semantics. It stores <code class="docutils literal notranslate"><span class="pre">EHCleanupScope</span></code> entries for cleanups, along with
+<code class="docutils literal notranslate"><span class="pre">EHCatchScope</span></code>, <code class="docutils literal notranslate"><span class="pre">EHFilterScope</span></code>, and <code class="docutils literal notranslate"><span class="pre">EHTerminateScope</span></code> for handlers and
+termination logic.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EHCleanupScope</span></code> stores the cleanup object plus state data (active flags,
+fixup depth, and enclosing scope links). When a cleanup scope is popped,
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction</span></code> decides whether to emit a normal cleanup block, an EH
+cleanup entry, or both.</p></li>
+<li><p>Cleanup emission helpers implement the mechanics of branching through
+cleanups, threading fixups, and emitting cleanup blocks.</p></li>
+<li><p>Exception emission helpers implement landing pads, dispatch blocks,
+personality selection, and helper routines for try/catch, filters, and
+terminate handling.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CGCXXABI</span></code> (and its ABI-specific implementations such as
+<code class="docutils literal notranslate"><span class="pre">ItaniumCXXABI</span></code> and <code class="docutils literal notranslate"><span class="pre">MicrosoftCXXABI</span></code>) provide ABI-specific lowering for
+throws, catch handling, and destructor emission details.</p></li>
+<li><p>The cleanup and exception handling code generation is driven by the flow of
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction</span></code> and its helper classes traversing the AST to emit IR for
+C++ expressions, classes, and statements.</p></li>
+</ul>
+<p>AST traversal in <code class="docutils literal notranslate"><span class="pre">CodeGenFunction</span></code> emits code and pushes cleanups or EH scopes,
+<code class="docutils literal notranslate"><span class="pre">EHScopeStack</span></code> records scope nesting, cleanup and exception helpers materialize
+the CFG as scopes are popped, and <code class="docutils literal notranslate"><span class="pre">CGCXXABI</span></code> supplies ABI-specific details for
+landing pads or funclets.</p>
+</section>
+<section id="cleanup-destination-routing">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Cleanup Destination Routing</a><a class="headerlink" href="#cleanup-destination-routing" title="Link to this heading">¶</a></h2>
+<p>When multiple control flow exits (<code class="docutils literal notranslate"><span class="pre">return</span></code>, <code class="docutils literal notranslate"><span class="pre">break</span></code>, <code class="docutils literal notranslate"><span class="pre">continue</span></code>,
+fallthrough) pass through the same cleanup, the generated IR shares a single
+cleanup block among them. Before entering the cleanup, each exit path stores a
+unique index into a “cleanup destination” slot. After the cleanup code runs, a
+<code class="docutils literal notranslate"><span class="pre">switch</span></code> instruction loads this index and dispatches to the appropriate final
+destination. This avoids duplicating cleanup code for each exit while preserving
+correct control flow.</p>
+<p>For example, if a function has both a <code class="docutils literal notranslate"><span class="pre">return</span></code> and a <code class="docutils literal notranslate"><span class="pre">break</span></code> that exit
+through the same destructor cleanup, both paths branch to the shared cleanup
+block after storing their respective destination indices. The cleanup epilogue
+then switches on the stored index to reach either the return block or the
+loop-exit block.</p>
+<p>When only a single exit passes through a cleanup (the common case), the switch
+is unnecessary and the cleanup block branches directly to its sole destination.</p>
+<section id="branch-fixups-for-forward-gotos">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Branch Fixups for Forward Gotos</a><a class="headerlink" href="#branch-fixups-for-forward-gotos" title="Link to this heading">¶</a></h3>
+<p>A <code class="docutils literal notranslate"><span class="pre">goto</span></code> statement that jumps forward to a label not yet seen poses a special
+problem. The destination’s enclosing cleanup scope is unknown at the point the
+<code class="docutils literal notranslate"><span class="pre">goto</span></code> is emitted. This is handled by emitting an optimistic branch and
+recording a “fixup.” When the cleanup scope is later popped, any recorded fixups
+are resolved by rewriting the branch to thread through the cleanup block and
+adding the destination to the cleanup’s switch.</p>
+</section>
+</section>
+<section id="exceptional-cleanups-and-eh-dispatch">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Exceptional Cleanups and EH Dispatch</a><a class="headerlink" href="#exceptional-cleanups-and-eh-dispatch" title="Link to this heading">¶</a></h2>
+<p>Exceptional exits (<code class="docutils literal notranslate"><span class="pre">throw</span></code>, <code class="docutils literal notranslate"><span class="pre">invoke</span></code> unwinds) are routed through EH cleanup
+entries, which are reached via a landing pad or a funclet dispatch block,
+depending on the target ABI.</p>
+<p>For Itanium-style EH (such as is used on x86-64 Linux), the IR uses <code class="docutils literal notranslate"><span class="pre">invoke</span></code>
+to call potentially-throwing operations and a <code class="docutils literal notranslate"><span class="pre">landingpad</span></code> instruction to
+capture the exception and selector values. The landing pad aggregates any
+catch and cleanup clauses for the current scope, and branches to a dispatch
+block that compares the selector to type IDs and jumps to the appropriate
+handler.</p>
+<p>For Windows, LLVM IR uses funclet-style EH: <code class="docutils literal notranslate"><span class="pre">catchswitch</span></code> and <code class="docutils literal notranslate"><span class="pre">catchpad</span></code> for
+handlers, and <code class="docutils literal notranslate"><span class="pre">cleanuppad</span></code> for cleanups, with <code class="docutils literal notranslate"><span class="pre">catchret</span></code> and <code class="docutils literal notranslate"><span class="pre">cleanupret</span></code>
+edges to resume normal flow. The personality function determines how these pads
+are interpreted by the backend.</p>
+</section>
+<section id="personality-and-abi-selection">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Personality and ABI Selection</a><a class="headerlink" href="#personality-and-abi-selection" title="Link to this heading">¶</a></h2>
+<p>Each function with exception handling constructs is associated with a
+personality function (e.g. __gxx_personality_v0 for C++ on Linux). The
+personality function determines the ABI-specifc EH behavior of the
+function. The IR generation selects a personality function based on language
+options and the target ABI (e.g., Itanium, MSVC SEH, SJLJ, Wasm EH). This
+decision affects:</p>
+<ul class="simple">
+<li><p>Whether the IR uses landing pads or funclet pads.</p></li>
+<li><p>The shape of dispatch logic for catch and filter scopes.</p></li>
+<li><p>How termination or rethrow paths are modeled.</p></li>
+<li><p>Whether certain helper functions such as exception filters must be outlined.</p></li>
+</ul>
+<p>Because the personality choice is made during IR generation, the CFG shape
+directly reflects ABI-specific details.</p>
+</section>
+<section id="example-array-of-objects-with-throwing-constructor">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Example: Array of Objects with Throwing Constructor</a><a class="headerlink" href="#example-array-of-objects-with-throwing-constructor" title="Link to this heading">¶</a></h2>
+<p>Consider:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">MyClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">MyClass</span><span class="p">();</span><span class="w"> </span><span class="c1">// may throw</span>
+<span class="w">  </span><span class="o">~</span><span class="n">MyClass</span><span class="p">();</span>
+<span class="p">};</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">doSomething</span><span class="p">();</span><span class="w"> </span><span class="c1">// may throw</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">MyClass</span><span class="w"> </span><span class="n">arr</span><span class="p">[</span><span class="mi">4</span><span class="p">];</span>
+<span class="w">  </span><span class="n">doSomething</span><span class="p">();</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<section id="high-level-behavior">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">High-level behavior</a><a class="headerlink" href="#high-level-behavior" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Construction of <code class="docutils literal notranslate"><span class="pre">arr</span></code> proceeds element-by-element. If an element constructor
+throws, destructors must run for any elements that were successfully
+constructed before the throw in reverse order of construction.</p></li>
+<li><p>After full construction, the call to <code class="docutils literal notranslate"><span class="pre">doSomething</span></code> may throw, in which case
+the destructors for all constructed elements must run, in reverse order.</p></li>
+<li><p>On normal exit, destructors for all elements run in reverse order.</p></li>
+</ul>
+</section>
+<section id="codegen-flow-and-key-components">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Codegen flow and key components</a><a class="headerlink" href="#codegen-flow-and-key-components" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The surrounding compound statement enters a <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::LexicalScope</span></code>,
+which is a <code class="docutils literal notranslate"><span class="pre">RunCleanupsScope</span></code> and is responsible for popping local cleanups
+at the end of the block.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitDecl</span></code> routes the local variable to
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitVarDecl</span></code> and then <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitAutoVarDecl</span></code>,
+which in turn calls <code class="docutils literal notranslate"><span class="pre">EmitAutoVarAlloca</span></code>, <code class="docutils literal notranslate"><span class="pre">EmitAutoVarInit</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">EmitAutoVarCleanups</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitCXXAggrConstructorCall</span></code> emits the array constructor
+loop. While emitting the loop body, it enters a <code class="docutils literal notranslate"><span class="pre">RunCleanupsScope</span></code> and uses
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::pushRegularPartialArrayCleanup</span></code> to register a
+cleanup before calling <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitCXXConstructorCall</span></code> for one
+element in the loop iteration. If this constructor were to throw an exception,
+the cleanup handler would destroy the previously constructed elements in
+reverse order.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitAutoVarCleanups</span></code> calls <code class="docutils literal notranslate"><span class="pre">emitAutoVarTypeCleanup</span></code>,
+which ultimately registers a <code class="docutils literal notranslate"><span class="pre">DestroyObject</span></code> cleanup via
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::pushDestroy</span></code> / <code class="docutils literal notranslate"><span class="pre">pushFullExprCleanup</span></code> for the full-array
+destructor path.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DestroyObject</span></code> uses <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::destroyCXXObject</span></code>, which emits the
+actual destructor call via <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitCXXDestructorCall</span></code>.</p></li>
+<li><p>Cleanup emission helpers (e.g., <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::PopCleanupBlock</span></code> and
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitBranchThroughCleanup</span></code>) thread both normal and EH exits
+through the cleanup blocks as scopes are popped.</p></li>
+<li><p>The cleanup is represented as an <code class="docutils literal notranslate"><span class="pre">EHCleanupScope</span></code> on <code class="docutils literal notranslate"><span class="pre">EHScopeStack</span></code>, and
+its <code class="docutils literal notranslate"><span class="pre">Emit</span></code> method generates a loop that calls the destructor on the
+initialized range in reverse order.</p></li>
+</ul>
+<p>The above function names and flow are accurate as of LLVM 22.0, but this is
+subject to change as the code evolves, and this document might not be updated to
+reflect the exact functions used.</p>
+</section>
+</section>
+<section id="example-temporary-object-materialization">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Example: Temporary object materialization</a><a class="headerlink" href="#example-temporary-object-materialization" title="Link to this heading">¶</a></h2>
+<p>Consider:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">MyClass</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">MyClass</span><span class="p">();</span>
+<span class="w">  </span><span class="o">~</span><span class="n">MyClass</span><span class="p">();</span>
+<span class="p">};</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">useMyClass</span><span class="p">(</span><span class="n">MyClass</span><span class="w"> </span><span class="o">&amp;</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">useMyClass</span><span class="p">(</span><span class="n">MyClass</span><span class="p">());</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<section id="id1">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">High-level behavior</a><a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The temporary <code class="docutils literal notranslate"><span class="pre">MyClass</span></code> is materialized for the call argument.</p></li>
+<li><p>The temporary must be destroyed at the end of the full-expression, both on
+the normal path and on the exceptional path if <code class="docutils literal notranslate"><span class="pre">useMyClass</span></code> throws.</p></li>
+<li><p>If the constructor throws, the temporary is not considered constructed and no
+destructor runs.</p></li>
+</ul>
+</section>
+<section id="codegen-flow-and-key-functions">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Codegen flow and key functions</a><a class="headerlink" href="#codegen-flow-and-key-functions" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitExprWithCleanups</span></code> wraps the full-expression in a
+<code class="docutils literal notranslate"><span class="pre">RunCleanupsScope</span></code> so that full-expression cleanups are run after the call.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitMaterializeTemporaryExpr</span></code> creates storage for the
+temporary via <code class="docutils literal notranslate"><span class="pre">createReferenceTemporary</span></code> and initializes it. For record
+temporaries this flows through <code class="docutils literal notranslate"><span class="pre">EmitAnyExprToMem</span></code> and
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitCXXConstructExpr</span></code>, which calls
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitCXXConstructorCall</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pushTemporaryCleanup</span></code> registers the destructor as a full-expression
+cleanup by calling <code class="docutils literal notranslate"><span class="pre">CodeGenFunction::pushDestroy</span></code> for
+<code class="docutils literal notranslate"><span class="pre">SD_FullExpression</span></code> temporaries.</p></li>
+<li><p>The cleanup ultimately uses <code class="docutils literal notranslate"><span class="pre">DestroyObject</span></code> and
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::destroyCXXObject</span></code>, which emits
+<code class="docutils literal notranslate"><span class="pre">CodeGenFunction::EmitCXXDestructorCall</span></code>.</p></li>
+</ul>
+<p>The above function names and flow are accurate as of LLVM 22.0, but this is
+subject to change as the code evolves, and this document might not be updated to
+reflect the exact functions used.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ConstantInterpreter.html">Constant Interpreter</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
