@@ -1,0 +1,586 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>AMDGPU Memory Model &#8212; LLVM 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="User Guide for SPIR-V Target" href="SPIRVUsage.html" />
+    <link rel="prev" title="AMDGPU Execution Synchronization" href="AMDGPUExecutionSynchronization.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="SPIRVUsage.html" title="User Guide for SPIR-V Target"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="AMDGPUExecutionSynchronization.html" title="AMDGPU Execution Synchronization"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">AMDGPU Memory Model</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/AMDGPUMemoryModel.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="amdgpu-memory-model">
+<span id="amdgpu-memmodel"></span><h1>AMDGPU Memory Model<a class="headerlink" href="#amdgpu-memory-model" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id2">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#terminology" id="id3">Terminology</a></p></li>
+<li><p><a class="reference internal" href="#scopes" id="id4">Scopes</a></p>
+<ul>
+<li><p><a class="reference internal" href="#llvm-scopes" id="id5">LLVM scopes</a></p></li>
+<li><p><a class="reference internal" href="#id1" id="id6">AMDGPU scopes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#availability-and-visibility" id="id7">Availability and Visibility</a></p>
+<ul>
+<li><p><a class="reference internal" href="#store-available" id="id8">store-available</a></p></li>
+<li><p><a class="reference internal" href="#load-visible" id="id9">load-visible</a></p></li>
+<li><p><a class="reference internal" href="#av-metadata" id="id10">AV Metadata</a></p></li>
+<li><p><a class="reference internal" href="#makeavailable-and-makevisible" id="id11">MakeAvailable and MakeVisible</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#ordering" id="id12">Ordering</a></p>
+<ul>
+<li><p><a class="reference internal" href="#availability-operation" id="id13">Availability Operation</a></p></li>
+<li><p><a class="reference internal" href="#visibility-operation" id="id14">Visibility Operation</a></p></li>
+<li><p><a class="reference internal" href="#location-order" id="id15">Location Order</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#properties" id="id16">Properties</a></p></li>
+<li><p><a class="reference internal" href="#the-vulkan-memory-model" id="id17">The Vulkan Memory Model</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>The <a class="reference internal" href="LangRef.html#memmodel"><span class="std std-ref">LLVM memory model</span></a> provides broad guarantees that are
+sufficient to implement inter-thread communication via memory. But in most
+communication patterns, not all memory accesses performed by a thread need to be
+exposed to other threads. Even when they do need to be exposed, not all threads
+may need to observe these memory accesses. This document describes the <em>AMDGPU
+memory model</em> that allows the user to control how the side-effects of memory
+accesses are propagated across threads. The programmer expresses this using
+<strong>new intrinsics and metadata</strong> as described below, and the implementation can
+then choose a more efficient mechanism to complete them, such as the cache
+policy bits in an AMDGPU device.</p>
+<p>The AMDGPU memory model allows executions that are not allowed by the LLVM
+memory model. At the same time, a simple mapping can be used to implement these
+new intrinsics and metadata using operations defined in the default LLVM memory
+model. Thus, <strong>there exists a safe-by-default implementation</strong> that produces
+executions that are valid in both models.</p>
+</section>
+<section id="terminology">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Terminology</a><a class="headerlink" href="#terminology" title="Link to this heading">¶</a></h2>
+<dl class="simple">
+<dt>Memory Accesses</dt><dd><p>Operations that read or write locations in memory are termed as <em>memory
+accesses</em>. Typical examples are <code class="docutils literal notranslate"><span class="pre">load</span></code>, <code class="docutils literal notranslate"><span class="pre">store</span></code> and atomic instructions,
+as well as many intrinsics.</p>
+</dd>
+<dt>Synchronizing Operations</dt><dd><p>Synchronizing operations control how the side-effects of memory accesses are
+propagated in the system. Typical examples are atomic operations (including
+fences) with at least <code class="docutils literal notranslate"><span class="pre">release</span></code> or <code class="docutils literal notranslate"><span class="pre">acquire</span></code> ordering.</p>
+</dd>
+</dl>
+</section>
+<section id="scopes">
+<span id="amdgpu-scopes"></span><h2><a class="toc-backref" href="#id4" role="doc-backlink">Scopes</a><a class="headerlink" href="#scopes" title="Link to this heading">¶</a></h2>
+<p>A <em>scope</em> is an abstract description of sets of memory accesses and
+synchronizing operations in a multi-threaded execution environment. Each such
+set is called an <em>instance</em> of that scope, or a <em>scope instance</em> for short.</p>
+<ul class="simple">
+<li><p>Each memory access or synchronizing operation belongs to at most one
+instance of every scope defined by the target.</p></li>
+<li><p>When an operation <code class="docutils literal notranslate"><span class="pre">X</span></code> specifies a scope <code class="docutils literal notranslate"><span class="pre">S</span></code>, it indicates the instance of
+<code class="docutils literal notranslate"><span class="pre">S</span></code> that contains <code class="docutils literal notranslate"><span class="pre">X</span></code>. This scope instance is also termed as <em>X’s instance
+of scope S</em>, or just <em>X’s scope instance</em> when <code class="docutils literal notranslate"><span class="pre">S</span></code> is implied by the
+context.</p></li>
+<li><p>When an operation does not specify a scope, it indicates the <em>system</em>
+scope defined below.</p></li>
+</ul>
+<section id="llvm-scopes">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">LLVM scopes</a><a class="headerlink" href="#llvm-scopes" title="Link to this heading">¶</a></h3>
+<p>The LLVM Language Reference defines the following <a class="reference internal" href="LangRef.html#syncscope"><span class="std std-ref">scopes</span></a>:</p>
+<dl class="simple">
+<dt><em>system scope</em> (empty string “”)</dt><dd><p>There exists a single instance of this scope that contains the memory accesses
+and synchronizing operations performed by all threads.</p>
+</dd>
+<dt>“singlethread” scope</dt><dd><p>Each thread corresponds to a “singlethread” scope instance that contains the
+memory accesses and synchronizing operations performed by that thread.</p>
+</dd>
+</dl>
+</section>
+<section id="id1">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">AMDGPU scopes</a><a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<p>The AMDGPU backend further refines the LLVM scopes with the following
+target-defined scopes and constraints:</p>
+<ul class="simple">
+<li><p><em>system scope</em> (same as LLVM)</p></li>
+<li><p>“agent” scope</p></li>
+<li><p>“cluster” scope</p></li>
+<li><p>“workgroup” scope</p></li>
+<li><p>“wavefront” scope</p></li>
+<li><p>“singlethread” scope (same as LLVM)</p></li>
+</ul>
+<p>These are arranged from largest scope (<em>system scope</em>) to smallest scope
+(“singlethread”).</p>
+<ul class="simple">
+<li><p>Every instance <code class="docutils literal notranslate"><span class="pre">X</span></code> of some scope <code class="docutils literal notranslate"><span class="pre">S1</span></code> other than “singlethread” scope is
+partitioned by the scope <code class="docutils literal notranslate"><span class="pre">S2</span></code> one level below it. Each subset defined by this
+partition is an instance of <code class="docutils literal notranslate"><span class="pre">S2</span></code> and is called a <em>subscope instance</em> of <code class="docutils literal notranslate"><span class="pre">X</span></code>.</p></li>
+<li><p>It follows that if two scope instances <code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code> intersect, then their
+intersection is the smaller of <code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code>.</p></li>
+<li><p>A scope <code class="docutils literal notranslate"><span class="pre">S1</span></code> is a <em>subscope</em> of a scope <code class="docutils literal notranslate"><span class="pre">S2</span></code> if every instance of <code class="docutils literal notranslate"><span class="pre">S1</span></code>
+is a subscope instance of some instance of <code class="docutils literal notranslate"><span class="pre">S2</span></code>.</p></li>
+</ul>
+<p><strong>Inclusive Scopes</strong>: Two operations <code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code> are said to have <em>inclusive
+scopes</em> if the scope instance of each operation contains the other operation. In
+that case, the <em>common scope instance</em> <code class="docutils literal notranslate"><span class="pre">S'</span></code> of <code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code> is the
+intersection of their scope instances. The scope corresponding to <code class="docutils literal notranslate"><span class="pre">S'</span></code> is also
+termed as the <em>common scope</em> of <code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code>.</p>
+</section>
+</section>
+<section id="availability-and-visibility">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Availability and Visibility</a><a class="headerlink" href="#availability-and-visibility" title="Link to this heading">¶</a></h2>
+<p>The AMDGPU memory model is built on top of the <a class="reference internal" href="LangRef.html#memmodel"><span class="std std-ref">happens-before</span></a>
+order defined by the LLVM memory model. But when one of the new intrinsics or
+metadata is used, <strong>happens-before by itself is not sufficient</strong> to describe its
+observable effects. Instead, the AMDGPU model uses <em>availability</em> and
+<em>visibility</em> to describe how the side-effects of these operations propagate to
+other threads.</p>
+<p>Availability determines how <em>far</em> the side-effects of a write have been
+forwarded in the system relative to that write. Visibility determines how
+<em>close</em> the side-effects of the same write have reached relative to an observer
+operation (typically a read).</p>
+<p>The AMDGPU memory model <em>does not change the structure of happens-before</em>, but
+changes the rules that determine how operations may observe the side-effects of
+other operations that <em>happen-before</em> them.</p>
+<p>Consider a write <code class="docutils literal notranslate"><span class="pre">W</span></code> that <code class="docutils literal notranslate"><span class="pre">happens-before</span></code> a read <code class="docutils literal notranslate"><span class="pre">R</span></code> to the same address:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">R</span></code> can potentially observe the side-effects of <code class="docutils literal notranslate"><span class="pre">W</span></code> <strong>only if W is
+visible</strong> to <code class="docutils literal notranslate"><span class="pre">R</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">W</span></code> can potentially be visible to <code class="docutils literal notranslate"><span class="pre">R</span></code> <strong>only if W is first made
+available</strong> to <code class="docutils literal notranslate"><span class="pre">R</span></code>.</p></li>
+</ul>
+<p>The instructions used in the default LLVM memory model automatically satisfy
+these necessary conditions, and hence they can be explained using the rules from
+either memory model. But the new intrinsics and metadata <em>opt out</em> of the LLVM
+memory model, and can only be explained using the AMDGPU memory model.</p>
+<section id="store-available">
+<span id="amdgpu-store-available"></span><h3><a class="toc-backref" href="#id8" role="doc-backlink">store-available</a><a class="headerlink" href="#store-available" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="vg">@llvm.amdgcn.av.global.store.b128</span><span class="p">(</span><span class="kt">ptr</span><span class="p">,</span><span class="w"> </span><span class="err">value</span><span class="p">,</span><span class="w"> </span><span class="err">scope</span><span class="p">)</span>
+<span class="k">store</span><span class="w"> </span><span class="k">atomic</span><span class="w"> </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span>
+<span class="k">atomicrmw</span><span class="w">    </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span>
+<span class="k">cmpxchg</span><span class="w">      </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">&#64;llvm.amdgcn.av.global.store.b128</span></code> intrinsic performs a non-atomic
+<em>store-available</em> operation on <code class="docutils literal notranslate"><span class="pre">ptr</span></code> with scope <code class="docutils literal notranslate"><span class="pre">scope</span></code>.</p>
+<p>An atomic operation that results in a store operation is a <em>store-available</em>
+operation with scope <code class="docutils literal notranslate"><span class="pre">syncscope</span></code>.</p>
+</section>
+<section id="load-visible">
+<span id="amdgpu-load-visible"></span><h3><a class="toc-backref" href="#id9" role="doc-backlink">load-visible</a><a class="headerlink" href="#load-visible" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="vg">@llvm.amdgcn.av.global.load.b128</span><span class="p">(</span><span class="kt">ptr</span><span class="p">,</span><span class="w"> </span><span class="err">scope</span><span class="p">)</span>
+<span class="k">load</span><span class="w"> </span><span class="k">atomic</span><span class="w">  </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span>
+<span class="k">atomicrmw</span><span class="w">    </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span>
+<span class="k">cmpxchg</span><span class="w">      </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">&#64;llvm.amdgcn.av.global.load.b128</span></code> intrinsic performs a non-atomic
+<em>load-visible</em> operation on <code class="docutils literal notranslate"><span class="pre">ptr</span></code> with scope <code class="docutils literal notranslate"><span class="pre">scope</span></code>.</p>
+<p>An atomic operation that results in a read operation is a <em>load-visible</em>
+operation with scope <code class="docutils literal notranslate"><span class="pre">syncscope</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Metadata cannot be used to model this using ordinary load/store operations,
+because the scope is necessary for correctness. In a hypothetical operation
+like this:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">store</span><span class="w"> </span><span class="kt">ptr</span><span class="p">,</span><span class="w"> </span><span class="err">data</span><span class="p">,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;workgroup&quot;</span><span class="p">}</span>
+</pre></div>
+</div>
+<p>If the metadata is dropped or ignored, there is no guarantee that the store
+will become available at the intended scope. In implementation terms, the
+store may be completed at a nearer cache than the one required for that
+scope. A corresponding <em>load-visible</em> that does not access the same near
+cache will fail to observe this store.</p>
+</div>
+</section>
+<section id="av-metadata">
+<span id="amdgpu-av-metadata"></span><h3><a class="toc-backref" href="#id10" role="doc-backlink">AV Metadata</a><a class="headerlink" href="#av-metadata" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}</span>
+</pre></div>
+</div>
+<p>The presence of this metadata removes the ability of synchronizing operations to
+establish availability and visibility, and essentially creates <em>non-av</em> synchronizing
+operations.</p>
+<p>For a synchronizing operation which itself accesses memory (e.g., <code class="docutils literal notranslate"><span class="pre">store</span> <span class="pre">atomic</span>
+<span class="pre">release</span></code> or <code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">atomic</span> <span class="pre">acquire</span></code>), the metadata does not affect the
+availability or the visibility of the access performed by the operation itself.
+It only affects the synchronization of other memory accesses.</p>
+</section>
+<section id="makeavailable-and-makevisible">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">MakeAvailable and MakeVisible</a><a class="headerlink" href="#makeavailable-and-makevisible" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">store</span><span class="w"> </span><span class="k">atomic</span><span class="w"> </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span><span class="w"> </span><span class="p">&lt;</span><span class="err">ordering</span><span class="p">&gt;</span><span class="w"> </span><span class="p">[,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}]</span>
+<span class="k">load</span><span class="w"> </span><span class="k">atomic</span><span class="w">  </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span><span class="w"> </span><span class="p">&lt;</span><span class="err">ordering</span><span class="p">&gt;</span><span class="w"> </span><span class="p">[,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}]</span>
+<span class="k">atomicrmw</span><span class="w">    </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span><span class="w"> </span><span class="p">&lt;</span><span class="err">ordering</span><span class="p">&gt;</span><span class="w"> </span><span class="p">[,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}]</span>
+<span class="k">cmpxchg</span><span class="w">      </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span><span class="w"> </span><span class="p">&lt;</span><span class="err">ordering</span><span class="p">&gt;</span><span class="w"> </span><span class="p">[,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}]</span>
+<span class="k">fence</span><span class="w">        </span><span class="p">[</span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;&lt;target-scope&gt;&quot;</span><span class="p">)]</span><span class="w"> </span><span class="p">&lt;</span><span class="err">ordering</span><span class="p">&gt;</span><span class="w"> </span><span class="p">[,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}]</span>
+</pre></div>
+</div>
+<p>A synchronizing operation with at least <code class="docutils literal notranslate"><span class="pre">release</span></code> ordering is a
+<code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> operation with scope <code class="docutils literal notranslate"><span class="pre">syncscope</span></code>, if it is not marked as
+<code class="docutils literal notranslate"><span class="pre">!{!&quot;amdgcn-av&quot;,</span> <span class="pre">!&quot;none&quot;}</span></code>.</p>
+<p>A synchronizing operation with at least <code class="docutils literal notranslate"><span class="pre">acquire</span></code> ordering is a
+<code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> operation with scope <code class="docutils literal notranslate"><span class="pre">syncscope</span></code>, if it is not marked as
+<code class="docutils literal notranslate"><span class="pre">!{!&quot;amdgcn-av&quot;,</span> <span class="pre">!&quot;none&quot;}</span></code>.</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; This includes the following operations:</span>
+<span class="c">; - The atomic store at &quot;agent&quot; scope,</span>
+<span class="c">; - A store-available operation at &quot;agent&quot; scope on `ptr`,</span>
+<span class="c">; - A `MakeAvailable` operation at &quot;agent&quot; scope that affects previous memory accesses.</span>
+<span class="k">store</span><span class="w"> </span><span class="k">atomic</span><span class="w"> </span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;agent&quot;</span><span class="p">)</span><span class="w"> </span><span class="k">release</span><span class="w"> </span><span class="kt">ptr</span>
+
+<span class="c">; This includes the following operations:</span>
+<span class="c">; - The atomic store at &quot;agent&quot; scope,</span>
+<span class="c">; - A store-available operation at &quot;agent&quot; scope on `ptr`.</span>
+<span class="c">; Notably, it does not include a `MakeAvailable` operation on other memory accesses.</span>
+<span class="k">store</span><span class="w"> </span><span class="k">atomic</span><span class="w"> </span><span class="k">syncscope</span><span class="p">(</span><span class="s">&quot;agent&quot;</span><span class="p">)</span><span class="w"> </span><span class="k">release</span><span class="w"> </span><span class="kt">ptr</span><span class="p">,</span><span class="w"> </span><span class="nv">!mmra</span><span class="w"> </span><span class="p">!{</span><span class="nv">!&quot;amdgcn-av&quot;</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;none&quot;</span><span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="ordering">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Ordering</a><a class="headerlink" href="#ordering" title="Link to this heading">¶</a></h2>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>TODO:</strong> These ordering operations affect all address spaces. We need to
+eventually make that a parameter similar to the storage class parameter on
+operations and orders in Vulkan.</p>
+</div>
+<section id="availability-operation">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Availability Operation</a><a class="headerlink" href="#availability-operation" title="Link to this heading">¶</a></h3>
+<p>An operation <code class="docutils literal notranslate"><span class="pre">X</span></code> is an <em>availability operation</em> on a write <code class="docutils literal notranslate"><span class="pre">W</span></code> if one of the
+following holds:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> is <code class="docutils literal notranslate"><span class="pre">W</span></code> itself, and <code class="docutils literal notranslate"><span class="pre">W</span></code> is a <em>store-available</em> operation, or,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> is a <code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> operation that follows <code class="docutils literal notranslate"><span class="pre">W</span></code> in program order,
+or,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> is a <code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> operation whose scope instance includes <code class="docutils literal notranslate"><span class="pre">W</span></code>,
+and there is an availability operation <code class="docutils literal notranslate"><span class="pre">Z</span></code> on <code class="docutils literal notranslate"><span class="pre">W</span></code> such that:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">Z</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">X</span></code>, and,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Z</span></code>’s scope instance includes <code class="docutils literal notranslate"><span class="pre">X</span></code>.</p></li>
+</ul>
+</li>
+</ul>
+<p>Then <code class="docutils literal notranslate"><span class="pre">X</span></code> makes <code class="docutils literal notranslate"><span class="pre">W</span></code> available in its own scope instance <code class="docutils literal notranslate"><span class="pre">S</span></code> and every
+subscope instance of <code class="docutils literal notranslate"><span class="pre">S</span></code> that also includes <code class="docutils literal notranslate"><span class="pre">W</span></code>.</p>
+</section>
+<section id="visibility-operation">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Visibility Operation</a><a class="headerlink" href="#visibility-operation" title="Link to this heading">¶</a></h3>
+<p>An operation <code class="docutils literal notranslate"><span class="pre">Y</span></code> is a <em>visibility operation</em> on a write <code class="docutils literal notranslate"><span class="pre">W</span></code> if <code class="docutils literal notranslate"><span class="pre">Y</span></code> is a
+<em>load-visible</em> operation to the same address, or a <code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> operation,
+and one of the following holds:</p>
+<ul>
+<li><p>There exists an <em>availability</em> operation <code class="docutils literal notranslate"><span class="pre">X</span></code> on write <code class="docutils literal notranslate"><span class="pre">W</span></code> such that:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">Y</span></code>, and,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code> specify inclusive scopes.</p></li>
+</ul>
+<p>Then <code class="docutils literal notranslate"><span class="pre">Y</span></code> makes <code class="docutils literal notranslate"><span class="pre">W</span></code> visible in the common scope instance <code class="docutils literal notranslate"><span class="pre">S</span></code> of <code class="docutils literal notranslate"><span class="pre">X</span></code> and
+<code class="docutils literal notranslate"><span class="pre">Y</span></code>, and every subscope instance of <code class="docutils literal notranslate"><span class="pre">S</span></code> that includes <code class="docutils literal notranslate"><span class="pre">Y</span></code>.</p>
+</li>
+<li><p>There exists a <em>visibility</em> operation <code class="docutils literal notranslate"><span class="pre">X</span></code> on write <code class="docutils literal notranslate"><span class="pre">W</span></code> such that:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">Y</span></code>, and,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> makes <code class="docutils literal notranslate"><span class="pre">W</span></code> visible in a scope instance <code class="docutils literal notranslate"><span class="pre">S1</span></code> that includes <code class="docutils literal notranslate"><span class="pre">Y</span></code>, and,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> is included in the scope instance <code class="docutils literal notranslate"><span class="pre">S2</span></code> of <code class="docutils literal notranslate"><span class="pre">Y</span></code>.</p></li>
+</ul>
+<p>Then <code class="docutils literal notranslate"><span class="pre">Y</span></code> makes <code class="docutils literal notranslate"><span class="pre">W</span></code> visible in the intersection <code class="docutils literal notranslate"><span class="pre">S</span></code> of <code class="docutils literal notranslate"><span class="pre">S1</span></code> and <code class="docutils literal notranslate"><span class="pre">S2</span></code>,
+and every subscope instance of <code class="docutils literal notranslate"><span class="pre">S</span></code> that includes <code class="docutils literal notranslate"><span class="pre">Y</span></code>.</p>
+</li>
+</ul>
+</section>
+<section id="location-order">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Location Order</a><a class="headerlink" href="#location-order" title="Link to this heading">¶</a></h3>
+<p>A write <code class="docutils literal notranslate"><span class="pre">W</span></code> is <em>location-ordered</em> before an access <code class="docutils literal notranslate"><span class="pre">Y</span></code> to the same address
+if <code class="docutils literal notranslate"><span class="pre">W</span></code> is program-ordered before <code class="docutils literal notranslate"><span class="pre">Y</span></code>.</p>
+<p>A write <code class="docutils literal notranslate"><span class="pre">W</span></code> is <em>location-ordered</em> before a write <code class="docutils literal notranslate"><span class="pre">W1</span></code> to the same address if
+there exists an availability operation <code class="docutils literal notranslate"><span class="pre">Z</span></code> on <code class="docutils literal notranslate"><span class="pre">W</span></code> such that:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Z</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">W1</span></code>, and,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">W1</span></code> is included in <code class="docutils literal notranslate"><span class="pre">Z</span></code>’s scope instance.</p></li>
+</ul>
+<p>A write <code class="docutils literal notranslate"><span class="pre">W</span></code> is <em>location-ordered</em> before a read <code class="docutils literal notranslate"><span class="pre">R</span></code> to the same address if
+there exists a visibility operation <code class="docutils literal notranslate"><span class="pre">Z</span></code> on write <code class="docutils literal notranslate"><span class="pre">W</span></code> such that:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Z</span></code> is <code class="docutils literal notranslate"><span class="pre">R</span></code> itself, or,</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Z</span></code> precedes <code class="docutils literal notranslate"><span class="pre">R</span></code> in program order.</p></li>
+</ul>
+<p>The AMDGPU memory model overrides the definition of each byte in the
+<a class="reference internal" href="LangRef.html#memmodel"><span class="std std-ref">LLVM memory model</span></a> as follows.</p>
+<p>Every (defined) read operation <code class="docutils literal notranslate"><span class="pre">R</span></code> reads a series of bytes written by
+(defined) write operations. Each initialized global is assumed to have an
+initial <em>system scoped</em> atomic write operation that is <em>location-ordered</em> before
+any other read or write to that same location.</p>
+<p>For each byte of a read <code class="docutils literal notranslate"><span class="pre">R</span></code>, <code class="docutils literal notranslate"><span class="pre">R</span></code> may see any write to the same byte, except:</p>
+<ul class="simple">
+<li><p>If a write <code class="docutils literal notranslate"><span class="pre">W1</span></code> is <em>location-ordered</em> before a write <code class="docutils literal notranslate"><span class="pre">W2</span></code>, and <code class="docutils literal notranslate"><span class="pre">W2</span></code> is
+<em>location-ordered</em> before a read <code class="docutils literal notranslate"><span class="pre">R</span></code>, then <code class="docutils literal notranslate"><span class="pre">R</span></code> may not see <code class="docutils literal notranslate"><span class="pre">W1</span></code>.</p></li>
+<li><p>If a read <code class="docutils literal notranslate"><span class="pre">R</span></code> happens-before a write <code class="docutils literal notranslate"><span class="pre">W3</span></code>, then <code class="docutils literal notranslate"><span class="pre">R</span></code> may not see <code class="docutils literal notranslate"><span class="pre">W3</span></code>.</p></li>
+</ul>
+<p>The value returned by <code class="docutils literal notranslate"><span class="pre">R</span></code> is then defined as follows:</p>
+<ul class="simple">
+<li><p>If no write is <em>location-ordered</em> before a read <code class="docutils literal notranslate"><span class="pre">R</span></code>, then <code class="docutils literal notranslate"><span class="pre">R</span></code> returns
+<code class="docutils literal notranslate"><span class="pre">undef</span></code>.</p></li>
+<li><p>Otherwise if the set consisting of <code class="docutils literal notranslate"><span class="pre">R</span></code> and all writes that <code class="docutils literal notranslate"><span class="pre">R</span></code> may see
+contains only atomic operations with inclusive scopes, then <code class="docutils literal notranslate"><span class="pre">R</span></code> returns the
+value written by one of those writes.</p></li>
+<li><p>Otherwise, if <code class="docutils literal notranslate"><span class="pre">R</span></code> may see some write that is not <em>location-ordered</em> before
+<code class="docutils literal notranslate"><span class="pre">R</span></code>, then <code class="docutils literal notranslate"><span class="pre">R</span></code> returns <code class="docutils literal notranslate"><span class="pre">undef</span></code>.</p></li>
+<li><p>Otherwise, if <code class="docutils literal notranslate"><span class="pre">R</span></code> may see exactly one write <code class="docutils literal notranslate"><span class="pre">W</span></code>, then <code class="docutils literal notranslate"><span class="pre">R</span></code> returns the
+value written by <code class="docutils literal notranslate"><span class="pre">W</span></code>.</p></li>
+<li><p>Otherwise, <code class="docutils literal notranslate"><span class="pre">R</span></code> returns <code class="docutils literal notranslate"><span class="pre">undef</span></code>.</p></li>
+</ul>
+</section>
+</section>
+<section id="properties">
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Properties</a><a class="headerlink" href="#properties" title="Link to this heading">¶</a></h2>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>This section is informational.</p>
+</div>
+<p>The following properties follow from the definitions above:</p>
+<ol class="arabic simple">
+<li><p><strong>Happens-before is necessary for location-order.</strong> A write <code class="docutils literal notranslate"><span class="pre">W</span></code> is
+<em>location-ordered</em> before a read <code class="docutils literal notranslate"><span class="pre">R</span></code> only if <code class="docutils literal notranslate"><span class="pre">W</span></code> happens-before <code class="docutils literal notranslate"><span class="pre">R</span></code>.
+This follows from the definition of availability and visibility operations,
+which always require a happens-before link with the preceding operation in
+the chain.</p></li>
+<li><p><strong>A write cannot be made available in a scope that does not contain it.</strong> The
+definition of an availability operation <code class="docutils literal notranslate"><span class="pre">X</span></code> requires that <code class="docutils literal notranslate"><span class="pre">X</span></code>’s scope
+instance includes <code class="docutils literal notranslate"><span class="pre">W</span></code> as a precondition. Since every scope instance that
+includes <code class="docutils literal notranslate"><span class="pre">X</span></code> also includes <code class="docutils literal notranslate"><span class="pre">W</span></code>, availability cannot reach a scope
+instance that excludes <code class="docutils literal notranslate"><span class="pre">W</span></code>. In other words, availability can only “expand
+outwards” into progressively larger scopes.</p></li>
+<li><p><strong>Visibility is bounded by availability.</strong> When a write is available in a
+scope instance, it can be made visible in that scope instance by a visibility
+operation with the corresponding scope. Subsequent <code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> operations
+make that write visible into narrower scope instances towards the observer.</p></li>
+<li><p><strong>A write can be made visible in a scope instance that does not contain it.</strong>
+The definition of a <em>visibility operation</em> anchors scope instances to the
+observer (<code class="docutils literal notranslate"><span class="pre">Y</span></code>), not to the original write. The only precondition is that the
+write must already be visible or available in the scope instance of the
+visibility operation.</p></li>
+<li><p><strong>Availability and visibility chains.</strong> For a write <code class="docutils literal notranslate"><span class="pre">W</span></code> to be visible to a
+read <code class="docutils literal notranslate"><span class="pre">R</span></code> anywhere in the system, the sufficient condition is a chain of
+happens-before edges that include availability and visibility operations with
+inclusive scopes. It is not necessary that <code class="docutils literal notranslate"><span class="pre">W</span></code> and <code class="docutils literal notranslate"><span class="pre">R</span></code> themselves have
+inclusive scopes. Each link in the availability and visibility definitions
+only checks the immediate predecessor, so intermediate operations can bridge
+scope gaps that the endpoints cannot satisfy directly. Such a chain passes
+through at least one availability operation and at least one visibility
+operation with inclusive scopes, such that their common scope includes both
+<code class="docutils literal notranslate"><span class="pre">W</span></code> and <code class="docutils literal notranslate"><span class="pre">R</span></code>.</p></li>
+</ol>
+</section>
+<section id="the-vulkan-memory-model">
+<span id="amdgcn-av-vulkan"></span><h2><a class="toc-backref" href="#id17" role="doc-backlink">The Vulkan Memory Model</a><a class="headerlink" href="#the-vulkan-memory-model" title="Link to this heading">¶</a></h2>
+<p>The AMDGPU memory model draws heavily on the Vulkan memory model. In
+particular, the following instructions are equivalent.</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 20.0%" />
+<col style="width: 20.0%" />
+<col style="width: 60.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>LLVM</p></th>
+<th class="head"><p>SPIRV</p></th>
+<th class="head"><p>Available/Visible Semantics</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">load</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpLoad</span> <span class="pre">NonPrivatePointer</span></code></p></td>
+<td><p>-</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">load-visible</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpLoad</span> <span class="pre">NonPrivatePointer</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakePointerVisible</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">store</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpStore</span> <span class="pre">NonPrivatePointer</span></code></p></td>
+<td><p>-</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">store-available</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpStore</span> <span class="pre">NonPrivatePointer</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakePointerAvailable</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">atomic</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpAtomicLoad</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakePointerVisible</span></code>. Also <code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> when order is at least <code class="docutils literal notranslate"><span class="pre">acquire</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">atomic</span> <span class="pre">!{!&quot;amdgcn-av&quot;,</span> <span class="pre">!&quot;none&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpAtomicLoad</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakePointerVisible</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">store</span> <span class="pre">atomic</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpAtomicStore</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakePointerAvailable</span></code>. Also <code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> when order is at least <code class="docutils literal notranslate"><span class="pre">release</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">store</span> <span class="pre">atomic</span> <span class="pre">!{!&quot;amdgcn-av&quot;,</span> <span class="pre">!&quot;none&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpAtomicStore</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakePointerAvailable</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fence</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpMemoryBarrier</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> when order is at least <code class="docutils literal notranslate"><span class="pre">release</span></code>, and <code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> when order is at least <code class="docutils literal notranslate"><span class="pre">acquire</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fence</span> <span class="pre">!{!&quot;amdgcn-av&quot;,</span> <span class="pre">!&quot;none&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OpMemoryBarrier</span></code></p></td>
+<td><p>-</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The above table is representative only, and does not aim to be exhaustive. In
+particular, it does not list composite atomic operations like <code class="docutils literal notranslate"><span class="pre">rmw</span></code> and
+<code class="docutils literal notranslate"><span class="pre">cmpxchg</span></code>. The ordering and semantics of these operations can be determined
+by combining suitable rules such as:</p>
+<ul class="simple">
+<li><p>“<code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> if the order is at least <code class="docutils literal notranslate"><span class="pre">release</span></code>, and the operation
+results in a store”,</p></li>
+<li><p>“Only if it is not marked as <code class="docutils literal notranslate"><span class="pre">!{!&quot;amdgcn-av&quot;,</span> <span class="pre">!&quot;none&quot;}</span></code>”, etc.</p></li>
+</ul>
+</div>
+<p>The AMDGPU memory model is a special case of the Vulkan memory model:</p>
+<ol class="loweralpha simple">
+<li><p>LLVM fence/atomic ordering operations have <code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> /
+<code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> semantics by default, thus satisfying the availability and
+visibility chains required in Vulkan. Hence the LLVM memory model is a
+“strong” subset of the Vulkan memory model.</p></li>
+<li><p>The AMDGPU memory model described here makes it possible to opt-out of the
+default <code class="docutils literal notranslate"><span class="pre">MakeAvailable</span></code> and <code class="docutils literal notranslate"><span class="pre">MakeVisible</span></code> semantics, and instead specify
+it on select places including the new <em>load-visible</em> and <em>store-available</em>
+operations. This expands the subset of the Vulkan memory model that can now
+be expressed in LLVM IR.</p></li>
+</ol>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="SPIRVUsage.html" title="User Guide for SPIR-V Target"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="AMDGPUExecutionSynchronization.html" title="AMDGPU Execution Synchronization"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">AMDGPU Memory Model</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-08-25.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

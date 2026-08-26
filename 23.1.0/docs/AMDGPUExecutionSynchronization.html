@@ -1,0 +1,763 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>AMDGPU Execution Synchronization &#8212; LLVM 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="AMDGPU Memory Model" href="AMDGPUMemoryModel.html" />
+    <link rel="prev" title="AMDGPU DMA Operations" href="AMDGPUDMAOperations.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="AMDGPUMemoryModel.html" title="AMDGPU Memory Model"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="AMDGPUDMAOperations.html" title="AMDGPU DMA Operations"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">AMDGPU Execution Synchronization</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/AMDGPUExecutionSynchronization.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="amdgpu-execution-synchronization">
+<span id="id1"></span><h1>AMDGPU Execution Synchronization<a class="headerlink" href="#amdgpu-execution-synchronization" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#barriers" id="id4">Barriers</a></p>
+<ul>
+<li><p><a class="reference internal" href="#execution-model" id="id5">Execution Model</a></p>
+<ul>
+<li><p><a class="reference internal" href="#informational-notes" id="id6">Informational Notes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#barrier-implementations-on-amdgpu-targets" id="id7">Barrier Implementations on AMDGPU Targets</a></p>
+<ul>
+<li><p><a class="reference internal" href="#s-barrier" id="id8"><code class="docutils literal notranslate"><span class="pre">s_barrier</span></code></a></p>
+<ul>
+<li><p><a class="reference internal" href="#gfx6-11" id="id9">GFX6-11</a></p></li>
+<li><p><a class="reference internal" href="#gfx12" id="id10">GFX12</a></p>
+<ul>
+<li><p><a class="reference internal" href="#named-barriers-model-extensions" id="id11">“Named Barriers” Model Extensions</a></p></li>
+<li><p><a class="reference internal" href="#code-sequences" id="id12">Code Sequences</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+<p id="amdgpu-execution-synchronization-barriers">This document covers different ways of synchronizing execution of threads on AMD GPUs.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This document is not exhaustive. There may be more ways of synchronizing execution
+that are not covered by this document.</p>
+</div>
+<section id="barriers">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Barriers</a><a class="headerlink" href="#barriers" title="Link to this heading">¶</a></h2>
+<p>This section covers execution synchronization using barrier-style primitives.</p>
+<section id="execution-model">
+<span id="amdgpu-execution-synchronization-barriers-execution-model"></span><h3><a class="toc-backref" href="#id5" role="doc-backlink">Execution Model</a><a class="headerlink" href="#execution-model" title="Link to this heading">¶</a></h3>
+<p>This section contains a formal execution model that can be used to model the behavior of
+barriers on AMDGPU targets.</p>
+<p>Barriers only synchronize execution and do not affect the visibility of memory operations between threads.
+Refer to the <a class="reference internal" href="AMDGPUUsage.html#amdgpu-amdhsa-execution-barriers-memory-model"><span class="std std-ref">execution barriers memory model</span></a>
+to determine how to synchronize memory operations through <em>barrier-executes-before</em>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The barrier execution model is experimental and subject to change.</p>
+</div>
+<p class="rubric">Barrier <em>Objects</em></p>
+<p>Threads can synchronize execution by performing barrier operations on barrier <em>objects</em> as described below:</p>
+<p>Each barrier <em>object</em> has the following state:</p>
+<ul class="simple">
+<li><p>An unsigned positive integer <em>expected count</em>: counts the number of <em>arrive</em> operations
+expected for this barrier <em>object</em>.</p></li>
+<li><p>An unsigned non-negative integer <em>arrive count</em>: counts the number of <em>arrive</em> operations
+already performed on this barrier <em>object</em>.</p>
+<ul>
+<li><p>The initial value of <em>arrive count</em> is zero.</p></li>
+<li><p>When an operation causes <em>arrive count</em> to be equal to <em>expected count</em>, the barrier is completed,
+and the <em>arrive count</em> is reset to zero.</p></li>
+</ul>
+</li>
+</ul>
+<p>Barrier <em>objects</em> exist within a <em>scope</em> instance (see <a class="reference internal" href="AMDGPUUsage.html#amdgpu-amdhsa-llvm-sync-scopes-table"><span class="std std-ref">AMDHSA LLVM Sync Scopes</span></a>),
+and thus can only be accessed by threads in the same <em>scope</em> instance.</p>
+<p class="rubric" id="amdgpu-execution-synchronization-barriers-execution-model-barrier-operations">Barrier Operations</p>
+<p>Barrier operations are performed on barrier <em>objects</em>. A barrier operation is a dynamic instance
+of one of the following:</p>
+<ul class="simple">
+<li><p>Barrier <em>init</em></p>
+<ul>
+<li><p>Barrier <em>init</em> takes an additional unsigned positive integer argument <em>k</em>.</p></li>
+<li><p>Sets the <em>expected count</em> of the <em>barrier object</em> to <em>k</em>.</p></li>
+<li><p>Resets the <em>arrive count</em> of the <em>barrier object</em> to zero.</p></li>
+</ul>
+</li>
+<li><p>Barrier <em>drop</em>.</p>
+<ul>
+<li><p>Decrements <em>expected count</em> of the barrier <em>object</em> by one.</p></li>
+<li><p>A barrier <em>drop</em> cannot cause the <em>expected count</em> of the barrier <em>object</em>
+to become negative; otherwise, the behavior is undefined.</p></li>
+</ul>
+</li>
+<li><p>Barrier <em>arrive</em>.</p>
+<ul>
+<li><p>Increments the <em>arrive count</em> of the barrier <em>object</em> by one.</p></li>
+<li><p>If supported, an additional argument to <em>arrive</em> can also update the <em>expected count</em> of the
+barrier <em>object</em> before the <em>arrive count</em> is incremented;
+the new <em>expected count</em> cannot be less than or equal to the <em>arrive count</em>,
+otherwise the behavior is undefined.</p></li>
+</ul>
+</li>
+<li><p>Barrier <em>wait</em>.</p>
+<ul>
+<li><p>Introduces execution dependencies between threads; this operation depends on
+other barrier operations to complete.</p></li>
+</ul>
+</li>
+</ul>
+<p>Barrier modification operations are barrier operations that modify the barrier <em>object</em> state:</p>
+<ul class="simple">
+<li><p>Barrier <em>init</em>.</p></li>
+<li><p>Barrier <em>drop</em>.</p></li>
+<li><p>Barrier <em>arrive</em>.</p></li>
+</ul>
+<p class="rubric"><em>Thread-barrier-order&lt;BO&gt;</em></p>
+<p><em>Thread-barrier-order&lt;BO&gt;</em> is the subset of <em>program-order</em> that only relates barrier operations
+performed on a barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code>.</p>
+<p class="rubric"><em>Barrier-modification-order&lt;BO&gt;</em></p>
+<p>All barrier modification operations on a barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code> occur in a strict total order called
+<em>barrier-modification-order&lt;BO&gt;</em>; it is the order in which <code class="docutils literal notranslate"><span class="pre">BO</span></code> observes barrier
+operations that change its state. For any valid <em>barrier-modification-order&lt;BO&gt;</em>, the
+following must be true:</p>
+<ul class="simple">
+<li><p>Let <code class="docutils literal notranslate"><span class="pre">A</span></code> and <code class="docutils literal notranslate"><span class="pre">B</span></code> be two barrier modification operations where <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">B</span></code> in
+<em>thread-barrier-order&lt;BO&gt;</em>, then <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">B</span></code> is also in <em>barrier-modification-order&lt;BO&gt;</em>.</p></li>
+<li><p>The first element in <em>barrier-modification-order&lt;BO&gt;</em> is always a barrier <em>init</em>, otherwise
+the behavior is undefined.</p></li>
+</ul>
+<p class="rubric"><em>Barrier-participates-in</em></p>
+<p><em>Barrier-participates-in</em> relates barrier operations to the barrier <em>waits</em> that depend on them
+to complete. A barrier operation <code class="docutils literal notranslate"><span class="pre">X</span></code> <em>barrier-participates-in</em> a barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W</span></code>
+if and only if all of the following is true:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">W</span></code> are both performed on the same barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> is a barrier <em>arrive</em> or <em>drop</em> operation.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> does not <em>barrier-participate-in</em> another distinct barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W'</span></code> in the same thread as <code class="docutils literal notranslate"><span class="pre">W</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">W</span> <span class="pre">-&gt;</span> <span class="pre">X</span></code> not in <em>thread-barrier-order&lt;BO&gt;</em>.</p></li>
+<li><p>All dependent constraint and relations are satisfied as well. <a class="footnote-reference brackets" href="#id3" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>0<span class="fn-bracket">]</span></a></p></li>
+</ul>
+<p>For the set <code class="docutils literal notranslate"><span class="pre">S</span></code> consisting of all barrier operations that <em>barrier-participate-in</em> a barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W</span></code> for some
+barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code>:</p>
+<ul class="simple">
+<li><p>The elements of <code class="docutils literal notranslate"><span class="pre">S</span></code> all exist in a continuous, uninterrupted interval of <em>barrier-modification-order&lt;BO&gt;</em>.</p></li>
+<li><p>The <em>arrive count</em> of <code class="docutils literal notranslate"><span class="pre">BO</span></code> is zero before the first operation of <code class="docutils literal notranslate"><span class="pre">S</span></code> in <em>barrier-modification-order&lt;BO&gt;</em>.</p></li>
+<li><p>The <em>arrive count</em> and <em>expected count</em> of <code class="docutils literal notranslate"><span class="pre">BO</span></code> are equal after the last operation of <code class="docutils literal notranslate"><span class="pre">S</span></code> in
+<em>barrier-modification-order&lt;BO&gt;</em>. The <em>arrive count</em> and <em>expected count</em> of <code class="docutils literal notranslate"><span class="pre">BO</span></code> cannot
+equal at any other point in <code class="docutils literal notranslate"><span class="pre">S</span></code>.</p></li>
+</ul>
+<aside class="footnote-list brackets">
+<aside class="footnote brackets" id="id3" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">0</a><span class="fn-bracket">]</span></span>
+<p>The definition of <em>barrier-participates-in</em> (in its current state) is non-deterministic and
+will be improved in the future: Within a valid execution, there may be multiple ways
+to build <em>barrier-participates-in</em>, however there is only one way to build it that also satisfies all
+other relations and constraints that depend on <em>barrier-participates-in</em> and relations derived from it.</p>
+</aside>
+</aside>
+<p class="rubric"><em>Barrier-executes-before</em></p>
+<p>A barrier operation <code class="docutils literal notranslate"><span class="pre">A</span></code> <em>barrier-executes-before</em> another barrier operation <code class="docutils literal notranslate"><span class="pre">B</span></code> if any of the
+following is true:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">B</span></code> in <em>program-order</em>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">B</span></code> in <em>barrier-participates-in</em>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">A</span></code> <em>barrier-executes-before</em> some barrier operation <code class="docutils literal notranslate"><span class="pre">X</span></code>, and <code class="docutils literal notranslate"><span class="pre">X</span></code>
+<em>barrier-executes-before</em> <code class="docutils literal notranslate"><span class="pre">B</span></code>.</p></li>
+</ul>
+<p><em>Barrier-executes-before</em> is consistent with <em>barrier-modification-order&lt;BO&gt;</em> for every barrier object <code class="docutils literal notranslate"><span class="pre">BO</span></code>.</p>
+<p class="rubric">Barrier <em>drop</em> races</p>
+<p>For every pair of barrier <em>arrive</em> <code class="docutils literal notranslate"><span class="pre">A</span></code> and barrier <em>drop</em> <code class="docutils literal notranslate"><span class="pre">D</span></code> performed on a barrier <em>object</em>
+<code class="docutils literal notranslate"><span class="pre">BO</span></code>, such that <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">D</span></code> in <em>thread-barrier-order&lt;BO&gt;</em>, one of the following must be true:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">A</span></code> does not <em>barrier-participates-in</em> any barrier <em>wait</em>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">A</span></code> <em>barrier-participates-in</em> at least one barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W</span></code>
+such that <code class="docutils literal notranslate"><span class="pre">W</span> <span class="pre">-&gt;</span> <span class="pre">D</span></code> in <em>barrier-executes-before</em>.</p></li>
+</ul>
+<p class="rubric"><em>barrier-phase-with</em></p>
+<p><em>barrier-phase-with</em> is a symmetric relation over barrier operations defined as the
+transitive closure of: <em>barrier-participates-in</em> and its inverse relation.</p>
+<p class="rubric">Barrier phase separation</p>
+<p>For every barrier operation <code class="docutils literal notranslate"><span class="pre">A</span></code> that <em>barrier-participates-in</em> a barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W</span></code> on a barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code>:</p>
+<ul class="simple">
+<li><p>There is no barrier operation <code class="docutils literal notranslate"><span class="pre">X</span></code> on <code class="docutils literal notranslate"><span class="pre">BO</span></code> such that <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">X</span> <span class="pre">-&gt;</span> <span class="pre">W</span></code> in
+<em>barrier-executes-before</em>, and <code class="docutils literal notranslate"><span class="pre">X</span></code> <em>barrier-phase-with</em> a non-empty set of operations
+that does not include <code class="docutils literal notranslate"><span class="pre">W</span></code>.</p></li>
+</ul>
+<section id="informational-notes">
+<h4><a class="toc-backref" href="#id6" role="doc-backlink">Informational Notes</a><a class="headerlink" href="#informational-notes" title="Link to this heading">¶</a></h4>
+<p>Informally, we can deduce from the above formal model that execution barriers behave as follows:</p>
+<ul class="simple">
+<li><p><em>Barrier-executes-before</em> relates the dynamic instances of operations from different threads together.
+For example, if <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">-&gt;</span> <span class="pre">B</span></code> in <em>barrier-executes-before</em>, then the execution of <code class="docutils literal notranslate"><span class="pre">A</span></code> must complete
+before the execution of <code class="docutils literal notranslate"><span class="pre">B</span></code> can complete.</p>
+<ul>
+<li><p>This property can also be combined with <em>program-order</em>. For example, let two (non-barrier) operations
+<code class="docutils literal notranslate"><span class="pre">X</span></code> and <code class="docutils literal notranslate"><span class="pre">Y</span></code> where <code class="docutils literal notranslate"><span class="pre">X</span> <span class="pre">-&gt;</span> <span class="pre">A</span></code> and <code class="docutils literal notranslate"><span class="pre">B</span> <span class="pre">-&gt;</span> <span class="pre">Y</span></code> in <em>program-order</em>, then we know that the execution
+of <code class="docutils literal notranslate"><span class="pre">X</span></code> completes before the execution of <code class="docutils literal notranslate"><span class="pre">Y</span></code> does.</p></li>
+</ul>
+</li>
+<li><p>Barriers do not complete “out-of-thin-air”; a barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W</span></code> cannot depend on a barrier operation
+<code class="docutils literal notranslate"><span class="pre">X</span></code> to complete if <code class="docutils literal notranslate"><span class="pre">W</span> <span class="pre">-&gt;</span> <span class="pre">X</span></code> in <em>barrier-executes-before</em>.</p></li>
+<li><p>It is undefined behavior to operate on an uninitialized barrier object.</p></li>
+<li><p>It is undefined behavior for a barrier <em>wait</em> to never complete.</p></li>
+<li><p>It is not mandatory to <em>drop</em> a barrier after <em>joining</em> it.</p></li>
+<li><p>A thread may not <em>arrive</em> and then <em>drop</em> a barrier <em>object</em> unless the barrier completes before the
+barrier <em>drop</em>. Incrementing the <em>arrive count</em> and decrementing the <em>expected count</em> directly
+after may cause undefined behavior.</p></li>
+<li><p><em>Joining</em> a barrier is only useful if the thread will <em>wait</em> on that same barrier <em>object</em> later.</p></li>
+</ul>
+</section>
+</section>
+<section id="barrier-implementations-on-amdgpu-targets">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Barrier Implementations on AMDGPU Targets</a><a class="headerlink" href="#barrier-implementations-on-amdgpu-targets" title="Link to this heading">¶</a></h3>
+<section id="s-barrier">
+<h4><a class="toc-backref" href="#id8" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">s_barrier</span></code></a><a class="headerlink" href="#s-barrier" title="Link to this heading">¶</a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> are the primary barrier implementation of AMD GPUs.</p>
+<p><code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instructions can only be used to synchronize threads at a wavefront granularity.
+<code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instructions are convergent within a wave, and thus can only be performed
+in wave-uniform control flow.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> family of instructions is available in some form on all GFX targets,
+and has evolved over time. The sub-sections below cover the capabilities offered by every major
+iteration of this feature separately.</p>
+<section id="gfx6-11">
+<h5><a class="toc-backref" href="#id9" role="doc-backlink">GFX6-11</a><a class="headerlink" href="#gfx6-11" title="Link to this heading">¶</a></h5>
+<p>Targets from GFX6 through GFX11 included do not have the “split barrier” feature.
+The barrier <em>arrive</em> and barrier <em>wait</em> operations <strong>cannot</strong> be performed independently
+using <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code>.</p>
+<p>There is only one <em>workgroup barrier</em> object of <code class="docutils literal notranslate"><span class="pre">workgroup</span></code> scope that is implicitly used
+by all <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instructions.</p>
+<p>The following code sequences can be used to implement the barrier operations defined by the
+<a class="reference internal" href="#amdgpu-execution-synchronization-barriers-execution-model"><span class="std std-ref">execution synchronization model</span></a> using
+<code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> on GFX6 through GFX11:</p>
+<table class="docutils align-default" id="amdgpu-execution-synchronization-barriers-sbarrier-gfx6-11">
+<caption><span class="caption-text">s_barrier GFX6-11</span><a class="headerlink" href="#amdgpu-execution-synchronization-barriers-sbarrier-gfx6-11" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 15.0%" />
+<col style="width: 15.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Barrier Operation(s)</p></th>
+<th class="head"><p>Barrier <em>Object</em></p></th>
+<th class="head"><p>AMDGPU Machine Code</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td colspan="3"><p><strong>Init and Drop</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><em>init</em></p></td>
+<td><ul class="simple">
+<li><p><em>Workgroup barrier</em></p></li>
+</ul>
+</td>
+<td><p>Automatically initialized by the hardware when a workgroup
+is launched. The <em>expected count</em> of this barrier is set
+to the number of waves in the workgroup.</p></td>
+</tr>
+<tr class="row-even"><td><p><em>drop</em></p></td>
+<td><ul class="simple">
+<li><p><em>Workgroup barrier</em></p></li>
+</ul>
+</td>
+<td><p>When a thread ends, it automatically <em>drops</em> this barrier
+<em>object</em> if it had previously <em>joined</em> it.</p></td>
+</tr>
+<tr class="row-odd"><td colspan="3"><p><strong>Arrive and Wait</strong></p></td>
+</tr>
+<tr class="row-even"><td><p><em>arrive</em> then <em>wait</em></p></td>
+<td><ul class="simple">
+<li><p><em>Workgroup barrier</em></p></li>
+</ul>
+</td>
+<td><div class="line-block">
+<div class="line"><strong>BackOffBarrier</strong></div>
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier</span></code></div>
+<div class="line"><strong>No BackOffBarrier</strong></div>
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_waitcnt</span> <span class="pre">vmcnt(0)</span> <span class="pre">expcnt(0)</span> <span class="pre">lgkmcnt(0)</span></code></div>
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_waitcnt_vscnt</span> <span class="pre">null,</span> <span class="pre">0x0</span></code></div>
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier</span></code></div>
+</div>
+<ul class="simple">
+<li><p>If the target does not have the BackOffBarrier feature,
+then there cannot be any outstanding memory operations
+before issuing the <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instruction.</p></li>
+<li><p>The waitcnts can independently be moved earlier, or
+removed entirely as long as the associated
+counter remains at zero before issuing the
+<code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instruction.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instruction cannot complete
+before all waves of the workgroup have launched.</p></li>
+</ul>
+</td>
+</tr>
+<tr class="row-odd"><td><p><em>arrive</em></p></td>
+<td><ul class="simple">
+<li><p><em>Workgroup barrier</em></p></li>
+</ul>
+</td>
+<td><p>Not available separately, see <em>arrive</em> then <em>wait</em></p></td>
+</tr>
+<tr class="row-even"><td><p><em>wait</em></p></td>
+<td><ul class="simple">
+<li><p><em>Workgroup barrier</em></p></li>
+</ul>
+</td>
+<td><p>Not available separately, see <em>arrive</em> then <em>wait</em></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="gfx12">
+<h5><a class="toc-backref" href="#id10" role="doc-backlink">GFX12</a><a class="headerlink" href="#gfx12" title="Link to this heading">¶</a></h5>
+<p>GFX12 targets have the split-barrier feature, and also allow <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instructions to use
+one of multiple barrier <em>objects</em> available per workgroup. <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instruction use the
+barrier ID operand to determine the barrier <em>object</em> they operate on.</p>
+<p>GFX12.5 additionally introduces new barrier <em>objects</em> that offer more flexibility for synchronizing the execution
+of a subset of waves of a workgroup, or synchronizing execution across workgroups within a workgroup cluster, via
+<code class="docutils literal notranslate"><span class="pre">s_barrier</span></code>. These are called “named barriers”.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Check the <a class="reference internal" href="#amdgpu-execution-synchronization-barriers-sbarrier-ids-gfx12"><span class="std std-ref">the table below</span></a> to determine
+which barrier IDs are available to <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> instructions on a given target.</p>
+</div>
+<section id="named-barriers-model-extensions">
+<span id="amdgpu-execution-synchronization-barriers-execution-model-gfx12-sbarrier"></span><h6><a class="toc-backref" href="#id11" role="doc-backlink">“Named Barriers” Model Extensions</a><a class="headerlink" href="#named-barriers-model-extensions" title="Link to this heading">¶</a></h6>
+<p>In order to reason about the execution of <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code> “named barriers” on GFX12.5 and up,
+we define the following extensions to the
+<a class="reference internal" href="#amdgpu-execution-synchronization-barriers-execution-model"><span class="std std-ref">barrier execution model</span></a>:</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The aforementioned execution model always applies unless stated otherwise by one of the extensions below.</p>
+</div>
+<p class="rubric">Barrier <em>Objects</em></p>
+<p>There is a sub-type of barrier <em>objects</em> called <em>named barrier objects</em>.
+<em>Named barrier objects</em> inherit all the properties of barrier <em>objects</em> as defined by the barrier execution
+model. They are also subject to additional constraints.</p>
+<p>Not all barrier <em>objects</em> are <em>named barrier objects</em>, and both types can coexist in an implementation.</p>
+<p class="rubric">Barrier Operations</p>
+<p>The entirety of the
+<a class="reference internal" href="#amdgpu-execution-synchronization-barriers-execution-model-barrier-operations"><span class="std std-ref">barrier operations section</span></a>
+applies, with the following barrier operation being added:</p>
+<ul class="simple">
+<li><p>Barrier <em>join</em>.</p>
+<ul>
+<li><p>Allow the thread that executes the operation to <em>wait</em> on a barrier <em>object</em>.</p></li>
+<li><p>Can only be used on <em>named barrier objects</em>.</p></li>
+</ul>
+</li>
+</ul>
+<p class="rubric"><em>Barrier-joined-before</em></p>
+<p>A barrier <em>join</em> <code class="docutils literal notranslate"><span class="pre">J</span></code> is <em>barrier-joined-before</em> a barrier operation <code class="docutils literal notranslate"><span class="pre">X</span></code> if and only if all
+of the following is true:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">J</span> <span class="pre">-&gt;</span> <span class="pre">X</span></code> in <em>thread-barrier-order&lt;BO&gt;</em>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">X</span></code> is not a barrier <em>join</em>.</p></li>
+<li><p>There is no barrier <em>join</em> or <em>drop</em> <code class="docutils literal notranslate"><span class="pre">JD</span></code> where <code class="docutils literal notranslate"><span class="pre">J</span> <span class="pre">-&gt;</span> <span class="pre">JD</span> <span class="pre">-&gt;</span> <span class="pre">X</span></code> in <em>thread-barrier-order&lt;BO&gt;</em>.</p></li>
+<li><p>There is no barrier <em>join</em> <code class="docutils literal notranslate"><span class="pre">J'</span></code> on a distinct barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO'</span></code> such that <code class="docutils literal notranslate"><span class="pre">J</span> <span class="pre">-&gt;</span> <span class="pre">J'</span> <span class="pre">-&gt;</span> <span class="pre">X</span></code> in
+<em>program-order</em>.</p></li>
+</ul>
+<p class="rubric">Join and Drop Ordering</p>
+<p>For every barrier <em>drop</em> <code class="docutils literal notranslate"><span class="pre">D</span></code> performed on a <em>named barrier object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code>:</p>
+<ul class="simple">
+<li><p>There is a barrier <em>join</em> <code class="docutils literal notranslate"><span class="pre">J</span></code> such that <code class="docutils literal notranslate"><span class="pre">J</span> <span class="pre">-&gt;</span> <span class="pre">D</span></code> in <em>barrier-joined-before</em>;
+otherwise, the behavior is undefined.</p></li>
+</ul>
+<p class="rubric">Join and Wait Ordering</p>
+<p>For every barrier <em>wait</em> <code class="docutils literal notranslate"><span class="pre">W</span></code> performed on a <em>named barrier object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code>:</p>
+<ul class="simple">
+<li><p>There is a barrier <em>join</em> <code class="docutils literal notranslate"><span class="pre">J</span></code> such that <code class="docutils literal notranslate"><span class="pre">J</span> <span class="pre">-&gt;</span> <span class="pre">W</span></code> in <em>barrier-joined-before</em>, and
+<code class="docutils literal notranslate"><span class="pre">J</span></code> must <em>barrier-executes-before</em> at least one operation <code class="docutils literal notranslate"><span class="pre">X</span></code> that
+<em>barrier-participates-in</em> <code class="docutils literal notranslate"><span class="pre">W</span></code>; otherwise, the behavior is undefined.</p></li>
+</ul>
+</section>
+<section id="code-sequences">
+<h6><a class="toc-backref" href="#id12" role="doc-backlink">Code Sequences</a><a class="headerlink" href="#code-sequences" title="Link to this heading">¶</a></h6>
+<p>The following code sequences can be used to implement the barrier operations defined by the
+GFX12 <code class="docutils literal notranslate"><span class="pre">s_barrier</span></code>
+<a class="reference internal" href="#amdgpu-execution-synchronization-barriers-execution-model-gfx12-sbarrier"><span class="std std-ref">execution synchronization model</span></a>:</p>
+<table class="docutils align-default" id="amdgpu-execution-synchronization-barriers-sbarrier-gfx2">
+<caption><span class="caption-text">s_barrier GFX12</span><a class="headerlink" href="#amdgpu-execution-synchronization-barriers-sbarrier-gfx2" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 15.0%" />
+<col style="width: 15.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Barrier Operation(s)</p></th>
+<th class="head"><p>Barrier ID</p></th>
+<th class="head"><p>AMDGPU Machine Code</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td colspan="3"><p><strong>Init, Join and Drop</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><em>init</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-2</span></code>, <code class="docutils literal notranslate"><span class="pre">-1</span></code></p></li>
+</ul>
+</td>
+<td><p>Automatically initialized by the hardware when a workgroup
+is launched. The <em>expected count</em> of this barrier is set
+to the number of waves in the workgroup.</p></td>
+</tr>
+<tr class="row-even"><td><p><em>init</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-4</span></code>, <code class="docutils literal notranslate"><span class="pre">-3</span></code></p></li>
+</ul>
+</td>
+<td><p>Automatically initialized by the hardware when a workgroup
+is launched as part of a workgroup cluster.
+The <em>expected count</em> of this barrier is set to the number
+of workgroups in the workgroup cluster.</p></td>
+</tr>
+<tr class="row-odd"><td><p><em>init</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></li>
+</ul>
+</td>
+<td><p>Automatically initialized by the hardware and always
+available. This barrier <em>object</em> is opaque and immutable
+as all operations other than barrier <em>join</em> are no-ops.</p></td>
+</tr>
+<tr class="row-even"><td><p><em>init</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code></p></li>
+</ul>
+</td>
+<td><div class="line-block">
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier_init</span> <span class="pre">&lt;N&gt;</span></code></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&lt;N&gt;</span></code> is an immediate constant, or stored in the lower
+half of <code class="docutils literal notranslate"><span class="pre">m0</span></code>.</p></li>
+<li><p>The value to set as the <em>expected count</em> of the barrier
+is stored in the upper half of <code class="docutils literal notranslate"><span class="pre">m0</span></code>.</p></li>
+</ul>
+</td>
+</tr>
+<tr class="row-odd"><td><p><em>join</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-2</span></code>, <code class="docutils literal notranslate"><span class="pre">-1</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-4</span></code>, <code class="docutils literal notranslate"><span class="pre">-3</span></code></p></li>
+</ul>
+</td>
+<td><p>N/A</p></td>
+</tr>
+<tr class="row-even"><td><p><em>join</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code></p></li>
+</ul>
+</td>
+<td><div class="line-block">
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier_join</span> <span class="pre">&lt;N&gt;</span></code></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&lt;N&gt;</span></code> is an immediate constant, or stored in the lower
+half of <code class="docutils literal notranslate"><span class="pre">m0</span></code>.</p></li>
+</ul>
+</td>
+</tr>
+<tr class="row-odd"><td><p><em>drop</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code></p></li>
+</ul>
+</td>
+<td><div class="line-block">
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier_leave</span></code></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">s_barrier_leave</span></code> takes no operand. It can only be used
+to <em>drop</em> a <em>named</em> barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code> if <code class="docutils literal notranslate"><span class="pre">BO</span></code> was
+previously <em>joined</em> using <code class="docutils literal notranslate"><span class="pre">s_barrier_join</span></code>.</p></li>
+<li><p><em>Drops</em> the <em>named</em> barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">BO</span></code> if and only if
+there is a barrier <em>join</em> <code class="docutils literal notranslate"><span class="pre">J</span></code> such that <code class="docutils literal notranslate"><span class="pre">J</span></code> is
+<em>barrier-joined-before</em> this barrier
+<em>drop</em> operation.</p></li>
+</ul>
+</td>
+</tr>
+<tr class="row-even"><td><p><em>drop</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-2</span></code>, <code class="docutils literal notranslate"><span class="pre">-1</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-4</span></code>, <code class="docutils literal notranslate"><span class="pre">-3</span></code></p></li>
+</ul>
+</td>
+<td><p>When a thread ends, it automatically <em>drops</em> this barrier
+<em>object</em> if it had previously <em>joined</em> it.</p></td>
+</tr>
+<tr class="row-odd"><td colspan="3"><p><strong>Arrive and Wait</strong></p></td>
+</tr>
+<tr class="row-even"><td><p><em>arrive</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-4</span></code>, <code class="docutils literal notranslate"><span class="pre">-3</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-2</span></code>, <code class="docutils literal notranslate"><span class="pre">-1</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code></p></li>
+</ul>
+</td>
+<td><div class="line-block">
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier_signal</span> <span class="pre">&lt;N&gt;</span></code></div>
+<div class="line">Or</div>
+<div class="line"><code class="docutils literal notranslate"><span class="pre">s_barrier_signal_isfirst</span> <span class="pre">&lt;N&gt;</span></code></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&lt;N&gt;</span></code> is an immediate constant, or stored in bits <code class="docutils literal notranslate"><span class="pre">[4:0]</span></code> of <code class="docutils literal notranslate"><span class="pre">m0</span></code>.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">_isfirst</span></code> variant sets <code class="docutils literal notranslate"><span class="pre">SCC=1</span></code> if this wave is the first
+to signal the barrier, otherwise <code class="docutils literal notranslate"><span class="pre">SCC=0</span></code>.</p></li>
+<li><p>For barrier <em>objects</em> <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code>: When using <code class="docutils literal notranslate"><span class="pre">m0</span></code> as an operand,
+if there is a non-zero value contained in the bits <code class="docutils literal notranslate"><span class="pre">[22:16]</span></code> of <code class="docutils literal notranslate"><span class="pre">m0</span></code>,
+the <em>expected count</em> of the barrier <em>object</em> is set to that value before
+the <em>arrive count</em> of the barrier <em>object</em> is incremented.
+The new <em>expected count</em> value must be greater than or equal to the
+<em>arrive count</em>, otherwise the behavior is undefined.</p></li>
+<li><p>For barrier <em>objects</em> <code class="docutils literal notranslate"><span class="pre">-4</span></code> and <code class="docutils literal notranslate"><span class="pre">-3</span></code>
+(<code class="docutils literal notranslate"><span class="pre">cluster</span></code> barriers): only one wave
+per workgroup may arrive at the barrier on behalf of
+its entire workgroup. However, any wave within the workgroup
+cluster can then <em>wait</em> on this barrier <em>object</em>.</p></li>
+<li><p>This is a no-op on the <em>NULL barrier</em>
+(barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">0</span></code>).</p></li>
+</ul>
+</td>
+</tr>
+<tr class="row-odd"><td><p><em>wait</em></p></td>
+<td><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-4</span></code>, <code class="docutils literal notranslate"><span class="pre">-3</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-2</span></code>, <code class="docutils literal notranslate"><span class="pre">-1</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code></p></li>
+</ul>
+</td>
+<td><p><code class="docutils literal notranslate"><span class="pre">s_barrier_wait</span> <span class="pre">&lt;N&gt;</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&lt;N&gt;</span></code> is an immediate constant.</p></li>
+<li><p>For barrier <em>objects</em> <code class="docutils literal notranslate"><span class="pre">-2</span></code> and <code class="docutils literal notranslate"><span class="pre">-1</span></code>: This instruction
+cannot complete before all waves of the
+workgroup have launched.</p></li>
+<li><p>For barrier <em>objects</em> <code class="docutils literal notranslate"><span class="pre">-4</span></code> and <code class="docutils literal notranslate"><span class="pre">-3</span></code> (<code class="docutils literal notranslate"><span class="pre">cluster</span></code> barriers):
+This instruction cannot complete before all waves of the
+workgroup cluster have launched.</p></li>
+<li><p>This is a no-op on the <em>NULL barrier</em> (barrier <em>object</em> <code class="docutils literal notranslate"><span class="pre">0</span></code>).</p></li>
+<li><p>For <em>named barrier objects</em>, this instruction always waits on the
+last <em>named barrier object</em> that the thread has <em>joined</em>, even
+if it is different from the <em>barrier object</em> passed to the
+instruction.</p></li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+<p>The following barrier IDs are available:</p>
+<table class="docutils align-default" id="amdgpu-execution-synchronization-barriers-sbarrier-ids-gfx12">
+<caption><span class="caption-text">s_barrier IDs GFX12</span><a class="headerlink" href="#amdgpu-execution-synchronization-barriers-sbarrier-ids-gfx12" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 15.0%" />
+<col style="width: 15.0%" />
+<col style="width: 15.0%" />
+<col style="width: 10.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Barrier ID</p></th>
+<th class="head"><p>Scope</p></th>
+<th class="head"><p>Availability</p></th>
+<th class="head"><p><em>Named barrier object</em>?</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">-4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cluster</span></code></p></td>
+<td><p>GFX12.5</p></td>
+<td><p>NO</p></td>
+<td><p><em>Cluster trap barrier</em>; <em>cluster barrier object</em> for use by
+all workgroups of a workgroup cluster. Dedicated for the trap
+handler and only available in privileged execution mode
+(not accessible by the shader).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">-3</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cluster</span></code></p></td>
+<td><p>GFX12.5</p></td>
+<td><p>NO</p></td>
+<td><p><em>Cluster user barrier</em>; <em>cluster barrier object</em> for use by
+all workgroups of a workgroup cluster.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">-2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">workgroup</span></code></p></td>
+<td><p>GFX12 (all)</p></td>
+<td><p>NO</p></td>
+<td><p><em>Workgroup trap barrier</em>, dedicated for the trap handler and
+only available in privileged execution mode
+(not accessible by the shader).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">-1</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">workgroup</span></code></p></td>
+<td><p>GFX12 (all)</p></td>
+<td><p>NO</p></td>
+<td><p><em>Workgroup barrier</em>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">workgroup</span></code></p></td>
+<td><p>GFX12.5</p></td>
+<td><p>YES</p></td>
+<td><p><em>NULL barrier</em>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">16]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">workgroup</span></code></p></td>
+<td><p>GFX12.5</p></td>
+<td><p>YES</p></td>
+<td><p><em>Named barrier objects</em> for the shader to assign and use.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Informally, we can note that:</p>
+<ul class="simple">
+<li><p>All operations on the <em>NULL named barrier object</em> other than <em>join</em> are no-ops.</p>
+<ul>
+<li><p>As the <em>NULL barrier</em> (barrier ID <code class="docutils literal notranslate"><span class="pre">0</span></code>) is also a <em>named</em> barrier <em>object</em>, a thread can
+use a <em>join</em> on the <em>NULL</em> barrier as a way to “unjoin” a <em>named barrier</em>
+(break <em>barrier-joined-before</em>) without having to use a <em>drop</em> operation.</p></li>
+</ul>
+</li>
+<li><p>When a thread ends, it does <strong>not</strong> implicitly <em>drop</em> any <em>named barrier objects</em>
+(barrier IDs <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">16]</span></code>) it has <em>joined</em>.</p></li>
+</ul>
+</section>
+</section>
+</section>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="AMDGPUMemoryModel.html" title="AMDGPU Memory Model"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="AMDGPUDMAOperations.html" title="AMDGPU DMA Operations"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">AMDGPU Execution Synchronization</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-08-25.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

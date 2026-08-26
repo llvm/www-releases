@@ -1,0 +1,912 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Lightweight Fault Isolation (LFI) in LLVM &#8212; LLVM 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="LLVM Admin Tasks" href="AdminTasks.html" />
+    <link rel="prev" title="Telemetry framework in LLVM" href="Telemetry.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="AdminTasks.html" title="LLVM Admin Tasks"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Telemetry.html" title="Telemetry framework in LLVM"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Lightweight Fault Isolation (LFI) in LLVM</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/LFI.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="lightweight-fault-isolation-lfi-in-llvm">
+<h1>Lightweight Fault Isolation (LFI) in LLVM<a class="headerlink" href="#lightweight-fault-isolation-lfi-in-llvm" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id7">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#compiler-requirements" id="id8">Compiler Requirements</a></p></li>
+<li><p><a class="reference internal" href="#context-register" id="id9">Context Register</a></p></li>
+<li><p><a class="reference internal" href="#linker-support" id="id10">Linker Support</a></p></li>
+<li><p><a class="reference internal" href="#assembler-directives" id="id11">Assembler Directives</a></p>
+<ul>
+<li><p><a class="reference internal" href="#lfi-rewrite-disable" id="id12"><code class="docutils literal notranslate"><span class="pre">.lfi_rewrite_disable</span></code></a></p></li>
+<li><p><a class="reference internal" href="#lfi-rewrite-enable" id="id13"><code class="docutils literal notranslate"><span class="pre">.lfi_rewrite_enable</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#compiler-options" id="id14">Compiler Options</a></p></li>
+<li><p><a class="reference internal" href="#aarch64" id="id15">AArch64</a></p>
+<ul>
+<li><p><a class="reference internal" href="#reserved-registers" id="id16">Reserved Registers</a></p></li>
+<li><p><a class="reference internal" href="#assembly-rewrites" id="id17">Assembly Rewrites</a></p>
+<ul>
+<li><p><a class="reference internal" href="#terminology" id="id18">Terminology</a></p></li>
+<li><p><a class="reference internal" href="#control-flow" id="id19">Control flow</a></p></li>
+<li><p><a class="reference internal" href="#memory-accesses" id="id20">Memory accesses</a></p></li>
+<li><p><a class="reference internal" href="#stack-pointer-modification" id="id21">Stack pointer modification</a></p></li>
+<li><p><a class="reference internal" href="#link-register-modification" id="id22">Link register modification</a></p></li>
+<li><p><a class="reference internal" href="#system-instructions" id="id23">System instructions</a></p></li>
+<li><p><a class="reference internal" href="#thread-pointer-tp" id="id24">Thread pointer (TP)</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#optimizations" id="id25">Optimizations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#basic-guard-elimination" id="id26">Basic guard elimination</a></p></li>
+<li><p><a class="reference internal" href="#address-generation" id="id27">Address generation</a></p></li>
+<li><p><a class="reference internal" href="#stack-guard-elimination" id="id28">Stack guard elimination</a></p></li>
+<li><p><a class="reference internal" href="#guard-hoisting" id="id29">Guard hoisting</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#x86-64" id="id30">X86-64</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id1" id="id31">Reserved Registers</a></p></li>
+<li><p><a class="reference internal" href="#id2" id="id32">Assembly Rewrites</a></p>
+<ul>
+<li><p><a class="reference internal" href="#id3" id="id33">Terminology</a></p></li>
+<li><p><a class="reference internal" href="#id4" id="id34">Control flow</a></p></li>
+<li><p><a class="reference internal" href="#id5" id="id35">Memory accesses</a></p></li>
+<li><p><a class="reference internal" href="#string-instructions" id="id36">String instructions</a></p></li>
+<li><p><a class="reference internal" href="#stack-modification" id="id37">Stack modification</a></p></li>
+<li><p><a class="reference internal" href="#id6" id="id38">System instructions</a></p></li>
+<li><p><a class="reference internal" href="#thread-pointer" id="id39">Thread pointer</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#references" id="id40">References</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Lightweight Fault Isolation (LFI) is a compiler-based sandboxing technology for
+native code. Like WebAssembly and Native Client, LFI isolates sandboxed code in-process
+(i.e., in the same address space as a host application).</p>
+<p>LFI is designed from the ground up to sandbox existing code, such as C/C++
+libraries (including assembly code) and device drivers.</p>
+<p>LFI aims for the following goals:</p>
+<ul class="simple">
+<li><p>Compatibility: LFI can be used to sandbox nearly all existing C/C++/assembly
+libraries unmodified (they just need to be recompiled). Sandboxed libraries
+work with existing system call interfaces, and are compatible with existing
+development tools such as profilers, debuggers, and sanitizers.</p></li>
+<li><p>Performance: LFI aims for minimal overhead vs. unsandboxed code.</p></li>
+<li><p>Security: The LFI runtime and compiler elements aim to be simple and
+verifiable when possible.</p></li>
+<li><p>Usability: LFI aims to make it as easy as possible to retrofit sandboxing,
+i.e., to migrate from unsandboxed to sandboxed libraries with minimal effort.</p></li>
+</ul>
+<p>When building a program for the LFI target the compiler is designed to ensure
+that the program will only be able to access memory within a limited region of
+the virtual address space, starting from where the program is loaded (the
+current design sets this region to a size of 4GiB of virtual memory). Programs
+built for the LFI target are restricted to using a subset of the instruction
+set, designed so that the programs can be soundly confined to their sandbox
+region. LFI programs must run inside of an “emulator” (usually called the LFI
+runtime), responsible for initializing the sandbox region, loading the program,
+and servicing system call requests, or other forms of runtime calls.</p>
+<p>LFI uses an architecture-specific sandboxing scheme based on the general
+technique of Software-Based Fault Isolation (SFI). LLVM currently supports LFI
+for the AArch64 and X86-64 platforms. The AArch64 version is designed to
+support the Armv8.1 AArch64 architecture.</p>
+<p>See <a class="reference external" href="https://github.com/lfi-project/">https://github.com/lfi-project</a> for
+details about the LFI project and additional software needed to run LFI
+programs.</p>
+</section>
+<section id="compiler-requirements">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Compiler Requirements</a><a class="headerlink" href="#compiler-requirements" title="Link to this heading">¶</a></h2>
+<p>When building for an LFI target (<code class="docutils literal notranslate"><span class="pre">aarch64_lfi</span></code> or <code class="docutils literal notranslate"><span class="pre">x86_64_lfi</span></code>), the
+compiler must restrict use of the instruction set to a subset of instructions,
+which are known to be safe from a sandboxing perspective. To do this, we apply a
+set of simple rewrites at the assembly language level to transform standard
+native assembly into LFI-compatible assembly.</p>
+<p>These rewrites (also called “expansions”) are applied at the very end of the
+LLVM compilation pipeline (during the assembler step). This allows the rewrites
+to be applied to hand-written assembly, including inline assembly.</p>
+</section>
+<section id="context-register">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Context Register</a><a class="headerlink" href="#context-register" title="Link to this heading">¶</a></h2>
+<p>Both architectures designate a context register that points to a block of
+thread-local memory managed by the LFI runtime. The context register is <code class="docutils literal notranslate"><span class="pre">x25</span></code>
+on AArch64 and <code class="docutils literal notranslate"><span class="pre">r15</span></code> on X86-64. The layout is as follows:</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Offset</p></td>
+<td><p>Size</p></td>
+<td><p>Description</p></td>
+</tr>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>8</p></td>
+<td><p>Reserved for future use.</p></td>
+</tr>
+<tr class="row-odd"><td><p>8</p></td>
+<td><p>8</p></td>
+<td><p>Reserved for use by the LFI runtime.</p></td>
+</tr>
+<tr class="row-even"><td><p>16</p></td>
+<td><p>8</p></td>
+<td><p>Virtual thread pointer (used for TP access).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="linker-support">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Linker Support</a><a class="headerlink" href="#linker-support" title="Link to this heading">¶</a></h2>
+<p>In the initial version, LFI only supports static linking, and only supports
+creating <code class="docutils literal notranslate"><span class="pre">static-pie</span></code> binaries. There is nothing that fundamentally precludes
+support for dynamic linking on the LFI target, but such support would require
+that the code generated by the linker for PLT entries be slightly modified in
+order to conform to the LFI architecture subset.</p>
+</section>
+<section id="assembler-directives">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Assembler Directives</a><a class="headerlink" href="#assembler-directives" title="Link to this heading">¶</a></h2>
+<p>The following directives are supported for controlling the rewriter.</p>
+<section id="lfi-rewrite-disable">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">.lfi_rewrite_disable</span></code></a><a class="headerlink" href="#lfi-rewrite-disable" title="Link to this heading">¶</a></h3>
+<p>Disables LFI assembly rewrites for all subsequent instructions, until
+<code class="docutils literal notranslate"><span class="pre">.lfi_rewrite_enable</span></code> is used. This can be useful for hand-written assembly
+that is already safe and should not be modified by the rewriter.</p>
+</section>
+<section id="lfi-rewrite-enable">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">.lfi_rewrite_enable</span></code></a><a class="headerlink" href="#lfi-rewrite-enable" title="Link to this heading">¶</a></h3>
+<p>Re-enables LFI assembly rewrites after a previous <code class="docutils literal notranslate"><span class="pre">.lfi_rewrite_disable</span></code>.</p>
+<p>Example:</p>
+<div class="highlight-gas notranslate"><div class="highlight"><pre><span></span><span class="na">.lfi_rewrite_disable</span>
+<span class="c1">// No rewrites applied here.</span>
+<span class="nf">ldr</span><span class="w"> </span><span class="no">x0</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="no">x27</span><span class="p">,</span><span class="w"> </span><span class="no">w1</span><span class="p">,</span><span class="w"> </span><span class="no">uxtw</span><span class="p">]</span>
+<span class="na">.lfi_rewrite_enable</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="compiler-options">
+<h2><a class="toc-backref" href="#id14" role="doc-backlink">Compiler Options</a><a class="headerlink" href="#compiler-options" title="Link to this heading">¶</a></h2>
+<p>The LFI target has several configuration options, specified via <code class="docutils literal notranslate"><span class="pre">-mattr=</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">+no-lfi-loads</span></code>: Disable sandboxing for load instructions (stores-only mode).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">+no-lfi-stores</span></code>: Disable sandboxing for store instructions.</p></li>
+</ul>
+<p>Use <code class="docutils literal notranslate"><span class="pre">+no-lfi-loads</span></code> to create a “stores-only” sandbox that may read, but not
+write, outside the sandbox region.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">+no-lfi-loads,+no-lfi-stores</span></code> to create a “jumps-only” sandbox that may
+read/write outside the sandbox region but may not transfer control outside
+(e.g., may not execute system calls directly). This is primarily useful in
+combination with some other form of memory sandboxing, such as Intel MPK.</p>
+</section>
+<section id="aarch64">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">AArch64</a><a class="headerlink" href="#aarch64" title="Link to this heading">¶</a></h2>
+<p>The AArch64 LFI target is <code class="docutils literal notranslate"><span class="pre">aarch64_lfi</span></code>. This is the first part of a target
+triple that can be used with <code class="docutils literal notranslate"><span class="pre">--triple=aarch64_lfi-&lt;rest</span> <span class="pre">of</span> <span class="pre">triple&gt;</span></code>.</p>
+<section id="reserved-registers">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Reserved Registers</a><a class="headerlink" href="#reserved-registers" title="Link to this heading">¶</a></h3>
+<p>The AArch64 LFI target uses a custom ABI that reserves additional registers for
+the platform. The registers are listed below, along with the security invariant
+that must be maintained.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">x27</span></code>: always holds the sandbox base address (must be aligned to the size
+of the sandbox).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">x28</span></code>: always holds an address within the sandbox.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sp</span></code>: always holds an address within the sandbox.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">x30</span></code>: always holds an address within the sandbox.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">x26</span></code>: scratch register.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">x25</span></code>: context register (see <a class="reference internal" href="#context-register">Context Register</a>).</p></li>
+</ul>
+<p>The current design only supports 4GiB sandboxes, which requires the sandbox
+base address to be 4GiB-aligned. This is because LFI’s ABI stores pointers as
+their full 64-bit values, rather than just 32-bit offsets from the base. This
+enables stores-only mode, where loads are not sandboxed but stores are, and
+allows the host to directly pass pointers to the sandbox.</p>
+</section>
+<section id="assembly-rewrites">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Assembly Rewrites</a><a class="headerlink" href="#assembly-rewrites" title="Link to this heading">¶</a></h3>
+<section id="terminology">
+<h4><a class="toc-backref" href="#id18" role="doc-backlink">Terminology</a><a class="headerlink" href="#terminology" title="Link to this heading">¶</a></h4>
+<p>In the following assembly rewrites, some shorthand is used.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">xN</span></code> or <code class="docutils literal notranslate"><span class="pre">wN</span></code>: refers to any general-purpose non-reserved register.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{a,b,c}</span></code>: matches any of <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>, or <code class="docutils literal notranslate"><span class="pre">c</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">LDSTr</span></code>: a load/store instruction that supports register-register addressing modes, with one source/destination register.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">LDSTx</span></code>: a load/store instruction not matched by <code class="docutils literal notranslate"><span class="pre">LDSTr</span></code>. This covers load/store pairs (<code class="docutils literal notranslate"><span class="pre">ldp</span></code>/<code class="docutils literal notranslate"><span class="pre">stp</span></code>), SIMD load/stores (<code class="docutils literal notranslate"><span class="pre">ld1</span></code>, <code class="docutils literal notranslate"><span class="pre">st1</span></code>, …), atomics, exclusives, load/store-release, and unscaled (<code class="docutils literal notranslate"><span class="pre">ldur</span></code>/<code class="docutils literal notranslate"><span class="pre">stur</span></code>) forms. These instructions have a more limited set of addressing modes than <code class="docutils literal notranslate"><span class="pre">LDSTr</span></code>.</p></li>
+</ul>
+</section>
+<section id="control-flow">
+<h4><a class="toc-backref" href="#id19" role="doc-backlink">Control flow</a><a class="headerlink" href="#control-flow" title="Link to this heading">¶</a></h4>
+<p>Indirect branches get rewritten to branch through register <code class="docutils literal notranslate"><span class="pre">x28</span></code>, which must
+always contain an address within the sandbox. An <code class="docutils literal notranslate"><span class="pre">add</span></code> is used to safely
+update <code class="docutils literal notranslate"><span class="pre">x28</span></code> with the destination address. Since <code class="docutils literal notranslate"><span class="pre">ret</span></code> uses <code class="docutils literal notranslate"><span class="pre">x30</span></code> by
+default, which already must contain an address within the sandbox, it does not
+require any rewrite.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="n">br</span><span class="p">,</span><span class="n">blr</span><span class="p">,</span><span class="n">ret</span><span class="p">}</span> <span class="n">xN</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wN</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="p">{</span><span class="n">br</span><span class="p">,</span><span class="n">blr</span><span class="p">,</span><span class="n">ret</span><span class="p">}</span> <span class="n">x28</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ret</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ret</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="memory-accesses">
+<h4><a class="toc-backref" href="#id20" role="doc-backlink">Memory accesses</a><a class="headerlink" href="#memory-accesses" title="Link to this heading">¶</a></h4>
+<p>Memory accesses are rewritten to use the <code class="docutils literal notranslate"><span class="pre">[x27,</span> <span class="pre">wM,</span> <span class="pre">uxtw]</span></code> addressing mode if
+it is available, which is automatically safe. Otherwise, rewrites fall back to
+using <code class="docutils literal notranslate"><span class="pre">x28</span></code> along with an instruction to safely load it with the target
+address.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">,</span> <span class="c1">#I]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#I]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">,</span> <span class="c1">#I]!</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">xM</span><span class="p">,</span> <span class="n">xM</span><span class="p">,</span> <span class="c1">#I</span>
+<span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">],</span> <span class="c1">#I</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span><span class="p">]</span>
+<span class="n">add</span> <span class="n">xM</span><span class="p">,</span> <span class="n">xM</span><span class="p">,</span> <span class="c1">#I</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM1</span><span class="p">,</span> <span class="n">xM2</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x26</span><span class="p">,</span> <span class="n">xM1</span><span class="p">,</span> <span class="n">xM2</span>
+<span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x27</span><span class="p">,</span> <span class="n">w26</span><span class="p">,</span> <span class="n">uxtw</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM1</span><span class="p">,</span> <span class="n">xM2</span><span class="p">,</span> <span class="n">MOD</span> <span class="c1">#I]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x26</span><span class="p">,</span> <span class="n">xM1</span><span class="p">,</span> <span class="n">xM2</span><span class="p">,</span> <span class="n">MOD</span> <span class="c1">#I</span>
+<span class="n">LDSTr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x27</span><span class="p">,</span> <span class="n">w26</span><span class="p">,</span> <span class="n">uxtw</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">,</span> <span class="c1">#I]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#I]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">,</span> <span class="c1">#I]!</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#I]</span>
+<span class="n">add</span> <span class="n">xM</span><span class="p">,</span> <span class="n">xM</span><span class="p">,</span> <span class="c1">#I</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">],</span> <span class="c1">#I</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">]</span>
+<span class="n">add</span> <span class="n">xM</span><span class="p">,</span> <span class="n">xM</span><span class="p">,</span> <span class="c1">#I</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">xM1</span><span class="p">],</span> <span class="n">xM2</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM1</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">LDSTx</span> <span class="o">...</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">]</span>
+<span class="n">add</span> <span class="n">xM1</span><span class="p">,</span> <span class="n">xM1</span><span class="p">,</span> <span class="n">xM2</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="stack-pointer-modification">
+<h4><a class="toc-backref" href="#id21" role="doc-backlink">Stack pointer modification</a><a class="headerlink" href="#stack-pointer-modification" title="Link to this heading">¶</a></h4>
+<p>When the stack pointer is modified, we write the modified value to a temporary,
+before moving it back into <code class="docutils literal notranslate"><span class="pre">sp</span></code> with a safe <code class="docutils literal notranslate"><span class="pre">add</span></code>.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">mov</span> <span class="n">sp</span><span class="p">,</span> <span class="n">xN</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">sp</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wN</span><span class="p">,</span> <span class="n">uxtw</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="n">add</span><span class="p">,</span><span class="n">sub</span><span class="p">}</span> <span class="n">sp</span><span class="p">,</span> <span class="n">sp</span><span class="p">,</span> <span class="p">{</span><span class="c1">#I,xN}</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="n">add</span><span class="p">,</span><span class="n">sub</span><span class="p">}</span> <span class="n">x26</span><span class="p">,</span> <span class="n">sp</span><span class="p">,</span> <span class="p">{</span><span class="c1">#I,xN}</span>
+<span class="n">add</span> <span class="n">sp</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">w26</span><span class="p">,</span> <span class="n">uxtw</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="link-register-modification">
+<h4><a class="toc-backref" href="#id22" role="doc-backlink">Link register modification</a><a class="headerlink" href="#link-register-modification" title="Link to this heading">¶</a></h4>
+<p>When the link register is modified, we write the modified value to a
+temporary, before loading it back into <code class="docutils literal notranslate"><span class="pre">x30</span></code> with a safe <code class="docutils literal notranslate"><span class="pre">add</span></code>.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldr</span> <span class="n">x30</span><span class="p">,</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span>
+<span class="n">ret</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldr</span> <span class="n">x30</span><span class="p">,</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span>
+<span class="n">add</span> <span class="n">x30</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">w30</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">ret</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldp</span> <span class="n">xN</span><span class="p">,</span> <span class="n">x30</span><span class="p">,</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span>
+<span class="n">ret</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldp</span> <span class="n">xN</span><span class="p">,</span> <span class="n">x30</span><span class="p">,</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span>
+<span class="n">add</span> <span class="n">x30</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">w30</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">ret</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="system-instructions">
+<h4><a class="toc-backref" href="#id23" role="doc-backlink">System instructions</a><a class="headerlink" href="#system-instructions" title="Link to this heading">¶</a></h4>
+<p>System calls are rewritten into a sequence that loads the address of the first
+runtime call entrypoint and jumps to it. The runtime call entrypoint table is
+stored at a negative offset from the sandbox base, so it can be referenced by
+<code class="docutils literal notranslate"><span class="pre">x27</span></code>. The rewrite also saves and restores the link register, since it is
+used for branching into the runtime.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">svc</span> <span class="c1">#0</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">mov</span> <span class="n">x26</span><span class="p">,</span> <span class="n">x30</span>
+<span class="n">ldur</span> <span class="n">x30</span><span class="p">,</span> <span class="p">[</span><span class="n">x27</span><span class="p">,</span> <span class="c1">#-8]</span>
+<span class="n">blr</span> <span class="n">x30</span>
+<span class="n">add</span> <span class="n">x30</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">w26</span><span class="p">,</span> <span class="n">uxtw</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="thread-pointer-tp">
+<h4><a class="toc-backref" href="#id24" role="doc-backlink">Thread pointer (TP)</a><a class="headerlink" href="#thread-pointer-tp" title="Link to this heading">¶</a></h4>
+<p>TP accesses are rewritten into loads/stores from the context register
+(<code class="docutils literal notranslate"><span class="pre">x25</span></code>), which holds the virtual thread pointer at offset 16 (see
+<a class="reference internal" href="#context-register">Context Register</a>).</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">mrs</span> <span class="n">xN</span><span class="p">,</span> <span class="n">tpidr_el0</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x25</span><span class="p">,</span> <span class="c1">#16]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">msr</span> <span class="n">tpidr_el0</span><span class="p">,</span> <span class="n">xN</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="nb">str</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x25</span><span class="p">,</span> <span class="c1">#16]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="optimizations">
+<h3><a class="toc-backref" href="#id25" role="doc-backlink">Optimizations</a><a class="headerlink" href="#optimizations" title="Link to this heading">¶</a></h3>
+<section id="basic-guard-elimination">
+<h4><a class="toc-backref" href="#id26" role="doc-backlink">Basic guard elimination</a><a class="headerlink" href="#basic-guard-elimination" title="Link to this heading">¶</a></h4>
+<p>If a register is guarded multiple times in the same basic block without any
+modifications to it during the intervening instructions, then subsequent guards
+can be removed.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wN</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">ldur</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">]</span>
+<span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wN</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">ldur</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#8]</span>
+<span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wN</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">ldur</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#16]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wN</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="n">ldur</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">]</span>
+<span class="n">ldur</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#8]</span>
+<span class="n">ldur</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="c1">#16]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="address-generation">
+<h4><a class="toc-backref" href="#id27" role="doc-backlink">Address generation</a><a class="headerlink" href="#address-generation" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: not yet implemented.</p>
+<p>Addresses to global symbols in position-independent executables are frequently
+generated via <code class="docutils literal notranslate"><span class="pre">adrp</span></code> followed by <code class="docutils literal notranslate"><span class="pre">ldr</span></code>. Since the address generated by
+<code class="docutils literal notranslate"><span class="pre">adrp</span></code> can be statically guaranteed to be within the sandbox, it is safe to
+directly target <code class="docutils literal notranslate"><span class="pre">x28</span></code> for these sequences. This allows the omission of a
+guard instruction before the <code class="docutils literal notranslate"><span class="pre">ldr</span></code>.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">adrp</span> <span class="n">xN</span><span class="p">,</span> <span class="n">target</span>
+<span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xN</span><span class="p">,</span> <span class="n">imm</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">adrp</span> <span class="n">x28</span><span class="p">,</span> <span class="n">target</span>
+<span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">,</span> <span class="n">imm</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="stack-guard-elimination">
+<h4><a class="toc-backref" href="#id28" role="doc-backlink">Stack guard elimination</a><a class="headerlink" href="#stack-guard-elimination" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: not yet implemented.</p>
+<p>If the stack pointer is modified by adding/subtracting a small immediate, and
+then later used to perform a memory access without any intervening jumps, then
+the guard on the stack pointer modification can be removed. This is because the
+load/store is guaranteed to trap if the stack pointer has been moved outside of
+the sandbox region.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">x26</span><span class="p">,</span> <span class="n">sp</span><span class="p">,</span> <span class="c1">#8</span>
+<span class="n">add</span> <span class="n">sp</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">w26</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="o">...</span> <span class="p">(</span><span class="n">same</span> <span class="n">basic</span> <span class="n">block</span><span class="p">)</span>
+<span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">sp</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">add</span> <span class="n">sp</span><span class="p">,</span> <span class="n">sp</span><span class="p">,</span> <span class="c1">#8</span>
+<span class="o">...</span> <span class="p">(</span><span class="n">same</span> <span class="n">basic</span> <span class="n">block</span><span class="p">)</span>
+<span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">sp</span><span class="p">]</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="guard-hoisting">
+<h4><a class="toc-backref" href="#id29" role="doc-backlink">Guard hoisting</a><a class="headerlink" href="#guard-hoisting" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: not yet implemented.</p>
+<p>In certain cases, guards may be hoisted outside of loops.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">mov</span> <span class="n">w8</span><span class="p">,</span> <span class="c1">#10</span>
+    <span class="n">mov</span> <span class="n">w9</span><span class="p">,</span> <span class="c1">#0</span>
+<span class="o">.</span><span class="n">loop</span><span class="p">:</span>
+    <span class="n">add</span> <span class="n">w9</span><span class="p">,</span> <span class="n">w9</span><span class="p">,</span> <span class="c1">#1</span>
+    <span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">xM</span><span class="p">]</span>
+    <span class="n">cmp</span> <span class="n">w9</span><span class="p">,</span> <span class="n">w8</span>
+    <span class="n">b</span><span class="o">.</span><span class="n">lt</span> <span class="o">.</span><span class="n">loop</span>
+<span class="o">.</span><span class="n">end</span><span class="p">:</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span>    <span class="n">mov</span> <span class="n">w8</span><span class="p">,</span> <span class="c1">#10</span>
+    <span class="n">mov</span> <span class="n">w9</span><span class="p">,</span> <span class="c1">#0</span>
+    <span class="n">add</span> <span class="n">x28</span><span class="p">,</span> <span class="n">x27</span><span class="p">,</span> <span class="n">wM</span><span class="p">,</span> <span class="n">uxtw</span>
+<span class="o">.</span><span class="n">loop</span><span class="p">:</span>
+    <span class="n">add</span> <span class="n">w9</span><span class="p">,</span> <span class="n">w9</span><span class="p">,</span> <span class="c1">#1</span>
+    <span class="n">ldr</span> <span class="n">xN</span><span class="p">,</span> <span class="p">[</span><span class="n">x28</span><span class="p">]</span>
+    <span class="n">cmp</span> <span class="n">w9</span><span class="p">,</span> <span class="n">w8</span>
+    <span class="n">b</span><span class="o">.</span><span class="n">lt</span> <span class="o">.</span><span class="n">loop</span>
+<span class="o">.</span><span class="n">end</span><span class="p">:</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+</section>
+<section id="x86-64">
+<h2><a class="toc-backref" href="#id30" role="doc-backlink">X86-64</a><a class="headerlink" href="#x86-64" title="Link to this heading">¶</a></h2>
+<p>The X86-64 LFI target is <code class="docutils literal notranslate"><span class="pre">x86_64_lfi</span></code>.</p>
+<section id="id1">
+<h3><a class="toc-backref" href="#id31" role="doc-backlink">Reserved Registers</a><a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<p>The X86-64 LFI target reserves the following registers:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">r14</span></code>: always holds the sandbox base address. Also used as the runtime call
+table pointer (the runtime call table is stored at the sandbox base).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gs</span></code>: always holds the sandbox base address (used as a segment register for
+memory access sandboxing).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">rsp</span></code>: always holds an address within the sandbox.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">r15</span></code>: context register (see <a class="reference internal" href="#context-register">Context Register</a>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">r11</span></code>: scratch register.</p></li>
+</ul>
+</section>
+<section id="id2">
+<h3><a class="toc-backref" href="#id32" role="doc-backlink">Assembly Rewrites</a><a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<section id="id3">
+<h4><a class="toc-backref" href="#id33" role="doc-backlink">Terminology</a><a class="headerlink" href="#id3" title="Link to this heading">¶</a></h4>
+<p>In the following assembly rewrites, some shorthand is used.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">%rN</span></code> or <code class="docutils literal notranslate"><span class="pre">%eN</span></code>: refers to any general-purpose non-reserved register.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">{a,b,c}</span></code>: matches any of <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>, or <code class="docutils literal notranslate"><span class="pre">c</span></code>.</p></li>
+</ul>
+</section>
+<section id="id4">
+<h4><a class="toc-backref" href="#id34" role="doc-backlink">Control flow</a><a class="headerlink" href="#id4" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: these rewrites have not been implemented.</p>
+</section>
+<section id="id5">
+<h4><a class="toc-backref" href="#id35" role="doc-backlink">Memory accesses</a><a class="headerlink" href="#id5" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: these rewrites have not been implemented.</p>
+</section>
+<section id="string-instructions">
+<h4><a class="toc-backref" href="#id36" role="doc-backlink">String instructions</a><a class="headerlink" href="#string-instructions" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: these rewrites have not been implemented.</p>
+</section>
+<section id="stack-modification">
+<h4><a class="toc-backref" href="#id37" role="doc-backlink">Stack modification</a><a class="headerlink" href="#stack-modification" title="Link to this heading">¶</a></h4>
+<p><strong>Note</strong>: these rewrites have not been implemented.</p>
+</section>
+<section id="id6">
+<h4><a class="toc-backref" href="#id38" role="doc-backlink">System instructions</a><a class="headerlink" href="#id6" title="Link to this heading">¶</a></h4>
+<p>System calls are rewritten into a sequence that loads the return address into
+the scratch register and jumps to the runtime call handler. The runtime call
+handler table is stored at the address pointed to by <code class="docutils literal notranslate"><span class="pre">r14</span></code>. The <code class="docutils literal notranslate"><span class="pre">r11</span></code>
+register stores the return address (marked by the label <code class="docutils literal notranslate"><span class="pre">.Ltmp</span></code> in the
+block below).</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">syscall</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">leaq</span> <span class="o">.</span><span class="n">Ltmp</span><span class="p">(</span><span class="o">%</span><span class="n">rip</span><span class="p">),</span> <span class="o">%</span><span class="n">r11</span>
+<span class="n">jmpq</span> <span class="o">*-</span><span class="mi">8</span><span class="p">(</span><span class="o">%</span><span class="n">r14</span><span class="p">)</span>
+<span class="o">.</span><span class="n">Ltmp</span><span class="p">:</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="thread-pointer">
+<h4><a class="toc-backref" href="#id39" role="doc-backlink">Thread pointer</a><a class="headerlink" href="#thread-pointer" title="Link to this heading">¶</a></h4>
+<p>Thread pointer accesses via the <code class="docutils literal notranslate"><span class="pre">%fs</span></code> segment (used for TLS) are rewritten to
+use the virtual thread pointer from the context register (<code class="docutils literal notranslate"><span class="pre">r15</span></code>) at offset 16
+(see <a class="reference internal" href="#context-register">Context Register</a>). The rewrite handles any load or store instruction
+with an <code class="docutils literal notranslate"><span class="pre">%fs</span></code>-segment memory operand. <code class="docutils literal notranslate"><span class="pre">Op</span></code> represents any such instruction.</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Original</p></td>
+<td><p>Rewritten</p></td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Op</span> <span class="o">%</span><span class="n">fs</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span> <span class="o">%</span><span class="n">rD</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Op</span> <span class="mi">16</span><span class="p">(</span><span class="o">%</span><span class="n">r15</span><span class="p">),</span> <span class="o">%</span><span class="n">rD</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Op</span> <span class="o">%</span><span class="n">fs</span><span class="p">:(</span><span class="o">%</span><span class="n">rX</span><span class="p">),</span> <span class="o">%</span><span class="n">rD</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">movq</span> <span class="mi">16</span><span class="p">(</span><span class="o">%</span><span class="n">r15</span><span class="p">),</span> <span class="o">%</span><span class="n">rD</span>
+<span class="n">Op</span> <span class="p">(</span><span class="o">%</span><span class="n">rD</span><span class="p">,</span> <span class="o">%</span><span class="n">rX</span><span class="p">),</span> <span class="o">%</span><span class="n">rD</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Op</span> <span class="o">%</span><span class="n">rS</span><span class="p">,</span> <span class="o">%</span><span class="n">fs</span><span class="p">:(</span><span class="o">%</span><span class="n">rX</span><span class="p">)</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">movq</span> <span class="mi">16</span><span class="p">(</span><span class="o">%</span><span class="n">r15</span><span class="p">),</span> <span class="o">%</span><span class="n">r11</span>
+<span class="n">Op</span> <span class="o">%</span><span class="n">rS</span><span class="p">,</span> <span class="p">(</span><span class="o">%</span><span class="n">r11</span><span class="p">,</span> <span class="o">%</span><span class="n">rX</span><span class="p">)</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-odd"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Op</span> <span class="o">%</span><span class="n">fs</span><span class="p">:</span><span class="n">N</span><span class="p">(</span><span class="o">%</span><span class="n">rX</span><span class="p">,</span> <span class="o">%</span><span class="n">rY</span><span class="p">,</span> <span class="n">S</span><span class="p">),</span> <span class="o">%</span><span class="n">rD</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">movq</span> <span class="mi">16</span><span class="p">(</span><span class="o">%</span><span class="n">r15</span><span class="p">),</span> <span class="o">%</span><span class="n">r11</span>
+<span class="n">leaq</span> <span class="p">(</span><span class="o">%</span><span class="n">r11</span><span class="p">,</span> <span class="o">%</span><span class="n">rX</span><span class="p">),</span> <span class="o">%</span><span class="n">r11</span>
+<span class="n">Op</span> <span class="n">N</span><span class="p">(</span><span class="o">%</span><span class="n">r11</span><span class="p">,</span> <span class="o">%</span><span class="n">rY</span><span class="p">,</span> <span class="n">S</span><span class="p">),</span> <span class="o">%</span><span class="n">rD</span>
+</pre></div>
+</div>
+</td>
+</tr>
+<tr class="row-even"><td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Op</span> <span class="o">%</span><span class="n">rS</span><span class="p">,</span> <span class="o">%</span><span class="n">fs</span><span class="p">:</span><span class="n">N</span><span class="p">(</span><span class="o">%</span><span class="n">rX</span><span class="p">,</span> <span class="o">%</span><span class="n">rY</span><span class="p">,</span> <span class="n">S</span><span class="p">)</span>
+</pre></div>
+</div>
+</td>
+<td><div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">movq</span> <span class="mi">16</span><span class="p">(</span><span class="o">%</span><span class="n">r15</span><span class="p">),</span> <span class="o">%</span><span class="n">r11</span>
+<span class="n">leaq</span> <span class="p">(</span><span class="o">%</span><span class="n">r11</span><span class="p">,</span> <span class="o">%</span><span class="n">rX</span><span class="p">),</span> <span class="o">%</span><span class="n">r11</span>
+<span class="n">Op</span> <span class="o">%</span><span class="n">rS</span><span class="p">,</span> <span class="n">N</span><span class="p">(</span><span class="o">%</span><span class="n">r11</span><span class="p">,</span> <span class="o">%</span><span class="n">rY</span><span class="p">,</span> <span class="n">S</span><span class="p">)</span>
+</pre></div>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+</section>
+<section id="references">
+<h2><a class="toc-backref" href="#id40" role="doc-backlink">References</a><a class="headerlink" href="#references" title="Link to this heading">¶</a></h2>
+<p>For more information, please see the following resources:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/lfi-project/">LFI project page</a></p></li>
+<li><p><a class="reference external" href="https://discourse.llvm.org/t/rfc-lightweight-fault-isolation-lfi-efficient-native-code-sandboxing-upstream-lfi-target-and-compiler-changes/88380">LFI RFC</a></p></li>
+<li><p><a class="reference external" href="https://zyedidia.github.io/papers/lfi_asplos24.pdf">LFI paper</a></p></li>
+</ul>
+<p>Contact info:</p>
+<ul class="simple">
+<li><p>Zachary Yedidia - <a class="reference external" href="mailto:zyedidia&#37;&#52;&#48;cs&#46;stanford&#46;edu">zyedidia<span>&#64;</span>cs<span>&#46;</span>stanford<span>&#46;</span>edu</a></p></li>
+<li><p>Tal Garfinkel - <a class="reference external" href="mailto:tgarfinkel&#37;&#52;&#48;google&#46;com">tgarfinkel<span>&#64;</span>google<span>&#46;</span>com</a></p></li>
+<li><p>Sharjeel Khan - <a class="reference external" href="mailto:sharjeelkhan&#37;&#52;&#48;google&#46;com">sharjeelkhan<span>&#64;</span>google<span>&#46;</span>com</a></p></li>
+</ul>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="AdminTasks.html" title="LLVM Admin Tasks"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Telemetry.html" title="Telemetry framework in LLVM"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Lightweight Fault Isolation (LFI) in LLVM</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-08-25.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

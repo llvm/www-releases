@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Clang-Reorder-Fields &#8212; Extra Clang Tools 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" href="_static/clang-tools-extra-styles.css" type="text/css" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Modularize User’s Manual" href="modularize.html" />
+    <link rel="prev" title="Clang-Change-Namespace" href="clang-change-namespace.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Extra Clang Tools 23.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>Clang-Reorder-Fields</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="clang-change-namespace.html">Clang-Change-Namespace</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="modularize.html">Modularize User’s Manual</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="clang-reorder-fields">
+<h1><a class="toc-backref" href="#id1" role="doc-backlink">Clang-Reorder-Fields</a><a class="headerlink" href="#clang-reorder-fields" title="Link to this heading">¶</a></h1>
+<nav class="contents" id="contents">
+<p class="topic-title">Contents</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#clang-reorder-fields" id="id1">Clang-Reorder-Fields</a></p>
+<ul>
+<li><p><a class="reference internal" href="#example-usage" id="id2">Example usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#basic-struct-reordering" id="id3">Basic struct reordering</a></p></li>
+<li><p><a class="reference internal" href="#namespaced-structs" id="id4">Namespaced structs</a></p></li>
+<li><p><a class="reference internal" href="#c-constructor-initializer-lists" id="id5">C++ constructor initializer lists</a></p></li>
+<li><p><a class="reference internal" href="#designated-initializers" id="id6">Designated initializers</a></p></li>
+<li><p><a class="reference internal" href="#in-place-editing" id="id7">In-place editing</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#limitations-and-caveats" id="id8">Limitations and Caveats</a></p>
+<ul>
+<li><p><a class="reference internal" href="#different-access-specifiers" id="id9">Different access specifiers</a></p></li>
+<li><p><a class="reference internal" href="#multiple-field-declarations" id="id10">Multiple field declarations</a></p></li>
+<li><p><a class="reference internal" href="#macro-expanded-fields" id="id11">Macro-expanded fields</a></p></li>
+<li><p><a class="reference internal" href="#preprocessor-directives" id="id12">Preprocessor directives</a></p></li>
+<li><p><a class="reference internal" href="#flexible-array-members" id="id13">Flexible array members</a></p></li>
+<li><p><a class="reference internal" href="#field-dependencies-in-initializers" id="id14">Field dependencies in initializers</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#clang-reorder-fields-command-line-options" id="id15"><strong class="program">clang-reorder-fields</strong> Command Line Options</a></p></li>
+<li><p><a class="reference internal" href="#use-cases" id="id16">Use Cases</a></p>
+<ul>
+<li><p><a class="reference internal" href="#memory-layout-optimization" id="id17">Memory layout optimization</a></p></li>
+<li><p><a class="reference internal" href="#coding-standard-compliance" id="id18">Coding standard compliance</a></p></li>
+<li><p><a class="reference internal" href="#field-grouping" id="id19">Field grouping</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+<div class="toctree-wrapper compound">
+</div>
+<p><strong class="program">clang-reorder-fields</strong> is a refactoring tool to reorder fields in
+C/C++ structs and classes. This tool automatically updates:</p>
+<ul class="simple">
+<li><p>Field declarations in the record definition</p></li>
+<li><p>Constructor initializer lists in C++ classes</p></li>
+<li><p>Aggregate initialization expressions (both C and C++)</p></li>
+<li><p>Designated initializer lists (C++20)</p></li>
+</ul>
+<p>This can be useful for optimizing memory layout, improving cache performance,
+or conforming to coding standards that require specific field orderings.</p>
+<section id="example-usage">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Example usage</a><a class="headerlink" href="#example-usage" title="Link to this heading">¶</a></h2>
+<section id="basic-struct-reordering">
+<h3><a class="toc-backref" href="#id3" role="doc-backlink">Basic struct reordering</a><a class="headerlink" href="#basic-struct-reordering" title="Link to this heading">¶</a></h3>
+<p>Consider this simple struct in <cite>example.c</cite>:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">z</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">w</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="n">foo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">&amp;</span><span class="n">val</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mf">1.5</span><span class="p">,</span><span class="w"> </span><span class="mi">17</span><span class="w"> </span><span class="p">};</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>To reorder the fields to <cite>z, w, y, x</cite>, run:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Foo -fields-order z,w,y,x example.c --</span>
+</pre></div>
+</div>
+<p>This will reorder both the struct definition and the initialization:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">z</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">w</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">val</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="n">foo</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="mf">1.5</span><span class="p">,</span><span class="w"> </span><span class="mi">17</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">val</span><span class="w"> </span><span class="p">};</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="namespaced-structs">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Namespaced structs</a><a class="headerlink" href="#namespaced-structs" title="Link to this heading">¶</a></h3>
+<p>For C++ code with namespaces, use the fully-qualified name:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">namespace</span><span class="w"> </span><span class="nn">bar</span><span class="w"> </span><span class="p">{</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="o">*</span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">z</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">w</span><span class="p">;</span>
+<span class="p">};</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name ::bar::Foo -fields-order z,w,y,x example.cpp --</span>
+</pre></div>
+</div>
+<p>For classes defined in the global namespace (without any namespace), you can
+use either the simple class name or prefix it with <cite>::</cite>:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Foo -fields-order z,w,y,x example.cpp --</span>
+<span class="gp"># </span>or
+<span class="go">clang-reorder-fields -record-name ::Foo -fields-order z,w,y,x example.cpp --</span>
+</pre></div>
+</div>
+</section>
+<section id="c-constructor-initializer-lists">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">C++ constructor initializer lists</a><a class="headerlink" href="#c-constructor-initializer-lists" title="Link to this heading">¶</a></h3>
+<p>The tool also reorders constructor initializer lists. Given:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">Foo</span><span class="p">();</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">s1</span><span class="p">;</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">s2</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">z</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="n">Foo</span><span class="o">::</span><span class="n">Foo</span><span class="p">()</span><span class="o">:</span>
+<span class="w">  </span><span class="n">x</span><span class="p">(</span><span class="mi">12</span><span class="p">),</span>
+<span class="w">  </span><span class="n">s1</span><span class="p">(</span><span class="s">&quot;abc&quot;</span><span class="p">),</span>
+<span class="w">  </span><span class="n">s2</span><span class="p">(</span><span class="s">&quot;def&quot;</span><span class="p">),</span>
+<span class="w">  </span><span class="n">z</span><span class="p">(</span><span class="mf">3.14</span><span class="p">)</span>
+<span class="p">{}</span>
+</pre></div>
+</div>
+<p>Running:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Foo -fields-order s1,x,z,s2 example.cpp --</span>
+</pre></div>
+</div>
+<p>Will reorder both the field declarations and the constructor initializers:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">Foo</span><span class="p">();</span>
+
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">s1</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">z</span><span class="p">;</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">s2</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="n">Foo</span><span class="o">::</span><span class="n">Foo</span><span class="p">()</span><span class="o">:</span>
+<span class="w">  </span><span class="n">s1</span><span class="p">(</span><span class="s">&quot;abc&quot;</span><span class="p">),</span>
+<span class="w">  </span><span class="n">x</span><span class="p">(</span><span class="mi">12</span><span class="p">),</span>
+<span class="w">  </span><span class="n">z</span><span class="p">(</span><span class="mf">3.14</span><span class="p">),</span>
+<span class="w">  </span><span class="n">s2</span><span class="p">(</span><span class="s">&quot;def&quot;</span><span class="p">)</span>
+<span class="p">{}</span>
+</pre></div>
+</div>
+</section>
+<section id="designated-initializers">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Designated initializers</a><a class="headerlink" href="#designated-initializers" title="Link to this heading">¶</a></h3>
+<p>For C++20 code using designated initializers:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Bar</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">c</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Bar</span><span class="w"> </span><span class="n">bar1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="sc">&#39;a&#39;</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">123</span><span class="w"> </span><span class="p">};</span>
+<span class="w">  </span><span class="n">Bar</span><span class="w"> </span><span class="n">bar2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">.</span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="sc">&#39;a&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">.</span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="p">.</span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">123</span><span class="w"> </span><span class="p">};</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields --extra-arg=&quot;-std=c++20&quot; -record-name Bar \</span>
+<span class="go">  -fields-order c,a,b example.cpp --</span>
+</pre></div>
+</div>
+<p>Will produce:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Bar</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">c</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">Bar</span><span class="w"> </span><span class="n">bar1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="mi">123</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;a&#39;</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">};</span>
+<span class="w">  </span><span class="n">Bar</span><span class="w"> </span><span class="n">bar2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">.</span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">123</span><span class="p">,</span><span class="w"> </span><span class="p">.</span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="sc">&#39;a&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">.</span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">};</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="in-place-editing">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">In-place editing</a><a class="headerlink" href="#in-place-editing" title="Link to this heading">¶</a></h3>
+<p>Use the <cite>-i</cite> flag to modify files in-place:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Foo -fields-order z,w,y,x -i example.c --</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="limitations-and-caveats">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Limitations and Caveats</a><a class="headerlink" href="#limitations-and-caveats" title="Link to this heading">¶</a></h2>
+<section id="different-access-specifiers">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Different access specifiers</a><a class="headerlink" href="#different-access-specifiers" title="Link to this heading">¶</a></h3>
+<p>The tool cannot reorder fields with different access specifiers
+(<code class="docutils literal notranslate"><span class="pre">public/private/protected</span></code>). All fields being reordered must have the same
+access level.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Example</span><span class="w"> </span><span class="p">{</span>
+<span class="k">private</span><span class="o">:</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">y</span><span class="p">;</span><span class="w">  </span><span class="c1">// Cannot reorder x and y - different access levels</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</section>
+<section id="multiple-field-declarations">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Multiple field declarations</a><a class="headerlink" href="#multiple-field-declarations" title="Link to this heading">¶</a></h3>
+<p>Declarations with multiple fields in one statement are not supported:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Example</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w">  </span><span class="c1">// Not supported - multiple fields in one declaration</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</section>
+<section id="macro-expanded-fields">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Macro-expanded fields</a><a class="headerlink" href="#macro-expanded-fields" title="Link to this heading">¶</a></h3>
+<p>Macros that expand to multiple field declarations are not supported. However,
+macros that expand to a single field declaration work correctly:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#define INT_FIELD(NAME) int NAME     </span><span class="c1">// Supported - expands to one field</span>
+<span class="cp">#define TWO_FIELDS int a; int b;     </span><span class="c1">// Not supported - expands to two fields</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">Supported</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">INT_FIELD</span><span class="p">(</span><span class="n">x</span><span class="p">);</span><span class="w">  </span><span class="c1">// OK - this is a single field</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">y</span><span class="p">;</span>
+<span class="w">  </span><span class="n">INT_FIELD</span><span class="p">(</span><span class="n">z</span><span class="p">);</span><span class="w">  </span><span class="c1">// OK - this is a single field</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">NotSupported</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">TWO_FIELDS</span><span class="w">     </span><span class="c1">// Not OK - expands to multiple fields</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">c</span><span class="p">;</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>The tool can reorder fields declared via macros as long as each macro invocation
+expands to exactly one field declaration.</p>
+</section>
+<section id="preprocessor-directives">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Preprocessor directives</a><a class="headerlink" href="#preprocessor-directives" title="Link to this heading">¶</a></h3>
+<p>Structs with preprocessor directives between fields cannot be reordered:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Example</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="cp">#ifdef FEATURE</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="cp">#endif</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">c</span><span class="p">;</span><span class="w">  </span><span class="c1">// Not supported - preprocessor directives present</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</section>
+<section id="flexible-array-members">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Flexible array members</a><a class="headerlink" href="#flexible-array-members" title="Link to this heading">¶</a></h3>
+<p>In C, a flexible array member is an incomplete array type that must be the last
+member of a struct (as specified by C99 and later standards). This allows the
+struct to have a variable-length array at the end. Since this is a language
+requirement, the tool enforces that flexible array members remain in the last
+position:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="k">struct</span><span class="w"> </span><span class="nc">Example</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">count</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">data</span><span class="p">[];</span><span class="w">  </span><span class="c1">// Flexible array member - must remain last</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>Attempting to reorder fields such that the flexible array member is no longer
+last will result in an error:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Example -fields-order data,count example.c --</span>
+</pre></div>
+</div>
+<p>Will produce:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Flexible array member must remain the last field in the struct
+</pre></div>
+</div>
+<p>This ensures the generated code remains valid C.</p>
+</section>
+<section id="field-dependencies-in-initializers">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Field dependencies in initializers</a><a class="headerlink" href="#field-dependencies-in-initializers" title="Link to this heading">¶</a></h3>
+<p>The tool will issue a warning if reordering causes a field to be used in an
+initializer before it’s initialized. Consider this example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Foo</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">  </span><span class="n">Foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">c</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">c</span><span class="p">;</span>
+<span class="w">  </span><span class="n">Dummy</span><span class="w"> </span><span class="n">z</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="n">Foo</span><span class="o">::</span><span class="n">Foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">c</span><span class="p">)</span><span class="w"> </span><span class="o">:</span>
+<span class="w">  </span><span class="n">x</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+<span class="w">  </span><span class="n">c</span><span class="p">(</span><span class="n">c</span><span class="p">),</span>
+<span class="w">  </span><span class="n">z</span><span class="p">(</span><span class="k">this</span><span class="o">-&gt;</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">c</span><span class="p">)</span><span class="w">  </span><span class="c1">// z&#39;s initializer uses x and c</span>
+<span class="p">{}</span>
+</pre></div>
+</div>
+<p>If you reorder the fields to <cite>z, c, x</cite>:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Foo -fields-order z,c,x example.cpp --</span>
+</pre></div>
+</div>
+<p>The tool will produce warnings:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>example.cpp:10:3: warning: reordering field x after z makes x uninitialized when used in init expression
+example.cpp:10:3: warning: reordering field c after z makes c uninitialized when used in init expression
+</pre></div>
+</div>
+<p>This warns you that in C++, member initializers are executed in the order that
+fields are declared in the class, not the order they appear in the initializer
+list. After reordering, <cite>z</cite> would be initialized first, but its initializer
+tries to use <cite>x</cite> and <cite>c</cite> which haven’t been initialized yet.</p>
+<p>The tool will still perform the reordering but warns about the potential issue.
+You should review these warnings and adjust your code accordingly.</p>
+</section>
+</section>
+<section id="clang-reorder-fields-command-line-options">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink"><strong class="program">clang-reorder-fields</strong> Command Line Options</a><a class="headerlink" href="#clang-reorder-fields-command-line-options" title="Link to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-record-name">
+<span class="sig-name descname"><span class="pre">--record-name</span></span><span class="sig-prename descclassname"><span class="pre">=&lt;string&gt;</span></span><a class="headerlink" href="#cmdoption-record-name" title="Link to this definition">¶</a></dt>
+<dd><p>The fully-qualified name of the struct or class to reorder. Required.</p>
+<p>For C structs, use the struct name directly (e.g., <cite>Foo</cite>).</p>
+<p>For C++ classes/structs in namespaces, use the fully-qualified name including
+namespaces (e.g., <cite>::namespace::ClassName</cite>).</p>
+<p>For C++ classes/structs in the global namespace, you can use either the simple
+name (e.g., <cite>Foo</cite>) or prefix with <cite>::</cite> (e.g., <cite>::Foo</cite>).</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-fields-order">
+<span class="sig-name descname"><span class="pre">--fields-order</span></span><span class="sig-prename descclassname"><span class="pre">=&lt;string&gt;</span></span><a class="headerlink" href="#cmdoption-fields-order" title="Link to this definition">¶</a></dt>
+<dd><p>Comma-separated list of field names in the desired order. Required.</p>
+<p>All field names must exactly match the fields in the struct/class definition.
+The number of fields must match the number in the definition.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-i">
+<span class="sig-name descname"><span class="pre">-i</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-i" title="Link to this definition">¶</a></dt>
+<dd><p>Overwrite edited files in-place. If not specified, the rewritten code is
+printed to stdout.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extra-arg">
+<span class="sig-name descname"><span class="pre">--extra-arg</span></span><span class="sig-prename descclassname"><span class="pre">=&lt;string&gt;</span></span><a class="headerlink" href="#cmdoption-extra-arg" title="Link to this definition">¶</a></dt>
+<dd><p>Additional argument to append to the compiler command line.</p>
+<p>Useful for specifying language standards (e.g., <cite>–extra-arg=”-std=c++20”</cite>).</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-extra-arg-before">
+<span class="sig-name descname"><span class="pre">--extra-arg-before</span></span><span class="sig-prename descclassname"><span class="pre">=&lt;string&gt;</span></span><a class="headerlink" href="#cmdoption-extra-arg-before" title="Link to this definition">¶</a></dt>
+<dd><p>Additional argument to prepend to the compiler command line.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-p">
+<span class="sig-name descname"><span class="pre">-p</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;string&gt;</span></span><a class="headerlink" href="#cmdoption-p" title="Link to this definition">¶</a></dt>
+<dd><p>Build path. Specifies the directory containing <cite>compile_commands.json</cite> for
+compilation database support.</p>
+</dd></dl>
+
+</section>
+<section id="use-cases">
+<h2><a class="toc-backref" href="#id16" role="doc-backlink">Use Cases</a><a class="headerlink" href="#use-cases" title="Link to this heading">¶</a></h2>
+<section id="memory-layout-optimization">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Memory layout optimization</a><a class="headerlink" href="#memory-layout-optimization" title="Link to this heading">¶</a></h3>
+<p>Reorder fields to minimize padding and improve cache locality:</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// Before: 24 bytes (with padding)</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">Data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">a</span><span class="p">;</span><span class="w">     </span><span class="c1">// 1 byte + 7 padding</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w">   </span><span class="c1">// 8 bytes</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">c</span><span class="p">;</span><span class="w">     </span><span class="c1">// 1 byte + 7 padding</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="go">clang-reorder-fields -record-name Data -fields-order b,a,c data.c --</span>
+</pre></div>
+</div>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// After: 16 bytes (less padding)</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">Data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">double</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w">   </span><span class="c1">// 8 bytes</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">a</span><span class="p">;</span><span class="w">     </span><span class="c1">// 1 byte</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">c</span><span class="p">;</span><span class="w">     </span><span class="c1">// 1 byte + 6 padding</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+</section>
+<section id="coding-standard-compliance">
+<h3><a class="toc-backref" href="#id18" role="doc-backlink">Coding standard compliance</a><a class="headerlink" href="#coding-standard-compliance" title="Link to this heading">¶</a></h3>
+<p>Ensure fields are ordered according to project conventions (e.g., alphabetically,
+by type, or by access pattern).</p>
+</section>
+<section id="field-grouping">
+<h3><a class="toc-backref" href="#id19" role="doc-backlink">Field grouping</a><a class="headerlink" href="#field-grouping" title="Link to this heading">¶</a></h3>
+<p>Group related fields together for better code organization and readability.</p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="clang-change-namespace.html">Clang-Change-Namespace</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="modularize.html">Modularize User’s Manual</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

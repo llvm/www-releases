@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>OverflowBehaviorTypes &#8212; Clang 23.1.0 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=e4db3ed9"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="-fbounds-safety: Enforcing bounds safety for C" href="BoundsSafety.html" />
+    <link rel="prev" title="Allocation Tokens" href="AllocToken.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 23.1.0 documentation</span></a></h1>
+        <h2 class="heading"><span>OverflowBehaviorTypes</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AllocToken.html">Allocation Tokens</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BoundsSafety.html"><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>: Enforcing bounds safety for C</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="overflowbehaviortypes">
+<h1>OverflowBehaviorTypes<a class="headerlink" href="#overflowbehaviortypes" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#examples" id="id2">Examples</a></p></li>
+<li><p><a class="reference internal" href="#promotion-rules" id="id3">Promotion Rules</a></p>
+<ul>
+<li><p><a class="reference internal" href="#pointer-semantics" id="id4">Pointer Semantics</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#conversion-semantics" id="id5">Conversion Semantics</a></p>
+<ul>
+<li><p><a class="reference internal" href="#truncation-semantics" id="id6">Truncation Semantics</a></p></li>
+<li><p><a class="reference internal" href="#constant-conversion-semantics" id="id7">Constant Conversion Semantics</a></p></li>
+<li><p><a class="reference internal" href="#implicit-conversions-due-to-assignment" id="id8">Implicit Conversions Due to Assignment</a></p></li>
+<li><p><a class="reference internal" href="#c-overload-resolution" id="id9">C++ Overload Resolution</a></p></li>
+<li><p><a class="reference internal" href="#c-generic-expressions" id="id10">C _Generic Expressions</a></p></li>
+<li><p><a class="reference internal" href="#c-template-specializations" id="id11">C++ Template Specializations</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#interaction-with-command-line-flags-and-sanitizer-special-case-lists" id="id12">Interaction with Command-Line Flags and Sanitizer Special Case Lists</a></p></li>
+<li><p><a class="reference internal" href="#diagnostics" id="id13">Diagnostics</a></p>
+<ul>
+<li><p><a class="reference internal" href="#specification-errors-and-warnings" id="id14">Specification Errors and Warnings</a></p></li>
+<li><p><a class="reference internal" href="#woverflow-behavior-conversion" id="id15">-Woverflow-behavior-conversion</a></p></li>
+<li><p><a class="reference internal" href="#wincompatible-pointer-types-discards-overflow-behavior" id="id16">-Wincompatible-pointer-types-discards-overflow-behavior</a></p></li>
+<li><p><a class="reference internal" href="#wimplicit-overflow-behavior-conversion" id="id17">-Wimplicit-overflow-behavior-conversion</a></p></li>
+<li><p><a class="reference internal" href="#wimplicit-overflow-behavior-conversion-assignment" id="id18">-Wimplicit-overflow-behavior-conversion-assignment</a></p></li>
+<li><p><a class="reference internal" href="#wimplicit-overflow-behavior-conversion-assignment-pedantic" id="id19">-Wimplicit-overflow-behavior-conversion-assignment-pedantic</a></p></li>
+<li><p><a class="reference internal" href="#wimplicit-overflow-behavior-conversion-function-boundary" id="id20">-Wimplicit-overflow-behavior-conversion-function-boundary</a></p></li>
+<li><p><a class="reference internal" href="#wimplicit-overflow-behavior-conversion-function-boundary-pedantic" id="id21">-Wimplicit-overflow-behavior-conversion-function-boundary-pedantic</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#format-string-functions" id="id22">Format String Functions</a></p>
+<ul>
+<li><p><a class="reference internal" href="#incompatibility-with-non-integer-types" id="id23">Incompatibility With Non-Integer Types</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Clang provides overflow behavior types that allow developers to have
+fine-grained control over the overflow behavior of integer types. Overflow
+behavior can be specified using either attribute syntax or keyword syntax to
+control how arithmetic operations on a given integer type should behave upon
+overflow. This is particularly useful for projects that need to balance
+performance and safety, allowing developers to enable or disable overflow
+checks for specific types.</p>
+<p>Overflow behavior types can be enabled using the <code class="docutils literal notranslate"><span class="pre">-cc1</span></code> compiler option
+<code class="docutils literal notranslate"><span class="pre">-fexperimental-overflow-behavior-types</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This feature is experimental. The flag spelling may change in future
+releases as the feature matures.</p>
+</div>
+<p>There are two syntax options for specifying overflow behavior:</p>
+<p><strong>Attribute syntax:</strong></p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">behavior</span><span class="p">)))</span>
+</pre></div>
+</div>
+<p>Where <code class="docutils literal notranslate"><span class="pre">behavior</span></code> can be one of the following:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">wrap</span></code>: Specifies that arithmetic operations on the integer type should
+wrap on overflow. This is equivalent to the behavior of <code class="docutils literal notranslate"><span class="pre">-fwrapv</span></code>, but it
+applies only to the attributed type and may be used with both signed and
+unsigned types. When this is enabled, UBSan’s integer overflow and integer
+truncation checks (<code class="docutils literal notranslate"><span class="pre">signed-integer-overflow</span></code>,
+<code class="docutils literal notranslate"><span class="pre">unsigned-integer-overflow</span></code>, <code class="docutils literal notranslate"><span class="pre">implicit-signed-integer-truncation</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">implicit-unsigned-integer-truncation</span></code>) are suppressed for the attributed
+type. Similar to <code class="docutils literal notranslate"><span class="pre">-fwrapv</span></code>, this behavior defines wrapping behavior which
+also disables eager compiler optimizations concerning undefined behaviors.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">trap</span></code>: Specifies that arithmetic operations on the integer type should
+be checked for overflow. When using the <code class="docutils literal notranslate"><span class="pre">signed-integer-overflow</span></code> sanitizer
+or when using <code class="docutils literal notranslate"><span class="pre">-ftrapv</span></code> alongside a signed type, this is the default
+behavior. Using this, one may enforce overflow checks for a type even when
+<code class="docutils literal notranslate"><span class="pre">-fwrapv</span></code> is enabled globally.</p></li>
+</ul>
+<p><strong>Keyword syntax:</strong></p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">__ob_wrap</span><span class="w">       </span><span class="c1">// equivalent to __attribute__((overflow_behavior(wrap)))</span>
+<span class="n">__ob_trap</span><span class="w">       </span><span class="c1">// equivalent to __attribute__((overflow_behavior(trap)))</span>
+</pre></div>
+</div>
+<p>Either of these spellings can be applied to <code class="docutils literal notranslate"><span class="pre">typedef</span></code> declarations and to
+integer types directly.</p>
+<p>Arithmetic operations containing one or more overflow behavior types follow
+standard C integer promotion and conversion rules while preserving overflow
+behavior information.</p>
+</section>
+<section id="examples">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Examples</a><a class="headerlink" href="#examples" title="Link to this heading">¶</a></h2>
+<p>Here are examples using both syntax options:</p>
+<p><strong>Using attribute syntax with a typedef:</strong></p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">trap</span><span class="p">)))</span><span class="w"> </span><span class="n">non_wrapping_uint</span><span class="p">;</span>
+
+<span class="n">non_wrapping_uint</span><span class="w"> </span><span class="nf">add_one</span><span class="p">(</span><span class="n">non_wrapping_uint</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="c1">// Overflow is checked for this operation.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Using keyword syntax with a typedef:</strong></p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">non_wrapping_uint</span><span class="p">;</span>
+
+<span class="n">non_wrapping_uint</span><span class="w"> </span><span class="nf">add_one</span><span class="p">(</span><span class="n">non_wrapping_uint</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="c1">// Overflow is checked for this operation.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Using attribute syntax with a type directly:</strong></p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">mul_alot</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">wrap</span><span class="p">)))</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1337</span><span class="p">;</span><span class="w"> </span><span class="c1">// Potential overflow is not checked and is well-defined</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Using keyword syntax with a type directly:</strong></p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">mul_alot</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1337</span><span class="p">;</span><span class="w"> </span><span class="c1">// Potential overflow is not checked and is well-defined</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>“Well-defined” overflow is consistent with two’s complement wrap-around
+semantics and won’t be removed via eager compiler optimizations (like some
+undefined behavior might).</p>
+</section>
+<section id="promotion-rules">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Promotion Rules</a><a class="headerlink" href="#promotion-rules" title="Link to this heading">¶</a></h2>
+<p>Overflow behavior types (OBTs) follow the traditional C integer promotion and
+conversion rules while propagating overflow behavior qualifiers through
+implicit casts. This ensures compatibility with existing C semantics while
+maintaining overflow behavior information throughout arithmetic expressions.</p>
+<p>The resulting type characteristics for overflow behavior types (OBTs) across a
+variety of scenarios is detailed below.</p>
+<ul>
+<li><p><strong>OBT and Standard Integer Type</strong>: The result follows standard C conversion
+rules, with the OBT qualifier applied to the standard result type.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">trap_char</span><span class="p">;</span>
+<span class="n">trap_char</span><span class="w"> </span><span class="n">c</span><span class="p">;</span>
+<span class="kt">unsigned</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="n">ul</span><span class="p">;</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">c</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">ul</span><span class="p">;</span><span class="w"> </span><span class="c1">// result is __ob_trap unsigned long</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>Two OBTs with Same Behavior</strong>: When both operands have the same overflow
+behavior, the result follows standard C arithmetic conversions with that
+behavior applied.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">u8_wrap</span><span class="p">;</span>
+<span class="k">typedef</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">short</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">u16_wrap</span><span class="p">;</span>
+<span class="n">u8_wrap</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="n">u16_wrap</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w"> </span><span class="c1">// result is __ob_wrap int (C promotes both to int)</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>Two OBTs with Different Behaviors</strong>: <code class="docutils literal notranslate"><span class="pre">trap</span></code> behavior dominates <code class="docutils literal notranslate"><span class="pre">wrap</span></code>
+behavior. The result follows standard C arithmetic conversions with <code class="docutils literal notranslate"><span class="pre">trap</span></code>
+behavior applied.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">short</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">u16_wrap</span><span class="p">;</span>
+<span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">int_trap</span><span class="p">;</span>
+<span class="n">u16_wrap</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="n">int_trap</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w"> </span><span class="c1">// result is __ob_trap int (C promotes u16-&gt;int, dominance gives trap)</span>
+</pre></div>
+</div>
+</li>
+</ul>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Operation Type</p></th>
+<th class="head"><p>Result Type</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>OBT + Standard Integer</p></td>
+<td><p>Standard C conversion result with OBT qualifier applied</p></td>
+</tr>
+<tr class="row-odd"><td><p>Same Kind OBTs (both <code class="docutils literal notranslate"><span class="pre">wrap</span></code> or both <code class="docutils literal notranslate"><span class="pre">trap</span></code>)</p></td>
+<td><p>Standard C conversion result with common overflow behavior</p></td>
+</tr>
+<tr class="row-even"><td><p>Different Kind OBTs (<code class="docutils literal notranslate"><span class="pre">wrap</span></code> + <code class="docutils literal notranslate"><span class="pre">trap</span></code>)</p></td>
+<td><p>Standard C conversion result with <code class="docutils literal notranslate"><span class="pre">trap</span></code> behavior (dominance)</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Overflow Behavior Dominance Rules:</strong></p>
+<ol class="arabic simple">
+<li><p>If either operand has <code class="docutils literal notranslate"><span class="pre">trap</span></code> behavior → result has <code class="docutils literal notranslate"><span class="pre">trap</span></code> behavior</p></li>
+<li><p>If either operand has <code class="docutils literal notranslate"><span class="pre">wrap</span></code> behavior (and neither has <code class="docutils literal notranslate"><span class="pre">trap`)</span> <span class="pre">→</span> <span class="pre">result</span> <span class="pre">has</span> <span class="pre">``wrap</span></code> behavior</p></li>
+<li><p>Otherwise → no overflow behavior annotation</p></li>
+</ol>
+<p>This model preserves traditional C semantics while ensuring overflow behavior
+information is correctly propagated through arithmetic expressions.</p>
+<section id="pointer-semantics">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Pointer Semantics</a><a class="headerlink" href="#pointer-semantics" title="Link to this heading">¶</a></h3>
+<p>Overflow behavior types can be used with pointers, where the overflow behavior
+annotation applies to the pointee type. Pointers to overflow behavior types
+have specific compatibility and conversion rules.</p>
+<p><strong>Pointer Type Compatibility:</strong></p>
+<p>Pointers to overflow behavior types are treated as distinct types from their
+underlying types and from each other when they have different overflow
+behaviors. This affects assignment, parameter passing, and other pointer
+operations.</p>
+<p><strong>Discarding Overflow Behavior:</strong></p>
+<p>When assigning from a overflow behavior annotated type to a regular integer
+type, the compiler issues a warning about discarding overflow behavior. This is
+controlled by the <code class="docutils literal notranslate"><span class="pre">-Wincompatible-pointer-types-discards-overflow-behavior</span></code>
+diagnostic.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="o">*</span><span class="n">px</span><span class="p">;</span>
+<span class="kt">unsigned</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="o">*</span><span class="n">py</span><span class="p">;</span>
+<span class="kt">unsigned</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="o">*</span><span class="n">pz</span><span class="p">;</span>
+
+<span class="c1">// Discarding overflow behavior - warns but allowed</span>
+<span class="n">px</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">py</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: assigning to &#39;unsigned long *&#39; from</span>
+<span class="w">         </span><span class="c1">// &#39;__ob_trap unsigned long *&#39; discards overflow behavior</span>
+<span class="n">py</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">px</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: assigning to &#39;__ob_trap unsigned long *&#39; from</span>
+<span class="w">         </span><span class="c1">// &#39;unsigned long *&#39; discards overflow behavior</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="conversion-semantics">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Conversion Semantics</a><a class="headerlink" href="#conversion-semantics" title="Link to this heading">¶</a></h2>
+<p>Overflow behavior types are implicitly convertible to and from built-in
+integral types with specific semantics for warnings and constant evaluation.</p>
+<p><strong>Incompatible Overflow Behaviors:</strong></p>
+<p>Attempting to assign or convert between types with incompatible overflow
+behaviors (<code class="docutils literal notranslate"><span class="pre">trap</span></code> vs <code class="docutils literal notranslate"><span class="pre">wrap</span></code>) results in a compilation error, as these
+represent fundamentally different behavioral contracts.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">a</span><span class="p">;</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w"> </span><span class="c1">// error: assigning to &#39;__ob_trap int&#39; from &#39;__ob_wrap int&#39; with</span>
+<span class="w">       </span><span class="c1">// incompatible overflow behavior types (&#39;__ob_trap&#39; and &#39;__ob_wrap&#39;)</span>
+</pre></div>
+</div>
+<p>The Diagnostics section further below details the exact diagnostics Clang
+provides for overflow behavior types.</p>
+<section id="truncation-semantics">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Truncation Semantics</a><a class="headerlink" href="#truncation-semantics" title="Link to this heading">¶</a></h3>
+<p>Truncation and overflow are related and are both often desirable in some
+contexts and undesirable in others. To provide control over these behaviors,
+overflow behavior types may also be used to control truncation instrumentation
+at the type level.</p>
+<p>Note that implicit integer truncation is not an undefined behavior in C. Due to
+this, overflow behavior types make no special guarantees about whether implicit
+integer truncation is defined or not – the behavior is simply always defined.
+Use of overflow behavior types in these contexts only control instrumentation
+related to truncation.</p>
+<p>When an overflow behavior type is involved as the source or destination type of
+truncation, instrumentation checks behave as follows:</p>
+<ul class="simple">
+<li><p><strong>One or more types is ‘trap’</strong>: Truncation checks are inserted and may issue
+either a trap or sanitizer warning based on compiler settings.</p></li>
+<li><p><strong>One or more types is ‘wrap’</strong>: No truncation checks are added regardless of
+compiler flags because truncation with wrapping behavior well-defined. If any
+of the types is <code class="docutils literal notranslate"><span class="pre">trap</span></code> then the truncation rules match the behavior
+mentioned above.</p></li>
+<li><p><strong>Both types are standard integer types</strong>: Behaviors surrounding standard
+integer types is unchanged.</p></li>
+</ul>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w"> </span><span class="c1">// truncation checks are inserted, may trap</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">b</span><span class="p">;</span><span class="w"> </span><span class="c1">// sanitizer truncation checks disallowed</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Note that truncation itself is a form of overflow behavior - when a value is
+too large to fit in the destination type, the high-order bits are discarded,
+which is a wrapping behavior that <code class="docutils literal notranslate"><span class="pre">wrap</span></code> types are designed to handle
+predictably.</p>
+</section>
+<section id="constant-conversion-semantics">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Constant Conversion Semantics</a><a class="headerlink" href="#constant-conversion-semantics" title="Link to this heading">¶</a></h3>
+<p>When converting constant values to overflow behavior types, the behavior
+depends on the overflow behavior annotation and whether the conversion would
+change the value:</p>
+<p><strong>With ‘wrap’ types:</strong></p>
+<p>Constant conversions that would overflow are accepted without warning when
+assigning to or explicitly casting to <code class="docutils literal notranslate"><span class="pre">wrap</span></code> types, as wrapping is the
+intended behavior:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">short</span><span class="w"> </span><span class="n">x1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="p">)</span><span class="mi">100000</span><span class="p">;</span><span class="w">        </span><span class="c1">// OK: explicit wrap cast</span>
+<span class="kt">short</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">x2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="mi">100000</span><span class="p">;</span><span class="w">        </span><span class="c1">// OK: wrap destination</span>
+<span class="kt">unsigned</span><span class="w"> </span><span class="kt">short</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">ux</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100000</span><span class="p">;</span><span class="w">    </span><span class="c1">// OK: wrapping expected</span>
+</pre></div>
+</div>
+<p><strong>With ‘trap’ types:</strong></p>
+<p>Constant conversions that would change the value generate a warning when the
+destination is a <code class="docutils literal notranslate"><span class="pre">trap</span></code> type. This matches the behavior of regular non-OBT
+constant conversions.</p>
+</section>
+<section id="implicit-conversions-due-to-assignment">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Implicit Conversions Due to Assignment</a><a class="headerlink" href="#implicit-conversions-due-to-assignment" title="Link to this heading">¶</a></h3>
+<p>Like with the basic integral types in C and C++, types on the right-hand side
+of an assignment may be implicitly converted to match the left-hand side.</p>
+<p>All built-in integral types can be implicitly converted to an overflow behavior
+version.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">char</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">;</span><span class="w"> </span><span class="c1">// x converted to __ob_wrap int</span>
+</pre></div>
+</div>
+<p>Assigning one overflow behavior type to another is legal only when the two
+types have matching overflow behavior kinds (i.e., <code class="docutils literal notranslate"><span class="pre">wrap</span></code> and <code class="docutils literal notranslate"><span class="pre">wrap</span></code> or
+<code class="docutils literal notranslate"><span class="pre">trap</span></code> and <code class="docutils literal notranslate"><span class="pre">trap</span></code>). Assigning overflow behavior types with differing
+behavior kinds will result in an error.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">trap_var</span><span class="p">;</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrap_var</span><span class="p">;</span>
+
+<span class="n">trap_var</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">wrap_var</span><span class="p">;</span><span class="w"> </span><span class="c1">// error: assigning to &#39;__ob_trap int&#39; from</span>
+<span class="w">                     </span><span class="c1">// &#39;__ob_wrap int&#39; with incompatible overflow</span>
+<span class="w">                     </span><span class="c1">// behavior types (&#39;__ob_trap&#39; and &#39;__ob_wrap&#39;)</span>
+</pre></div>
+</div>
+<p>However, conversions between compatible overflow behavior types (same kind,
+different underlying widths or signedness) are allowed:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">long</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">__LONG_MAX__</span><span class="p">;</span>
+<span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">x</span><span class="p">;</span><span class="w"> </span><span class="c1">// OK: both have &#39;wrap&#39; behavior</span>
+</pre></div>
+</div>
+</section>
+<section id="c-overload-resolution">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">C++ Overload Resolution</a><a class="headerlink" href="#c-overload-resolution" title="Link to this heading">¶</a></h3>
+<p>For the purposes of C++ overload set formation, promotions or conversions to
+and from overflow behavior types are of the same rank as normal integer
+promotions and conversions. These rules have implications during overload
+candidate selection which may lead to unexpected but correct ambiguity errors.</p>
+<p>The example below shows potential ambiguity as matching just the underlying
+type of an OBT parameter is not enough to precisely pick an overload candidate.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">a</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">short</span><span class="w"> </span><span class="n">a</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">foo</span><span class="p">(</span><span class="n">a</span><span class="p">);</span><span class="w"> </span><span class="c1">// call to &#39;foo&#39; is ambiguous</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Most integral types can be implicitly converted to match OBT parameter types
+and this can be done unambiguously in certain cases. Especially, when all other
+candidates are not implicitly convertible.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">a</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">a</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">foo</span><span class="p">(</span><span class="n">a</span><span class="p">);</span><span class="w"> </span><span class="c1">// picks foo(__ob_trap int)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Overflow behavior types with differing kinds may also create ambiguity in
+certain contexts.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">a</span><span class="p">);</span>
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">a</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">foo</span><span class="p">(</span><span class="n">a</span><span class="p">);</span><span class="w"> </span><span class="c1">// call to &#39;foo&#39; is ambiguous</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Overflow behavior types may also be used as template parameters and used within
+C <code class="docutils literal notranslate"><span class="pre">_Generic</span></code> expressions.</p>
+</section>
+<section id="c-generic-expressions">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">C _Generic Expressions</a><a class="headerlink" href="#c-generic-expressions" title="Link to this heading">¶</a></h3>
+<p>Overflow behavior types may be used within C <code class="docutils literal notranslate"><span class="pre">_Generic</span></code> expressions.</p>
+<p>Overflow behavior types do not match against their underlying types within C
+<code class="docutils literal notranslate"><span class="pre">_Generic</span></code> expressions. This means that an OBT will not be considered
+equivalent to its base type for generic selection purposes. OBTs will match
+against exact types considering bitwidth, signedness and overflow
+behavior kind.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="nf">foo</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">_Generic</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="k">default</span><span class="o">:</span><span class="w"> </span><span class="mi">3</span><span class="p">);</span><span class="w"> </span><span class="c1">// returns 3</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">_Generic</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="o">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="o">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="k">default</span><span class="o">:</span><span class="w"> </span><span class="mi">3</span><span class="p">);</span><span class="w"> </span><span class="c1">// returns 1</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="c-template-specializations">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">C++ Template Specializations</a><a class="headerlink" href="#c-template-specializations" title="Link to this heading">¶</a></h3>
+<p>Like with <code class="docutils literal notranslate"><span class="pre">_Generic</span></code>, each OBT is treated as a distinct type for template
+specialization purposes, enabling precise type-based template selection.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">template</span><span class="o">&lt;</span><span class="k">typename</span><span class="w"> </span><span class="nc">T</span><span class="o">&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">TypeProcessor</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="c1">// default case</span>
+<span class="p">};</span>
+
+<span class="k">template</span><span class="o">&lt;&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">TypeProcessor</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="c1">// int specialization</span>
+<span class="p">};</span>
+
+<span class="k">template</span><span class="o">&lt;&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">TypeProcessor</span><span class="o">&lt;</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w"> </span><span class="c1">// __ob_wrap int specialization</span>
+<span class="p">};</span>
+
+<span class="k">template</span><span class="o">&lt;&gt;</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">TypeProcessor</span><span class="o">&lt;</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">static</span><span class="w"> </span><span class="k">constexpr</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="c1">// __ob_trap int specialization</span>
+<span class="p">};</span>
+</pre></div>
+</div>
+<p>When no exact template specialization exists for an OBT, it falls back to the
+default template rather than matching the underlying type specialization,
+maintaining type safety and avoiding unexpected behavior.</p>
+</section>
+</section>
+<section id="interaction-with-command-line-flags-and-sanitizer-special-case-lists">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Interaction with Command-Line Flags and Sanitizer Special Case Lists</a><a class="headerlink" href="#interaction-with-command-line-flags-and-sanitizer-special-case-lists" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">overflow_behavior</span></code> attribute interacts with sanitizers, <code class="docutils literal notranslate"><span class="pre">-ftrapv</span></code>,
+<code class="docutils literal notranslate"><span class="pre">-fwrapv</span></code>, and Sanitizer Special Case Lists (SSCL) by wholly overriding these
+global flags. The following table summarizes the interactions:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Behavior</p></th>
+<th class="head"><p>Default(No Flags)</p></th>
+<th class="head"><p>-ftrapv</p></th>
+<th class="head"><p>-fwrapv</p></th>
+<th class="head"><p>Sanitizers</p></th>
+<th class="head"><p>SSCL</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">overflow_behavior(wrap)</span></code></p></td>
+<td><p>Wraps</p></td>
+<td><p>Wraps</p></td>
+<td><p>Wraps</p></td>
+<td><p>No report, Wraps</p></td>
+<td><p>Overrides SSCL</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">overflow_behavior(trap)</span></code></p></td>
+<td><p>Traps</p></td>
+<td><p>Traps</p></td>
+<td><p>Traps</p></td>
+<td><p>Reports</p></td>
+<td><p>Overrides SSCL</p></td>
+</tr>
+</tbody>
+</table>
+<p>It is important to note the distinction between signed and unsigned types. For
+unsigned integers, which wrap on overflow by default, <code class="docutils literal notranslate"><span class="pre">overflow_behavior(trap)</span></code>
+is particularly useful for enabling overflow checks. For signed integers, whose
+overflow behavior is undefined by default, <code class="docutils literal notranslate"><span class="pre">overflow_behavior(wrap)</span></code> provides
+a guaranteed wrapping behavior.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">overflow_behavior</span></code> attribute can be used to override the behavior of
+entries from a <a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>. This is useful for allowlisting
+specific types into overflow or truncation instrumentation.</p>
+</section>
+<section id="diagnostics">
+<h2><a class="toc-backref" href="#id13" role="doc-backlink">Diagnostics</a><a class="headerlink" href="#diagnostics" title="Link to this heading">¶</a></h2>
+<p>Clang provides diagnostics to help developers manage overflow behavior types.</p>
+<section id="specification-errors-and-warnings">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Specification Errors and Warnings</a><a class="headerlink" href="#specification-errors-and-warnings" title="Link to this heading">¶</a></h3>
+<p>When using overflow behavior types, several diagnostics help catch mistakes in
+how the types are specified.</p>
+<p><strong>Conflicting Specifications:</strong></p>
+<p>An error is issued when both the keyword syntax and attribute syntax are used
+with incompatible overflow behaviors on the same type:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="nf">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">trap</span><span class="p">)))</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="c1">// error: conflicting overflow behavior specification; specifier</span>
+<span class="c1">// specifies &#39;wrap&#39; but attribute specifies &#39;trap&#39;</span>
+</pre></div>
+</div>
+<p><strong>Redundant Specifications:</strong></p>
+<p>A warning is issued when both syntax forms specify the same behavior, which is
+redundant but allowed:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="nf">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">wrap</span><span class="p">)))</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="c1">// warning: redundant overflow behavior specification; both specifier</span>
+<span class="c1">// and attribute specify &#39;wrap&#39;</span>
+</pre></div>
+</div>
+<p><strong>Feature Not Enabled:</strong></p>
+<p>When overflow behavior types are used without enabling the feature via
+<code class="docutils literal notranslate"><span class="pre">-fexperimental-overflow-behavior-types</span></code>, a warning is issued and the attribute is ignored:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Without -fexperimental-overflow-behavior-types</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">wrap</span><span class="p">)))</span><span class="w"> </span><span class="n">x</span><span class="p">;</span>
+<span class="c1">// warning: &#39;overflow_behavior&#39; attribute is ignored because it is</span>
+<span class="c1">// not enabled; pass -fexperimental-overflow-behavior-types</span>
+</pre></div>
+</div>
+</section>
+<section id="woverflow-behavior-conversion">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">-Woverflow-behavior-conversion</a><a class="headerlink" href="#woverflow-behavior-conversion" title="Link to this heading">¶</a></h3>
+<p>This warning group is issued when an overflow behavior type is implicitly
+converted to a standard integer type, which may lead to the loss of the
+specified overflow behavior.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapping_int</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">some_function</span><span class="p">(</span><span class="kt">int</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">another_function</span><span class="p">(</span><span class="n">wrapping_int</span><span class="w"> </span><span class="n">w</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">some_function</span><span class="p">(</span><span class="n">w</span><span class="p">);</span><span class="w"> </span><span class="c1">// warning: implicit conversion from &#39;wrapping_int&#39; to</span>
+<span class="w">                    </span><span class="c1">// &#39;int&#39; discards overflow behavior</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>To fix this, you can explicitly cast the overflow behavior type to a standard
+integer type.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapping_int</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">some_function</span><span class="p">(</span><span class="kt">int</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">another_function</span><span class="p">(</span><span class="n">wrapping_int</span><span class="w"> </span><span class="n">w</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">some_function</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">w</span><span class="p">));</span><span class="w"> </span><span class="c1">// OK</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This warning group includes
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion</span></code>, which includes
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-assignment</span></code>,
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-function-boundary</span></code>,
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-function-boundary-pedantic</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-pedantic</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code class="docutils literal notranslate"><span class="pre">-Woverflow-behavior-conversion</span></code> is implied by <code class="docutils literal notranslate"><span class="pre">-Wconversion</span></code>.</p>
+</div>
+</section>
+<section id="wincompatible-pointer-types-discards-overflow-behavior">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">-Wincompatible-pointer-types-discards-overflow-behavior</a><a class="headerlink" href="#wincompatible-pointer-types-discards-overflow-behavior" title="Link to this heading">¶</a></h3>
+<p>This warning (enabled by default) is issued when converting between pointer
+types where overflow behavior information is discarded. This occurs when
+assigning between pointers that differ only in their overflow behavior
+annotation.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">example</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="o">*</span><span class="n">trap_ptr</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="o">*</span><span class="n">regular_ptr</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">regular_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">trap_ptr</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: assigning to &#39;unsigned long *&#39;</span>
+<span class="w">                          </span><span class="c1">// from &#39;__ob_trap unsigned long *&#39; discards</span>
+<span class="w">                          </span><span class="c1">// overflow behavior</span>
+
+<span class="w">  </span><span class="n">trap_ptr</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">regular_ptr</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: assigning to &#39;__ob_trap unsigned long *&#39;</span>
+<span class="w">                          </span><span class="c1">// from &#39;unsigned long *&#39; discards overflow behavior</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This warning is part of the <code class="docutils literal notranslate"><span class="pre">-Wincompatible-pointer-types</span></code> group and helps
+catch potential bugs where overflow behavior contracts may be inadvertently
+lost through pointer conversions.</p>
+</section>
+<section id="wimplicit-overflow-behavior-conversion">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">-Wimplicit-overflow-behavior-conversion</a><a class="headerlink" href="#wimplicit-overflow-behavior-conversion" title="Link to this heading">¶</a></h3>
+<p>This warning is issued when an overflow behavior type is implicitly converted
+to a standard integer type as part of most conversions, which may lead to the
+loss of the specified overflow behavior. This is the main warning in the
+<code class="docutils literal notranslate"><span class="pre">-Woverflow-behavior-conversion</span></code> group.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapping_int</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">some_function</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">wrapping_int</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">w</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: implicit conversion from &#39;wrapping_int&#39; to &#39;int&#39;</span>
+<span class="w">             </span><span class="c1">// during assignment discards overflow behavior</span>
+<span class="w">             </span><span class="c1">// [-Wimplicit-overflow-behavior-conversion]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Here’s another example showing function parameter conversion with a <code class="docutils literal notranslate"><span class="pre">trap</span></code> type:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">safe_int</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">);</span><span class="w"> </span><span class="c1">// Function expects standard int</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">safe_int</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="n">bar</span><span class="p">(</span><span class="n">s</span><span class="p">);</span><span class="w"> </span><span class="c1">// warning: implicit conversion from &#39;safe_int&#39; to &#39;int&#39;</span>
+<span class="w">                    </span><span class="c1">// discards overflow behavior</span>
+<span class="w">                    </span><span class="c1">// [-Wimplicit-overflow-behavior-conversion]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>To fix this, you can explicitly cast the overflow behavior type to a standard
+integer type.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapping_int</span><span class="p">;</span>
+<span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">safe_int</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">some_function</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">wrapping_int</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">w</span><span class="p">);</span><span class="w"> </span><span class="c1">// OK</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">w</span><span class="p">;</span><span class="w"> </span><span class="c1">// C-style OK</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">bar</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">foo</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">safe_int</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="n">bar</span><span class="p">(</span><span class="k">static_cast</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span><span class="p">(</span><span class="n">s</span><span class="p">));</span><span class="w"> </span><span class="c1">// OK</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="wimplicit-overflow-behavior-conversion-assignment">
+<h3><a class="toc-backref" href="#id18" role="doc-backlink">-Wimplicit-overflow-behavior-conversion-assignment</a><a class="headerlink" href="#wimplicit-overflow-behavior-conversion-assignment" title="Link to this heading">¶</a></h3>
+<p>This warning is issued specifically when an overflow behavior type is
+implicitly converted to a standard integer type during assignment operations or
+variable initialization. This is a subset of the more general
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion</span></code> warning, allowing developers to
+control assignment-specific warnings separately. This warning is disabled by
+default.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapping_int</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">some_function</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">wrapping_int</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">w</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: implicit conversion from &#39;wrapping_int&#39; to &#39;int&#39;</span>
+<span class="w">             </span><span class="c1">// during assignment discards overflow behavior</span>
+<span class="w">             </span><span class="c1">// [-Wimplicit-overflow-behavior-conversion-assignment]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This also applies to variable initialization:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">another_example</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">safe</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">regular</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">safe</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: implicit conversion from &#39;__ob_trap int&#39;</span>
+<span class="w">                      </span><span class="c1">// to &#39;int&#39; during assignment discards overflow behavior</span>
+<span class="w">                      </span><span class="c1">// [-Wimplicit-overflow-behavior-conversion-assignment]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This diagnostic can be controlled independently, allowing projects to suppress
+assignment-related warnings while still receiving warnings for other types of
+implicit conversions (such as function parameter passing).</p>
+<p>Note that when assigning from a non-OBT type to an OBT type, no warning is
+issued as overflow behavior is being added, not discarded:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">adding_obt_is_ok</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">plain</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapped</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">plain</span><span class="p">;</span><span class="w"> </span><span class="c1">// OK - adding overflow behavior, no warning</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="wimplicit-overflow-behavior-conversion-assignment-pedantic">
+<h3><a class="toc-backref" href="#id19" role="doc-backlink">-Wimplicit-overflow-behavior-conversion-assignment-pedantic</a><a class="headerlink" href="#wimplicit-overflow-behavior-conversion-assignment-pedantic" title="Link to this heading">¶</a></h3>
+<p>A less severe version of
+<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-assignment</span></code> which is issued only
+when an unsigned <code class="docutils literal notranslate"><span class="pre">wrap</span></code> type is implicitly converted to a standard unsigned
+integer type during assignment. This is considered less problematic than other
+conversions because unsigned integers already have well-defined wrapping
+behavior by the C standard.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">example</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrapped_uint</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">regular</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">wrapped_uint</span><span class="p">;</span><span class="w"> </span><span class="c1">// warning: implicit conversion from</span>
+<span class="w">                                       </span><span class="c1">// &#39;__ob_wrap unsigned int&#39; to</span>
+<span class="w">                                       </span><span class="c1">// &#39;unsigned int&#39; during assignment</span>
+<span class="w">                                       </span><span class="c1">// discards overflow behavior</span>
+<span class="w">                                       </span><span class="c1">// [-Wimplicit-overflow-behavior-conversion-assignment-pedantic]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This warning is useful for projects that want to track all overflow behavior
+annotations but consider unsigned wrapping conversions to be lower priority
+than signed conversions or <code class="docutils literal notranslate"><span class="pre">trap</span></code> conversions.</p>
+</section>
+<section id="wimplicit-overflow-behavior-conversion-function-boundary">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">-Wimplicit-overflow-behavior-conversion-function-boundary</a><a class="headerlink" href="#wimplicit-overflow-behavior-conversion-function-boundary" title="Link to this heading">¶</a></h3>
+<p>This warning (disabled by default) is issued when an overflow behavior type is
+passed as an argument to a function parameter that does not have the same
+overflow behavior annotation. This helps identify situations where overflow
+behavior contracts may be lost at function boundaries.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">process_value</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">);</span><span class="w">  </span><span class="c1">// Function expects standard int</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">caller</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">safe_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="n">process_value</span><span class="p">(</span><span class="n">safe_value</span><span class="p">);</span><span class="w"> </span><span class="c1">// warning: passing argument of type</span>
+<span class="w">                             </span><span class="c1">// &#39;__ob_trap int&#39; to parameter of type &#39;int&#39;</span>
+<span class="w">                             </span><span class="c1">// discards overflow behavior at function boundary</span>
+<span class="w">                             </span><span class="c1">// [-Wimplicit-overflow-behavior-conversion-function-boundary]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This warning can be particularly useful for catching cases where overflow
+checking behavior is lost when crossing API boundaries. Both the general
+version
+(<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-function-boundary</span></code>) and a pedantic
+version (<code class="docutils literal notranslate"><span class="pre">-Wimplicit-overflow-behavior-conversion-function-boundary-pedantic</span></code>)
+for unsigned wrapping types are disabled by default.</p>
+<p>To fix this warning, you can either:</p>
+<ol class="arabic simple">
+<li><p>Update the function parameter to accept the overflow behavior type:</p></li>
+</ol>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">process_value</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">x</span><span class="p">);</span><span class="w">  </span><span class="c1">// Accept trap-annotated int</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">caller</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">safe_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="n">process_value</span><span class="p">(</span><span class="n">safe_value</span><span class="p">);</span><span class="w"> </span><span class="c1">// OK</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<ol class="arabic simple" start="2">
+<li><p>Explicitly cast at the call site to acknowledge the loss of overflow behavior:</p></li>
+</ol>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">process_value</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">caller</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">safe_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="n">process_value</span><span class="p">((</span><span class="kt">int</span><span class="p">)</span><span class="n">safe_value</span><span class="p">);</span><span class="w"> </span><span class="c1">// OK - explicit cast</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="wimplicit-overflow-behavior-conversion-function-boundary-pedantic">
+<h3><a class="toc-backref" href="#id21" role="doc-backlink">-Wimplicit-overflow-behavior-conversion-function-boundary-pedantic</a><a class="headerlink" href="#wimplicit-overflow-behavior-conversion-function-boundary-pedantic" title="Link to this heading">¶</a></h3>
+<p>A less severe version of the warning above which is issued only in the case of
+unsigned <code class="docutils literal notranslate"><span class="pre">wrap</span></code> types being passed to a function expecting a standard
+unsigned integer type. This is a less problematic issue since the standard and
+well-defined overflow procedure for unsigned integer types is essentially
+<code class="docutils literal notranslate"><span class="pre">wrap</span></code>.</p>
+</section>
+</section>
+<section id="format-string-functions">
+<h2><a class="toc-backref" href="#id22" role="doc-backlink">Format String Functions</a><a class="headerlink" href="#format-string-functions" title="Link to this heading">¶</a></h2>
+<p>When overflow behavior types are used with format string functions (printf-family
+functions like <code class="docutils literal notranslate"><span class="pre">printf</span></code>, <code class="docutils literal notranslate"><span class="pre">fprintf</span></code>, <code class="docutils literal notranslate"><span class="pre">sprintf</span></code>, etc., and scanf-family
+functions like <code class="docutils literal notranslate"><span class="pre">scanf</span></code>, <code class="docutils literal notranslate"><span class="pre">fscanf</span></code>, <code class="docutils literal notranslate"><span class="pre">sscanf</span></code>, etc.), they are treated based
+on their underlying integer types for format specifier compatibility checking.
+More generally, overflow behavior types are ABI-compatible with their underlying
+types when passed to any varargs function.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;cstdio&gt;</span>
+
+<span class="k">typedef</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_wrap</span><span class="w"> </span><span class="n">wrap_int</span><span class="p">;</span>
+<span class="k">typedef</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">__ob_trap</span><span class="w"> </span><span class="n">nowrap_uint</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">example</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">wrap_int</span><span class="w"> </span><span class="n">wi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+<span class="w">  </span><span class="n">nowrap_uint</span><span class="w"> </span><span class="n">su</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">scanf</span><span class="p">(</span><span class="s">&quot;%d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">wi</span><span class="p">);</span><span class="w">   </span><span class="c1">// OK: &amp;wi treated as int* for %d</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;%d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">wi</span><span class="p">);</span><span class="w">  </span><span class="c1">// OK: wi treated as int for %d</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;%u</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">su</span><span class="p">);</span><span class="w">  </span><span class="c1">// OK: su treated as unsigned int for %u</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;%s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">wi</span><span class="p">);</span><span class="w">  </span><span class="c1">// Error: int incompatible with %s (same as regular int)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This behavior ensures that overflow behavior types work seamlessly with existing
+format string functions without requiring special format specifiers, while
+still maintaining their overflow behavior semantics in arithmetic operations.</p>
+<p>The format string checker uses the underlying type to determine compatibility,
+so <code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">__ob_wrap</span></code> is fully compatible with <code class="docutils literal notranslate"><span class="pre">%d</span></code>, <code class="docutils literal notranslate"><span class="pre">%i</span></code>, <code class="docutils literal notranslate"><span class="pre">%x</span></code>, etc.,
+just like a regular <code class="docutils literal notranslate"><span class="pre">int</span></code> would be.</p>
+<section id="incompatibility-with-non-integer-types">
+<h3><a class="toc-backref" href="#id23" role="doc-backlink">Incompatibility With Non-Integer Types</a><a class="headerlink" href="#incompatibility-with-non-integer-types" title="Link to this heading">¶</a></h3>
+<p>An error is issued when attempting to create an overflow behavior type from
+a non-integer type.</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">typedef</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="nf">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">wrap</span><span class="p">)))</span><span class="w"> </span><span class="n">wrapping_float</span><span class="p">;</span>
+<span class="c1">// error: &#39;overflow_behavior&#39; attribute cannot be applied to non-integer type &#39;float&#39;</span>
+
+<span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">S</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="p">;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">overflow_behavior</span><span class="p">(</span><span class="n">wrap</span><span class="p">)))</span><span class="w"> </span><span class="n">S_t</span><span class="p">;</span>
+<span class="c1">// error: &#39;overflow_behavior&#39; attribute cannot be applied to non-integer type &#39;struct S&#39;</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="AllocToken.html">Allocation Tokens</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="BoundsSafety.html"><code class="docutils literal notranslate"><span class="pre">-fbounds-safety</span></code>: Enforcing bounds safety for C</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
