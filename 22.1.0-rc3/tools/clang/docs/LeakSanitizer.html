@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>LeakSanitizer &#8212; Clang 22.1.0-rc3 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=b417f315"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="TypeSanitizer" href="TypeSanitizer.html" />
+    <link rel="prev" title="DataFlowSanitizer Design Document" href="DataFlowSanitizerDesign.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 22.1.0-rc3 documentation</span></a></h1>
+        <h2 class="heading"><span>LeakSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="DataFlowSanitizerDesign.html">DataFlowSanitizer Design Document</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="TypeSanitizer.html">TypeSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="leaksanitizer">
+<h1>LeakSanitizer<a class="headerlink" href="#leaksanitizer" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id2">Usage</a></p></li>
+<li><p><a class="reference internal" href="#security-considerations" id="id3">Security Considerations</a></p></li>
+<li><p><a class="reference internal" href="#supported-platforms" id="id4">Supported Platforms</a></p></li>
+<li><p><a class="reference internal" href="#more-information" id="id5">More Information</a></p></li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>LeakSanitizer is a run-time memory leak detector. It can be combined with
+<a class="reference internal" href="AddressSanitizer.html"><span class="doc">AddressSanitizer</span></a> to get both memory error and leak detection, or
+used in a stand-alone mode. LSan adds almost no performance overhead
+until the very end of the process, at which point there is an extra leak
+detection phase.</p>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p><a class="reference internal" href="AddressSanitizer.html"><span class="doc">AddressSanitizer</span></a>: integrates LeakSanitizer and enables it by default on
+supported platforms.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cat<span class="w"> </span>memory-leak.c
+<span class="gp">#</span>include<span class="w"> </span>&lt;stdlib.h&gt;
+<span class="go">void *p;</span>
+<span class="go">int main() {</span>
+<span class="go">  p = malloc(7);</span>
+<span class="go">  p = 0; // The memory is leaked here.</span>
+<span class="go">  return 0;</span>
+<span class="go">}</span>
+<span class="gp">% </span>clang<span class="w"> </span>-fsanitize<span class="o">=</span>address<span class="w"> </span>-g<span class="w"> </span>memory-leak.c<span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="nv">ASAN_OPTIONS</span><span class="o">=</span><span class="nv">detect_leaks</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./a.out
+<span class="go">==23646==ERROR: LeakSanitizer: detected memory leaks</span>
+<span class="go">Direct leak of 7 byte(s) in 1 object(s) allocated from:</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x4af01b<span class="w"> </span><span class="k">in</span><span class="w"> </span>__interceptor_malloc<span class="w"> </span>/projects/compiler-rt/lib/asan/asan_malloc_linux.cc:52:3
+<span class="gp">    #</span><span class="m">1</span><span class="w"> </span>0x4da26a<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>memory-leak.c:4:7
+<span class="gp">    #</span><span class="m">2</span><span class="w"> </span>0x7f076fd9cec4<span class="w"> </span><span class="k">in</span><span class="w"> </span>__libc_start_main<span class="w"> </span>libc-start.c:287
+<span class="go">SUMMARY: AddressSanitizer: 7 byte(s) leaked in 1 allocation(s).</span>
+</pre></div>
+</div>
+<p>To use LeakSanitizer in stand-alone mode, link your program with
+<code class="docutils literal notranslate"><span class="pre">-fsanitize=leak</span></code> flag. Make sure to use <code class="docutils literal notranslate"><span class="pre">clang</span></code> (not <code class="docutils literal notranslate"><span class="pre">ld</span></code>) for the
+link step, so that it would link in proper LeakSanitizer run-time library
+into the final executable.</p>
+</section>
+<section id="security-considerations">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Security Considerations</a><a class="headerlink" href="#security-considerations" title="Link to this heading">¶</a></h2>
+<p>LeakSanitizer is a bug detection tool and its runtime is not meant to be
+linked against production executables. While it may be useful for testing,
+LeakSanitizer’s runtime was not developed with security-sensitive
+constraints in mind and may compromise the security of the resulting executable.</p>
+</section>
+<section id="supported-platforms">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Supported Platforms</a><a class="headerlink" href="#supported-platforms" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Android</p></li>
+<li><p>Fuchsia</p></li>
+<li><p>Linux</p></li>
+<li><p>macOS</p></li>
+<li><p>NetBSD</p></li>
+</ul>
+</section>
+<section id="more-information">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">More Information</a><a class="headerlink" href="#more-information" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer">https://github.com/google/sanitizers/wiki/AddressSanitizerLeakSanitizer</a></p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="DataFlowSanitizerDesign.html">DataFlowSanitizer Design Document</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="TypeSanitizer.html">TypeSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
