@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>HLSL Entry Functions &#8212; Clang 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../_static/documentation_options.js?v=2797fd66"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="HLSL Function Calls" href="FunctionCalls.html" />
+    <link rel="prev" title="HLSL Resource Types" href="ResourceTypes.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../index.html">
+          <span>Clang 22.1.0-rc1 documentation</span></a></h1>
+        <h2 class="heading"><span>HLSL Entry Functions</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ResourceTypes.html">HLSL Resource Types</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="FunctionCalls.html">HLSL Function Calls</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="hlsl-entry-functions">
+<h1>HLSL Entry Functions<a class="headerlink" href="#hlsl-entry-functions" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#usage" id="id1">Usage</a></p></li>
+<li><p><a class="reference internal" href="#implementation-details" id="id2">Implementation Details</a></p></li>
+</ul>
+</nav>
+<section id="usage">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>In HLSL, entry functions denote the starting point for shader execution. They
+must be known at compile time. For all non-library shaders, the compiler assumes
+the default entry function name <code class="docutils literal notranslate"><span class="pre">main</span></code>, unless the DXC <code class="docutils literal notranslate"><span class="pre">/E</span></code> option is
+provided to specify an alternate entry point. For library shaders entry points
+are denoted using the <code class="docutils literal notranslate"><span class="pre">[shader(...)]</span></code> attribute.</p>
+<p>All scalar parameters to entry functions must have semantic annotations, and all
+struct parameters must have semantic annotations on every field in the struct
+declaration. Additionally if the entry function has a return type, a semantic
+annotation must be provided for the return type as well.</p>
+<p>HLSL entry functions can be called from other parts of the shader, which has
+implications on code generation.</p>
+</section>
+<section id="implementation-details">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Implementation Details</a><a class="headerlink" href="#implementation-details" title="Link to this heading">¶</a></h2>
+<p>In Clang, the DXC <code class="docutils literal notranslate"><span class="pre">/E</span></code> option is translated to the cc1 flag <code class="docutils literal notranslate"><span class="pre">-hlsl-entry</span></code>,
+which in turn applies the <code class="docutils literal notranslate"><span class="pre">HLSLShader</span></code> attribute to the function with the
+specified name. This allows code generation for entry functions to always key
+off the presence of the <code class="docutils literal notranslate"><span class="pre">HLSLShader</span></code> attribute, regardless of what shader
+profile you are compiling.</p>
+<p>In code generation, two functions are generated. One is the user defined
+function, which is code generated as a mangled C++ function with internal
+linkage following normal function code generation.</p>
+<p>The actual exported entry function which can be called by the GPU driver is a
+<code class="docutils literal notranslate"><span class="pre">void(void)</span></code> function that isn’t name mangled. In code generation we generate
+the unmangled entry function to serve as the actual shader entry. The shader
+entry function is annotated with the <code class="docutils literal notranslate"><span class="pre">hlsl.shader</span></code> function attribute
+identifying the entry’s pipeline stage.</p>
+<p>The body of the unmangled entry function contains first a call to execute global
+constructors, then instantiations of the user-defined entry parameters with
+their semantic values populated, and a call to the user-defined function.
+After the call instruction the return value (if any) is saved using a
+target-appropriate intrinsic for storing outputs (for DirectX, the
+<code class="docutils literal notranslate"><span class="pre">llvm.dx.store.output</span></code>). Lastly, any present global destructors will be called
+immediately before the return. HLSL does not support C++ <code class="docutils literal notranslate"><span class="pre">atexit</span></code>
+registrations, instead calls to global destructors are compile-time generated.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>HLSL support in Clang is currently focused on compute shaders, which do not
+support output semantics. Support for output semantics will not be
+implemented until other shader profiles are supported.</p>
+</div>
+<p>Below is example IR that represents the planned implementation, subject to
+change as the <code class="docutils literal notranslate"><span class="pre">llvm.dx.store.output</span></code> and <code class="docutils literal notranslate"><span class="pre">llvm.dx.load.input</span></code> intrinsics are
+not yet implemented.</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>; Function Attrs: norecurse
+define void @main() #1 {
+   entry:
+   %0 = call i32 @llvm.dx.load.input.i32(...)
+   %1 = call i32 @&quot;?main@@YAXII@Z&quot;(i32 %0)
+   call @llvm.dx.store.output.i32(%1, ...)
+   ret void
+}
+</pre></div>
+</div>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="ResourceTypes.html">HLSL Resource Types</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="FunctionCalls.html">HLSL Function Calls</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

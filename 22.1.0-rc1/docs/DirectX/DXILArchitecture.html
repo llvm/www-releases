@@ -1,0 +1,307 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Architecture and Design of DXIL Support in LLVM &#8212; LLVM 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm-theme.css?v=96924833" />
+    <script src="../_static/documentation_options.js?v=2797fd66"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Specification of DXIL Operations using TableGen Representation" href="DXILOpTableGenDesign.html" />
+    <link rel="prev" title="DirectX Container" href="DXContainer.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="../index.html">
+    <img src="../_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="DXILOpTableGenDesign.html" title="Specification of DXIL Operations using TableGen Representation"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="DXContainer.html" title="DirectX Container"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../UserGuides.html" >User Guides</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="../DirectXUsage.html" accesskey="U">User Guide for the DirectX Target</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Architecture and Design of DXIL Support in LLVM</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/DirectX/DXILArchitecture.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="architecture-and-design-of-dxil-support-in-llvm">
+<h1>Architecture and Design of DXIL Support in LLVM<a class="headerlink" href="#architecture-and-design-of-dxil-support-in-llvm" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#common-code-for-reading-and-writing" id="id2">Common Code for Reading and Writing</a></p></li>
+<li><p><a class="reference internal" href="#the-dxilupgrade-pass" id="id3">The DXILUpgrade Pass</a></p></li>
+<li><p><a class="reference internal" href="#the-directx-intrinsic-expansion-pass" id="id4">The DirectX Intrinsic Expansion Pass</a></p></li>
+<li><p><a class="reference internal" href="#the-directx-backend" id="id5">The DirectX Backend</a></p>
+<ul>
+<li><p><a class="reference internal" href="#directx-backend-flow" id="id6">DirectX Backend Flow</a></p></li>
+<li><p><a class="reference internal" href="#directx-container" id="id7">DirectX Container</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#testing" id="id8">Testing</a></p></li>
+</ul>
+</nav>
+<div class="toctree-wrapper compound">
+</div>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>LLVM supports reading and writing the <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst">DirectX Intermediate Language.</a>,
+or DXIL. DXIL is essentially LLVM 3.7 era bitcode with some
+restrictions and various semantically important operations and
+metadata.</p>
+<p>LLVM’s implementation philosophy for DXIL support is to treat DXIL as
+merely a representation format as much as possible. When reading DXIL,
+we should translate everything to generic LLVM constructs when
+possible. Similarly, we should introduce DXIL-specific constructs as
+late as possible in the process of lowering to the format.</p>
+<p>There are three places to look for DXIL related code in LLVM: The
+<cite>DirectX</cite> backend, for writing DXIL; The <cite>DXILUpgrade</cite> pass, for
+reading; and in library code that is shared between writing and
+reading. We’ll describe these in reverse order.</p>
+</section>
+<section id="common-code-for-reading-and-writing">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Common Code for Reading and Writing</a><a class="headerlink" href="#common-code-for-reading-and-writing" title="Link to this heading">¶</a></h2>
+<p>There’s quite a bit of logic that needs to be shared between reading
+and writing DXIL in order to avoid code duplication. While we don’t
+have a hard and fast rule about where such code should live, there are
+generally three sensible places. Simple definitions of enums and
+values that must stay fixed to match DXIL’s ABI can be found in
+<cite>Support/DXILABI.h</cite>, utilities to translate bidirectionally between
+DXIL and modern LLVM constructs live in <cite>lib/Transforms/Utils</cite>, and
+more analyses that are needed to derive or preserve information are
+implemented as typical <cite>lib/Analysis</cite> passes.</p>
+</section>
+<section id="the-dxilupgrade-pass">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">The DXILUpgrade Pass</a><a class="headerlink" href="#the-dxilupgrade-pass" title="Link to this heading">¶</a></h2>
+<p>Translating DXIL to LLVM IR takes advantage of the fact that DXIL is
+compatible with LLVM 3.7 bitcode, and that modern LLVM is capable of
+“upgrading” older bitcode into modern IR. Simply relying on the
+bitcode upgrade process isn’t sufficient though, since that leaves a
+number of DXIL specific constructs around. Thus, we have the
+<cite>DXILUpgrade</cite> pass to transform DXIL operations to LLVM operations and
+smooth over differences in metadata representation. We call this pass
+“upgrade” to reflect that it follows LLVM’s standard bitcode upgrade
+process and simply finishes the job for DXIL constructs - while
+“reader” or “lifting” might also be reasonable names, they could be a
+bit misleading.</p>
+<p>The <cite>DXILUpgrade</cite> pass itself is fairly lightweight. It mostly relies
+on the utilities described in “Common Code” above in order to share
+logic with both the DirectX backend and with Clang’s codegen of HLSL
+support as much as possible.</p>
+</section>
+<section id="the-directx-intrinsic-expansion-pass">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">The DirectX Intrinsic Expansion Pass</a><a class="headerlink" href="#the-directx-intrinsic-expansion-pass" title="Link to this heading">¶</a></h2>
+<p>There are intrinsics that don’t map directly to DXIL Ops. In some cases
+an intrinsic needs to be expanded to a set of LLVM IR instructions. In
+other cases an intrinsic needs modifications to the arguments or return
+values of a DXIL Op. The <cite>DXILIntrinsicExpansion</cite> pass handles all
+the cases where our intrinsics don’t have a one to one mapping. This
+pass may also be used when the expansion is specific to DXIL to keep
+implementation details out of CodeGen. Finally, there is an expectation
+that we maintain vector types through this pass. Therefore, best
+practice would be to avoid scalarization in this pass.</p>
+</section>
+<section id="the-directx-backend">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">The DirectX Backend</a><a class="headerlink" href="#the-directx-backend" title="Link to this heading">¶</a></h2>
+<p>The DirectX backend lowers LLVM IR into DXIL. As we’re transforming to
+an intermediate format rather than a specific ISA, this backend does
+not follow the instruction selection patterns you might be familiar
+with from other backends. There are two parts to lowering DXIL - a set
+of passes that mutate various constructs into a form that matches how
+DXIL represents those constructs, followed by a limited bitcode
+“downgrader pass”.</p>
+<p>Before emitting DXIL, the DirectX backend needs to modify the LLVM IR
+such that external operations, types, and metadata is represented in
+the way that DXIL expects. For example, <cite>DXILOpLowering</cite> translates
+intrinsics into <cite>dx.op</cite> calls. These passes are essentially the
+inverse of the <cite>DXILUpgrade</cite> pass. It’s best to do this downgrading
+process as IR to IR passes when possible, as that means that they can
+be easily tested with <cite>opt</cite> and <cite>FileCheck</cite> without the need for
+external tooling.</p>
+<p>The second part of DXIL emission is more or less an LLVM bitcode
+downgrader. We need to emit bitcode that matches the LLVM 3.7
+representation. For this, we have <cite>DXILWriter</cite>, which is an alternate
+version of LLVM’s <cite>BitcodeWriter</cite>. At present, this is able to
+leverage LLVM’s current bitcode libraries to do a lot of the work, but
+it’s possible that at some point in the future it will need to be
+completely separate as modern LLVM bitcode evolves.</p>
+<section id="directx-backend-flow">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">DirectX Backend Flow</a><a class="headerlink" href="#directx-backend-flow" title="Link to this heading">¶</a></h3>
+<p>The code generation flow for DXIL is broken into a series of passes. The passes
+are grouped into two flows:</p>
+<ol class="arabic simple">
+<li><p>Generating DXIL IR.</p></li>
+<li><p>Generating DXIL Binary.</p></li>
+</ol>
+<p>The passes to generate DXIL IR follow the flow:</p>
+<blockquote>
+<div><p>DXILOpLowering -&gt; DXILPrepare -&gt; DXILTranslateMetadata</p>
+</div></blockquote>
+<p>Each of these passes has a defined responsibility:</p>
+<ol class="arabic simple">
+<li><p>DXILOpLowering translates LLVM intrinsic calls to dx.op calls.</p></li>
+<li><p>DXILPrepare updates functions in the DXIL IR to be compatible with LLVM 3.7,
+namely removing attributes, and inserting bitcasts to allow typed pointers
+to be inserted.</p></li>
+<li><p>DXILTranslateMetadata transforms and emits all recognized DXIL Metadata.</p></li>
+</ol>
+<p>The passes to encode DXIL to binary in the DX Container follow the flow:</p>
+<blockquote>
+<div><p>DXILEmbedder -&gt; DXContainerGlobals -&gt; AsmPrinter</p>
+</div></blockquote>
+<p>Each of these passes have the following defined responsibilities:</p>
+<ol class="arabic simple">
+<li><p>DXILEmbedder runs the DXIL bitcode writer to generate a bitcode stream and
+embeds the binary data inside a global in the original module.</p></li>
+<li><p>DXContainerGlobals generates binary data globals for the other DX Container
+parts based on computed analysis passes.</p></li>
+<li><p>AsmPrinter is the standard LLVM infrastructure for emitting object files.</p></li>
+</ol>
+<p>When emitting DXIL into a DX Container file the MC layer is used in a similar
+way to how the Clang <code class="docutils literal notranslate"><span class="pre">-fembed-bitcode</span></code> option operates. The DX Container
+object writer knows how to construct the headers and structural fields of the
+container, and reads global variables from the module to fill in the remaining
+part data.</p>
+</section>
+<section id="directx-container">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">DirectX Container</a><a class="headerlink" href="#directx-container" title="Link to this heading">¶</a></h3>
+<p>The DirectX container format is treated in LLVM as an object file format.
+Reading is implemented between the BinaryFormat and Object libraries, and
+writing is implemented in the MC layer. Additional testing and inspection
+support are implemented in the ObjectYAML library and tools.</p>
+</section>
+</section>
+<section id="testing">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Testing</a><a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<p>A lot of DXIL testing can be done with typical IR to IR tests using
+<cite>opt</cite> and <cite>FileCheck</cite>, since a lot of the support is implemented in
+terms of IR level passes as described in the previous sections. You
+can see examples of this in <cite>llvm/test/CodeGen/DirectX</cite> as well as
+<cite>llvm/test/Transforms/DXILUpgrade</cite>, and this type of testing should be
+leveraged as much as possible.</p>
+<p>However, when it comes to testing the DXIL format itself, IR passes
+are insufficient for testing. For now, the best option we have
+available is using the DXC project’s tools in order to round trip.
+These tests are currently found in <cite>test/tools/dxil-dis</cite> and are only
+available if the <cite>LLVM_INCLUDE_DXIL_TESTS</cite> cmake option is set. Note
+that we do not currently have the equivalent testing set up for the
+DXIL reading path.</p>
+<p>As soon as we are able, we will also want to round trip using the DXIL
+writing and reading paths in order to ensure self consistency and to
+get test coverage when <cite>dxil-dis</cite> isn’t available.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="DXILOpTableGenDesign.html" title="Specification of DXIL Operations using TableGen Representation"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="DXContainer.html" title="DirectX Container"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../UserGuides.html" >User Guides</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="../DirectXUsage.html" >User Guide for the DirectX Target</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Architecture and Design of DXIL Support in LLVM</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-01-16.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

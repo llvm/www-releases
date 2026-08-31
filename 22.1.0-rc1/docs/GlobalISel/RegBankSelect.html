@@ -1,0 +1,198 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>RegBankSelect &#8212; LLVM 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm-theme.css?v=96924833" />
+    <script src="../_static/documentation_options.js?v=2797fd66"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="InstructionSelect" href="InstructionSelect.html" />
+    <link rel="prev" title="Legalizer" href="Legalizer.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="../index.html">
+    <img src="../_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="InstructionSelect.html" title="InstructionSelect"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Legalizer.html" title="Legalizer"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../Reference.html" >Reference</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >Global Instruction Selection</a> &#187;</li>
+          <li class="nav-item nav-item-3"><a href="Pipeline.html" accesskey="U">Core Pipeline</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">RegBankSelect</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/GlobalISel/RegBankSelect.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="regbankselect">
+<span id="id1"></span><h1>RegBankSelect<a class="headerlink" href="#regbankselect" title="Link to this heading">¶</a></h1>
+<p>This pass constrains the <a class="reference internal" href="GMIR.html#gmir-gvregs"><span class="std std-ref">Generic Virtual Registers</span></a> operands of generic
+instructions to some <a class="reference internal" href="GMIR.html#gmir-regbank"><span class="std std-ref">Register Bank</span></a>.</p>
+<p>It iteratively maps instructions to a set of per-operand bank assignment.
+The possible mappings are determined by the target-provided
+<a class="reference internal" href="#api-registerbankinfo"><span class="std std-ref">RegisterBankInfo</span></a>.
+The mapping is then applied, possibly introducing <code class="docutils literal notranslate"><span class="pre">COPY</span></code> instructions if
+necessary.</p>
+<p>It traverses the <code class="docutils literal notranslate"><span class="pre">MachineFunction</span></code> top down so that all operands are already
+mapped when analyzing an instruction.</p>
+<p>This pass could also remap target-specific instructions when beneficial.
+In the future, this could replace the ExeDepsFix pass, as we can directly
+select the best variant for an instruction that’s available on multiple banks.</p>
+<section id="api-registerbankinfo">
+<span id="id2"></span><h2>API: RegisterBankInfo<a class="headerlink" href="#api-registerbankinfo" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">RegisterBankInfo</span></code> class describes multiple aspects of register banks.</p>
+<ul class="simple">
+<li><p><strong>Banks</strong>: <code class="docutils literal notranslate"><span class="pre">addRegBankCoverage</span></code> — which register bank covers each
+register class.</p></li>
+<li><p><strong>Cross-Bank Copies</strong>: <code class="docutils literal notranslate"><span class="pre">copyCost</span></code> — the cost of a <code class="docutils literal notranslate"><span class="pre">COPY</span></code> from one bank
+to another.</p></li>
+<li><p><strong>Default Mapping</strong>: <code class="docutils literal notranslate"><span class="pre">getInstrMapping</span></code> — the default bank assignments for
+a given instruction.</p></li>
+<li><p><strong>Alternative Mapping</strong>: <code class="docutils literal notranslate"><span class="pre">getInstrAlternativeMapping</span></code> — the other
+possible bank assignments for a given instruction.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">TODO</span></code>:
+All this information should eventually be static and generated by TableGen,
+mostly using existing information augmented by bank descriptions.</p>
+<p><code class="docutils literal notranslate"><span class="pre">TODO</span></code>:
+<code class="docutils literal notranslate"><span class="pre">getInstrMapping</span></code> is currently separate from <code class="docutils literal notranslate"><span class="pre">getInstrAlternativeMapping</span></code>
+because the latter is more expensive: as we move to static mapping info,
+both methods should be free, and we should merge them.</p>
+</section>
+<section id="regbankselect-modes">
+<span id="id3"></span><h2>RegBankSelect Modes<a class="headerlink" href="#regbankselect-modes" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">RegBankSelect</span></code> currently has two modes:</p>
+<ul class="simple">
+<li><p><strong>Fast</strong> — For each instruction, pick a target-provided “default” bank
+assignment.  This is the default at -O0.</p></li>
+<li><p><strong>Greedy</strong> — For each instruction, pick the cheapest of several
+target-provided bank assignment alternatives.</p></li>
+</ul>
+<p>We intend to eventually introduce an additional optimizing mode:</p>
+<ul class="simple">
+<li><p><strong>Global</strong> — Across multiple instructions, pick the cheapest combination of
+bank assignments.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">NOTE</span></code>:
+On AArch64, we are considering using the Greedy mode even at -O0 (or perhaps at
+backend -O1):  because <a class="reference internal" href="GMIR.html#gmir-llt"><span class="std std-ref">Low Level Type</span></a> doesn’t distinguish floating point from
+integer scalars, the default assignment for loads and stores is the integer
+bank, introducing cross-bank copies on most floating point operations.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="InstructionSelect.html" title="InstructionSelect"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Legalizer.html" title="Legalizer"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../Reference.html" >Reference</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="index.html" >Global Instruction Selection</a> &#187;</li>
+          <li class="nav-item nav-item-3"><a href="Pipeline.html" >Core Pipeline</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">RegBankSelect</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-01-16.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>TypeSanitizer &#8212; Clang 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="_static/graphviz.css?v=eafc0fe6" />
+    <script src="_static/documentation_options.js?v=2797fd66"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="RealtimeSanitizer" href="RealtimeSanitizer.html" />
+    <link rel="prev" title="LeakSanitizer" href="LeakSanitizer.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>Clang 22.1.0-rc1 documentation</span></a></h1>
+        <h2 class="heading"><span>TypeSanitizer</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LeakSanitizer.html">LeakSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RealtimeSanitizer.html">RealtimeSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="typesanitizer">
+<h1>TypeSanitizer<a class="headerlink" href="#typesanitizer" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#the-typesanitizer-algorithm" id="id2">The TypeSanitizer Algorithm</a></p></li>
+<li><p><a class="reference internal" href="#how-to-build" id="id3">How to build</a></p></li>
+<li><p><a class="reference internal" href="#usage" id="id4">Usage</a></p>
+<ul>
+<li><p><a class="reference internal" href="#error-terminology" id="id5">Error terminology</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#sanitizer-features" id="id6">Sanitizer features</a></p>
+<ul>
+<li><p><a class="reference internal" href="#instrumentation-code-inlining" id="id7">Instrumentation code inlining</a></p></li>
+<li><p><a class="reference internal" href="#has-feature-type-sanitizer" id="id8"><code class="docutils literal notranslate"><span class="pre">__has_feature(type_sanitizer)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#attribute-no-sanitize-type" id="id9"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;type&quot;)))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#attribute-disable-sanitizer-instrumentation" id="id10"><code class="docutils literal notranslate"><span class="pre">__attribute__((disable_sanitizer_instrumentation))</span></code></a></p></li>
+<li><p><a class="reference internal" href="#ignorelist" id="id11">Ignorelist</a></p></li>
+<li><p><a class="reference internal" href="#limitations" id="id12">Limitations</a></p></li>
+<li><p><a class="reference internal" href="#current-status" id="id13">Current Status</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>The TypeSanitizer is a detector for strict type aliasing violations. It consists of a compiler
+instrumentation module and a run-time library. C/C++ has type-based aliasing rules, and LLVM
+can exploit these for optimizations given the TBAA metadata Clang emits. In general, a pointer
+of a given type cannot access an object of a different type, with only a few exceptions.</p>
+<p>These rules aren’t always apparent to users, which leads to code that violates these rules
+(e.g. for type punning). This can lead to optimization passes introducing bugs unless the
+code is build with <code class="docutils literal notranslate"><span class="pre">-fno-strict-aliasing</span></code>, sacrificing performance.</p>
+<p>TypeSanitizer is built to catch when these strict aliasing rules have been violated, helping
+users find where such bugs originate in their code despite the code looking valid at first glance.</p>
+<p>Typical memory overhead introduced by TypeSanitizer is about <strong>8x</strong>. Runtime slowdown varies greatly
+depending on how often the instrumented code relies on type aliasing. In the best case slowdown is
+<strong>2x-3x</strong>.</p>
+</section>
+<section id="the-typesanitizer-algorithm">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">The TypeSanitizer Algorithm</a><a class="headerlink" href="#the-typesanitizer-algorithm" title="Link to this heading">¶</a></h2>
+<p>For each TBAA type-access descriptor, encoded in LLVM IR using TBAA Metadata, the instrumentation
+pass generates descriptor tables. Thus there is a unique pointer to each type (and access descriptor).
+These tables are comdat (except for anonymous-namespace types), so the pointer values are unique
+across the program.</p>
+<p>The descriptors refer to other descriptors to form a type aliasing tree, like how LLVM’s TBAA data
+does.</p>
+<p>The runtime uses 8 bytes of shadow memory, the size of the pointer to the type descriptor, for
+every byte of accessed data in the program. The first byte of a type will have its shadow memory
+be set to the pointer to its type descriptor. Aside from that, there are some other values it may be.</p>
+<ul class="simple">
+<li><p>0 is used to represent an unknown type</p></li>
+<li><p>Negative numbers represent an interior byte: A byte inside a type that is not the first one. As an
+example, a value of -2 means you are in the third byte of a type.</p></li>
+</ul>
+<p>The Instrumentation first checks for an exact match between the type of the current access and the
+type for that address in the shadow memory. This can quickly be done by checking pointer values. If
+it matches, it checks the remaining shadow memory of the type to ensure they are the correct negative
+numbers. If this fails, it calls the “slow path” check. If the exact match fails, we check to see if
+the value, and the remainder of the shadow bytes, is 0. If they are, we can set the shadow memory to
+the correct type descriptor pointer for the first byte, and the correct negative numbers for the rest
+of the type’s shadow.</p>
+<p>If the type in shadow memory is neither an exact match nor 0, we call the slower runtime check. It
+uses the full TBAA algorithm, just as the compiler does, to determine when two types are permitted to
+alias.</p>
+<p>The instrumentation pass inserts calls to the memset intrinsic to set the memory updated by memset,
+memcpy, and memmove, as well as allocas/byval (and for lifetime.start/end) to reset the shadow memory
+to reflect that the type is now unknown. The runtime intercepts memset, memcpy, etc. to perform the
+same function for the library calls.</p>
+</section>
+<section id="how-to-build">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">How to build</a><a class="headerlink" href="#how-to-build" title="Link to this heading">¶</a></h2>
+<p>Build LLVM/Clang with <a class="reference external" href="https://llvm.org/docs/CMake.html">CMake</a> and enable
+the <code class="docutils literal notranslate"><span class="pre">compiler-rt</span></code> runtime. An example CMake configuration that will allow
+for the use/testing of TypeSanitizer:</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">$ </span>cmake<span class="w"> </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span>-DLLVM_ENABLE_PROJECTS<span class="o">=</span><span class="s2">&quot;clang&quot;</span><span class="w"> </span>-DLLVM_ENABLE_RUNTIMES<span class="o">=</span><span class="s2">&quot;compiler-rt&quot;</span><span class="w"> </span>&lt;path<span class="w"> </span>to<span class="w"> </span>source&gt;/llvm
+</pre></div>
+</div>
+</section>
+<section id="usage">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Usage</a><a class="headerlink" href="#usage" title="Link to this heading">¶</a></h2>
+<p>Compile and link your program with <code class="docutils literal notranslate"><span class="pre">-fsanitize=type</span></code> flag. The
+TypeSanitizer run-time library should be linked to the final executable, so
+make sure to use <code class="docutils literal notranslate"><span class="pre">clang</span></code> (not <code class="docutils literal notranslate"><span class="pre">ld</span></code>) for the final link step. To
+get a reasonable performance add <code class="docutils literal notranslate"><span class="pre">-O1</span></code> or higher.
+TypeSanitizer by default doesn’t print the full stack trace in error messages. Use <code class="docutils literal notranslate"><span class="pre">TYSAN_OPTIONS=print_stacktrace=1</span></code>
+to print the full trace. To get nicer stack traces in error messages add <code class="docutils literal notranslate"><span class="pre">-fno-omit-frame-pointer</span></code> and
+<code class="docutils literal notranslate"><span class="pre">-g</span></code>.  To get perfect stack traces you may need to disable inlining (just use <code class="docutils literal notranslate"><span class="pre">-O1</span></code>) and tail call elimination
+(<code class="docutils literal notranslate"><span class="pre">-fno-optimize-sibling-calls</span></code>).</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>cat<span class="w"> </span>example_AliasViolation.c
+<span class="go">int main(int argc, char **argv) {</span>
+<span class="go">  int x = 100;</span>
+<span class="go">  float *y = (float*)&amp;x;</span>
+<span class="go">  *y += 2.0f;          // Strict aliasing violation</span>
+<span class="go">  return 0;</span>
+<span class="go">}</span>
+
+<span class="gp"># </span>Compile<span class="w"> </span>and<span class="w"> </span>link
+<span class="gp">% </span>clang++<span class="w"> </span>-g<span class="w"> </span>-fsanitize<span class="o">=</span><span class="nb">type</span><span class="w"> </span>example_AliasViolation.cc
+</pre></div>
+</div>
+<p>The program will print an error message to <code class="docutils literal notranslate"><span class="pre">stderr</span></code> each time a strict aliasing violation is detected.
+The program won’t terminate, which will allow you to detect many strict aliasing violations in one
+run.</p>
+<div class="highlight-console notranslate"><div class="highlight"><pre><span></span><span class="gp">% </span>./a.out
+<span class="go">==1375532==ERROR: TypeSanitizer: type-aliasing-violation on address 0x7ffeebf1a72c (pc 0x5b3b1145ff41 bp 0x7ffeebf1a660 sp 0x7ffeebf19e08 tid 1375532)</span>
+<span class="go">READ of size 4 at 0x7ffeebf1a72c with type float accesses an existing object of type int</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x5b3b1145ff40<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>example_AliasViolation.c:4:10
+
+<span class="go">==1375532==ERROR: TypeSanitizer: type-aliasing-violation on address 0x7ffeebf1a72c (pc 0x5b3b1146008a bp 0x7ffeebf1a660 sp 0x7ffeebf19e08 tid 1375532)</span>
+<span class="go">WRITE of size 4 at 0x7ffeebf1a72c with type float accesses an existing object of type int</span>
+<span class="gp">    #</span><span class="m">0</span><span class="w"> </span>0x5b3b11460089<span class="w"> </span><span class="k">in</span><span class="w"> </span>main<span class="w"> </span>example_AliasViolation.c:4:10
+</pre></div>
+</div>
+<section id="error-terminology">
+<h3><a class="toc-backref" href="#id5" role="doc-backlink">Error terminology</a><a class="headerlink" href="#error-terminology" title="Link to this heading">¶</a></h3>
+<p>There are some terms that may appear in TypeSanitizer errors that are derived from
+<cite>TBAA Metadata &lt;https://llvm.org/docs/LangRef.html#tbaa-metadata&gt;</cite>. This section hopes to provide a
+brief dictionary of these terms.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">omnipotent</span> <span class="pre">char</span></code>: This is a special type which can alias with anything. Its name comes from the C/C++
+type <code class="docutils literal notranslate"><span class="pre">char</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">type</span> <span class="pre">p[x]</span></code>: This signifies pointers to the type. <code class="docutils literal notranslate"><span class="pre">x</span></code> is the number of indirections to reach the final value.
+As an example, a pointer to a pointer to an integer would be <code class="docutils literal notranslate"><span class="pre">type</span> <span class="pre">p2</span> <span class="pre">int</span></code>.</p></li>
+</ul>
+<p>TypeSanitizer is still experimental. User-facing error messages should be improved in the future to remove
+references to LLVM IR specific terms.</p>
+</section>
+</section>
+<section id="sanitizer-features">
+<h2><a class="toc-backref" href="#id6" role="doc-backlink">Sanitizer features</a><a class="headerlink" href="#sanitizer-features" title="Link to this heading">¶</a></h2>
+<section id="instrumentation-code-inlining">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Instrumentation code inlining</a><a class="headerlink" href="#instrumentation-code-inlining" title="Link to this heading">¶</a></h3>
+<p>By default TypeSanitizer inserts instrumentation through function calls. This may lead to a reduction in
+runtime performance. <code class="docutils literal notranslate"><span class="pre">-fno-sanitize-type-outline-instrumentation</span></code> (default: <code class="docutils literal notranslate"><span class="pre">false</span></code>) forces all
+code instrumentation to be inlined. This will increase the size of the generated code and compiler
+overhead, but may improve the runtime performance of the resulting code.</p>
+</section>
+<section id="has-feature-type-sanitizer">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__has_feature(type_sanitizer)</span></code></a><a class="headerlink" href="#has-feature-type-sanitizer" title="Link to this heading">¶</a></h3>
+<p>In some cases one may need to execute different code depending on whether
+TypeSanitizer is enabled.
+<a class="reference internal" href="LanguageExtensions.html#langext-has-feature-has-extension"><span class="std std-ref">__has_feature</span></a> can be used for
+this purpose.</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="cp">#if defined(__has_feature)</span>
+<span class="cp">#  if __has_feature(type_sanitizer)</span>
+<span class="c1">// code that builds only under TypeSanitizer</span>
+<span class="cp">#  endif</span>
+<span class="cp">#endif</span>
+</pre></div>
+</div>
+</section>
+<section id="attribute-no-sanitize-type">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__attribute__((no_sanitize(&quot;type&quot;)))</span></code></a><a class="headerlink" href="#attribute-no-sanitize-type" title="Link to this heading">¶</a></h3>
+<p>Some code you may not want to be instrumented by TypeSanitizer.  One may use the
+function attribute <code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;type&quot;)</span></code> to disable instrumenting type aliasing.
+It is possible, depending on what happens in non-instrumented code, that instrumented code
+emits false-positives/ false-negatives. This attribute may not be supported by other
+compilers, so we suggest to use it together with <code class="docutils literal notranslate"><span class="pre">__has_feature(type_sanitizer)</span></code>.</p>
+</section>
+<section id="attribute-disable-sanitizer-instrumentation">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">__attribute__((disable_sanitizer_instrumentation))</span></code></a><a class="headerlink" href="#attribute-disable-sanitizer-instrumentation" title="Link to this heading">¶</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">disable_sanitizer_instrumentation</span></code> attribute can be applied to functions
+to prevent all kinds of instrumentation. As a result, it may introduce false
+positives and incorrect stack traces. Therefore, it should be used with care,
+and only if absolutely required; for example for certain code that cannot
+tolerate any instrumentation and resulting side-effects. This attribute
+overrides <code class="docutils literal notranslate"><span class="pre">no_sanitize(&quot;type&quot;)</span></code>.</p>
+</section>
+<section id="ignorelist">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Ignorelist</a><a class="headerlink" href="#ignorelist" title="Link to this heading">¶</a></h3>
+<p>TypeSanitizer supports <code class="docutils literal notranslate"><span class="pre">src</span></code> and <code class="docutils literal notranslate"><span class="pre">fun</span></code> entity types in
+<a class="reference internal" href="SanitizerSpecialCaseList.html"><span class="doc">Sanitizer special case list</span></a>, that can be used to suppress aliasing
+violation reports in the specified source files or functions. Like
+with other methods of ignoring instrumentation, this can result in false
+positives/ false-negatives.</p>
+</section>
+<section id="limitations">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink">Limitations</a><a class="headerlink" href="#limitations" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>TypeSanitizer uses more real memory than a native run. It uses 8 bytes of
+shadow memory for each byte of user memory.</p></li>
+<li><p>There are transformation passes which run before TypeSanitizer. If these
+passes optimize out an aliasing violation, TypeSanitizer cannot catch it.</p></li>
+<li><p>Codebases that use unions and struct-initialized variables can see incorrect
+results, as TypeSanitizer doesn’t yet instrument these reliably.</p></li>
+<li><p>Since Clang &amp; LLVM’s TBAA system is used to generate the checks used by the
+instrumentation, TypeSanitizer follows Clang &amp; LLVM’s rules for type aliasing.
+There may be situations where that disagrees with the standard. However this
+does at least mean that TypeSanitizer will catch any aliasing violations that
+would cause bugs when compiling with Clang &amp; LLVM.</p></li>
+<li><p>TypeSanitizer cannot currently be run alongside other sanitizers such as
+AddressSanitizer, ThreadSanitizer or UndefinedBehaviourSanitizer.</p></li>
+</ul>
+</section>
+<section id="current-status">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Current Status</a><a class="headerlink" href="#current-status" title="Link to this heading">¶</a></h3>
+<p>TypeSanitizer is brand new, and still in development. There are some known
+issues, especially in areas where Clang’s emitted TBAA data isn’t extensive
+enough for TypeSanitizer’s runtime.</p>
+<p>We are actively working on enhancing the tool — stay tuned.  Any help,
+issues, pull requests, ideas, is more than welcome. You can find the
+<a class="reference external" href="https://github.com/llvm/llvm-project/issues?q=is%3Aissue%20state%3Aopen%20TySan%20label%3Acompiler-rt%3Atysan">issue tracker here.</a></p>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="LeakSanitizer.html">LeakSanitizer</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="RealtimeSanitizer.html">RealtimeSanitizer</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

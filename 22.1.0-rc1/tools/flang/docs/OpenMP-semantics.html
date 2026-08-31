@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>OpenMP Semantic Analysis &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Compiler options comparison" href="OptionComparison.html" />
+    <link rel="prev" title="Fortran descriptor type mapping for OpenMP offload" href="OpenMP-descriptor-management.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>OpenMP Semantic Analysis</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMP-descriptor-management.html">Fortran descriptor type mapping for OpenMP offload</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OptionComparison.html">Compiler options comparison</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/OpenMP-semantics.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="openmp-semantic-analysis">
+<h1>OpenMP Semantic Analysis<a class="headerlink" href="#openmp-semantic-analysis" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#openmp-for-flang" id="id1">OpenMP for Flang</a></p>
+<ul>
+<li><p><a class="reference internal" href="#directives" id="id2">Directives</a></p>
+<ul>
+<li><p><a class="reference internal" href="#declarative-directives" id="id3">Declarative directives</a></p></li>
+<li><p><a class="reference internal" href="#executable-directives" id="id4">Executable directives</a></p></li>
+<li><p><a class="reference internal" href="#stand-alone-directives" id="id5">Stand-alone Directives</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#clauses" id="id6">Clauses</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#symbol-table-extensions-for-openmp" id="id7">Symbol Table Extensions for OpenMP</a></p>
+<ul>
+<li><p><a class="reference internal" href="#new-symbol-without-new-scope" id="id8">New Symbol without new Scope</a></p></li>
+<li><p><a class="reference internal" href="#new-symbol-with-new-scope" id="id9">New Symbol with new Scope</a></p>
+<ul>
+<li><p><a class="reference internal" href="#predetermined-data-sharing-attributes" id="id10">Predetermined data-sharing attributes</a></p></li>
+<li><p><a class="reference internal" href="#explicitly-determined-data-sharing-attributes" id="id11">Explicitly determined data-sharing attributes</a></p></li>
+<li><p><a class="reference internal" href="#implicitly-determined-data-sharing-attributes" id="id12">Implicitly determined data-sharing attributes</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#data-mapping-attribute" id="id13">Data-mapping Attribute</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#module-file-extensions-for-openmp" id="id14">Module File Extensions for OpenMP</a></p></li>
+<li><p><a class="reference internal" href="#phases-of-openmp-analysis" id="id15">Phases of OpenMP Analysis</a></p></li>
+</ul>
+</nav>
+<section id="openmp-for-flang">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">OpenMP for Flang</a><a class="headerlink" href="#openmp-for-flang" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Define and document the parse tree representation for</p>
+<ul class="simple">
+<li><p>Directives (listed below)</p></li>
+<li><p>Clauses (listed below)</p></li>
+<li><p>Documentation</p></li>
+</ul>
+</li>
+<li><p>All the directives and clauses need source provenance for messages</p></li>
+<li><p>Define and document how an OpenMP directive in the parse tree
+will be represented as the parent of the statement(s)
+to which the directive applies.
+The parser itself will not be able to construct this representation;
+there will be subsequent passes that do so
+just like for example <em>do-stmt</em> and <em>do-construct</em>.</p></li>
+<li><p>Define and document the symbol table extensions</p></li>
+<li><p>Define and document the module file extensions</p></li>
+</ol>
+<section id="directives">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink">Directives</a><a class="headerlink" href="#directives" title="Link to this heading">¶</a></h3>
+<p>OpenMP divides directives into three categories as follows.
+The directives that are in the same categories share some characteristics.</p>
+<section id="declarative-directives">
+<h4><a class="toc-backref" href="#id3" role="doc-backlink">Declarative directives</a><a class="headerlink" href="#declarative-directives" title="Link to this heading">¶</a></h4>
+<p>An OpenMP directive may only be placed in a declarative context.
+A declarative directive results in one or more declarations only;
+it is not associated with the immediate execution of any user code.</p>
+<p>List of existing ones:</p>
+<ul class="simple">
+<li><p>declare simd</p></li>
+<li><p>declare target</p></li>
+<li><p>threadprivate</p></li>
+<li><p>declare reduction</p></li>
+<li><p>requires</p></li>
+</ul>
+<p>There is a parser node for each of these directives and
+the parser node saves information associated with the directive,
+for example,
+the name of the procedure-name in the <code class="docutils literal notranslate"><span class="pre">declare</span> <span class="pre">simd</span></code> directive.</p>
+<p>Each parse tree node keeps source provenance,
+one for the directive name itself and
+one for the entire directive starting from the directive name.</p>
+<p>A top-level class, <code class="docutils literal notranslate"><span class="pre">OpenMPDeclarativeConstruct</span></code>,
+holds all four of the node types as discriminated unions
+along with the source provenance for the entire directive
+starting from <code class="docutils literal notranslate"><span class="pre">!$OMP</span></code>.</p>
+<p>In <code class="docutils literal notranslate"><span class="pre">parser-tree.h</span></code>,
+<code class="docutils literal notranslate"><span class="pre">OpenMPDeclarativeConstruct</span></code> is part
+of the <code class="docutils literal notranslate"><span class="pre">SpecificationConstruct</span></code> and <code class="docutils literal notranslate"><span class="pre">SpecificationPart</span></code>
+in Flang because
+a declarative directive can only be placed in the specification part
+of a Fortran program.</p>
+<p>All the <code class="docutils literal notranslate"><span class="pre">Names</span></code> or <code class="docutils literal notranslate"><span class="pre">Designators</span></code> associated
+with the declarative directive will be resolved in later phases.</p>
+</section>
+<section id="executable-directives">
+<h4><a class="toc-backref" href="#id4" role="doc-backlink">Executable directives</a><a class="headerlink" href="#executable-directives" title="Link to this heading">¶</a></h4>
+<p>An OpenMP directive that is <strong>not</strong> declarative.
+That is, it may only be placed in an executable context.
+It contains stand-alone directives and constructs
+that are associated with code blocks.
+The stand-alone directive is described in the next section.</p>
+<p>The constructs associated with code blocks listed below
+share a similar structure:
+<em>Begin Directive</em>, <em>Clause List</em>, <em>Code Block</em>, <em>End Directive</em>.
+The <em>End Directive</em> is optional for constructs
+like Loop-associated constructs.</p>
+<ul class="simple">
+<li><p>Block-associated constructs (<code class="docutils literal notranslate"><span class="pre">OpenMPBlockConstruct</span></code>)</p></li>
+<li><p>Loop-associated constructs (<code class="docutils literal notranslate"><span class="pre">OpenMPLoopConstruct</span></code>)</p></li>
+<li><p>Atomic construct (<code class="docutils literal notranslate"><span class="pre">OpenMPAtomicConstruct</span></code>)</p></li>
+<li><p>Sections Construct (<code class="docutils literal notranslate"><span class="pre">OpenMPSectionsConstruct</span></code>,
+contains Sections/Parallel Sections constructs)</p></li>
+<li><p>Critical Construct (<code class="docutils literal notranslate"><span class="pre">OpenMPCriticalConstruct</span></code>)</p></li>
+</ul>
+<p>A top-level class, <code class="docutils literal notranslate"><span class="pre">OpenMPConstruct</span></code>,
+includes stand-alone directive and constructs
+listed above as discriminated unions.</p>
+<p>In the <code class="docutils literal notranslate"><span class="pre">parse-tree.h</span></code>, <code class="docutils literal notranslate"><span class="pre">OpenMPConstruct</span></code> is an element
+of the <code class="docutils literal notranslate"><span class="pre">ExecutableConstruct</span></code>.</p>
+<p>All the <code class="docutils literal notranslate"><span class="pre">Names</span></code> or <code class="docutils literal notranslate"><span class="pre">Designators</span></code> associated
+with the executable directive will be resolved in Semantic Analysis.</p>
+<p>When the backtracking parser can not identify the associated code blocks,
+the parse tree will be rewritten later in the Semantics Analysis.</p>
+</section>
+<section id="stand-alone-directives">
+<h4><a class="toc-backref" href="#id5" role="doc-backlink">Stand-alone Directives</a><a class="headerlink" href="#stand-alone-directives" title="Link to this heading">¶</a></h4>
+<p>An OpenMP executable directive that has no associated user code
+except for that which appears in clauses in the directive.</p>
+<p>List of existing ones:</p>
+<ul class="simple">
+<li><p>taskyield</p></li>
+<li><p>barrier</p></li>
+<li><p>taskwait</p></li>
+<li><p>target enter data</p></li>
+<li><p>target exit data</p></li>
+<li><p>target update</p></li>
+<li><p>ordered</p></li>
+<li><p>flush</p></li>
+<li><p>cancel</p></li>
+<li><p>cancellation point</p></li>
+</ul>
+<p>A higher-level class is created for each category
+which contains directives listed above that share a similar structure:</p>
+<ul class="simple">
+<li><p>OpenMPSimpleStandaloneConstruct
+(taskyield, barrier, taskwait,
+target enter/exit data, target update, ordered)</p></li>
+<li><p>OpenMPFlushConstruct</p></li>
+<li><p>OpenMPCancelConstruct</p></li>
+<li><p>OpenMPCancellationPointConstruct</p></li>
+</ul>
+<p>A top-level class, <code class="docutils literal notranslate"><span class="pre">OpenMPStandaloneConstruct</span></code>,
+holds all four of the node types as discriminated unions
+along with the source provenance for the entire directive.
+Also, each parser node for the stand-alone directive saves
+the source provenance for the directive name itself.</p>
+</section>
+</section>
+<section id="clauses">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Clauses</a><a class="headerlink" href="#clauses" title="Link to this heading">¶</a></h3>
+<p>Each clause represented as a distinct class in <code class="docutils literal notranslate"><span class="pre">parse-tree.h</span></code>.
+A top-level class, <code class="docutils literal notranslate"><span class="pre">OmpClause</span></code>,
+includes all the clauses as discriminated unions.
+The parser node for <code class="docutils literal notranslate"><span class="pre">OmpClause</span></code> saves the source provenance
+for the entire clause.</p>
+<p>All the <code class="docutils literal notranslate"><span class="pre">Names</span></code> or <code class="docutils literal notranslate"><span class="pre">Designators</span></code> associated
+with the clauses will be resolved in Semantic Analysis.</p>
+<p>Note that the backtracking parser will not validate
+that the list of clauses associated
+with a directive is valid other than to make sure they are well-formed.
+In particular,
+the parser does not check that
+the association between directive and clauses is correct
+nor check that the values in the directives or clauses are correct.
+These checks are deferred to later phases of semantics to simplify the parser.</p>
+</section>
+</section>
+<section id="symbol-table-extensions-for-openmp">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Symbol Table Extensions for OpenMP</a><a class="headerlink" href="#symbol-table-extensions-for-openmp" title="Link to this heading">¶</a></h2>
+<p>Name resolution can be impacted by the OpenMP code.
+In addition to the regular steps to do the name resolution,
+new scopes and symbols may need to be created
+when encountering certain OpenMP constructs.
+This section describes the extensions
+for OpenMP during Symbol Table construction.</p>
+<p>OpenMP uses the fork-join model of parallel execution and
+all OpenMP threads have access to
+a <em>shared</em> memory place to store and retrieve variables
+but each thread can also have access to
+its <em>threadprivate</em> memory that must not be accessed by other threads.</p>
+<p>For the directives and clauses that can control the data environments,
+compiler needs to determine two kinds of <em>access</em>
+to variables used in the directive’s associated structured block:
+<strong>shared</strong> and <strong>private</strong>.
+Each variable referenced in the structured block
+has an original variable immediately outside of the OpenMP constructs.
+Reference to a shared variable in the structured block
+becomes a reference to the original variable.
+However, each private variable referenced in the structured block,
+a new version of the original variable (of the same type and size)
+will be created in the threadprivate memory.</p>
+<p>There are exceptions that directives/clauses
+need to create a new <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> without creating a new <code class="docutils literal notranslate"><span class="pre">Scope</span></code>,
+but in general,
+when encountering each of the data environment controlling directives
+(discussed in the following sections),
+a new <code class="docutils literal notranslate"><span class="pre">Scope</span></code> will be created.
+For each private variable referenced in the structured block,
+a new <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> is created out of the original variable
+and the new <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> is associated
+with original variable’s <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> via <code class="docutils literal notranslate"><span class="pre">HostAssocDetails</span></code>.
+A new set of OpenMP specific flags are added
+into <code class="docutils literal notranslate"><span class="pre">Flag</span></code> class in <code class="docutils literal notranslate"><span class="pre">symbol.h</span></code> to indicate the types of
+associations,
+data-sharing attributes,
+and data-mapping attributes
+in the OpenMP data environments.</p>
+<section id="new-symbol-without-new-scope">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">New Symbol without new Scope</a><a class="headerlink" href="#new-symbol-without-new-scope" title="Link to this heading">¶</a></h3>
+<p>OpenMP directives that require new <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> to be created
+but not new <code class="docutils literal notranslate"><span class="pre">Scope</span></code> are listed in the following table
+in terms of the Symbol Table extensions for OpenMP:</p>
+<table>
+  <tr>
+   <td rowspan="2" colspan="2" >Directives/Clauses
+   </td>
+   <td rowspan="2" >Create New
+<p>
+Symbol
+<p>
+w/
+   </td>
+   <td colspan="2" >Add Flag
+   </td>
+  </tr>
+  <tr>
+   <td>on Symbol of
+   </td>
+   <td>Flag
+   </td>
+  </tr>
+  <tr>
+   <td rowspan="4" >Declarative Directives
+   </td>
+   <td>declare simd [(proc-name)]
+   </td>
+   <td>-
+   </td>
+   <td>The name of the enclosing function, subroutine, or interface body
+   to which it applies, or proc-name
+   </td>
+   <td>OmpDeclareSimd
+   </td>
+  </tr>
+  <tr>
+   <td>declare target
+   </td>
+   <td>-
+   </td>
+   <td>The name of the enclosing function, subroutine, or interface body
+   to which it applies
+   </td>
+   <td>OmpDeclareTarget
+   </td>
+  </tr>
+  <tr>
+   <td>threadprivate(list)
+   </td>
+   <td>-
+   </td>
+   <td>named variables and named common blocks
+   </td>
+   <td>OmpThreadPrivate
+   </td>
+  </tr>
+  <tr>
+   <td>declare reduction
+   </td>
+   <td>*
+   </td>
+   <td>reduction-identifier
+   </td>
+   <td>OmpDeclareReduction
+   </td>
+  </tr>
+  <tr>
+   <td>Stand-alone directives
+   </td>
+   <td>flush
+   </td>
+   <td>-
+   </td>
+   <td>variable, array section or common block name
+   </td>
+   <td>OmpFlushed
+   </td>
+  </tr>
+  <tr>
+   <td colspan="2" >critical [(name)]
+   </td>
+   <td>-
+   </td>
+   <td>name (user-defined identifier)
+   </td>
+   <td>OmpCriticalLock
+   </td>
+  </tr>
+  <tr>
+   <td colspan="2" >if ([ directive-name-modifier :] scalar-logical-expr)
+   </td>
+   <td>-
+   </td>
+   <td>directive-name-modifier
+   </td>
+   <td>OmpIfSpecified
+   </td>
+  </tr>
+</table>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  -      No Action
+
+  *      Discussed in “Module File Extensions for OpenMP” section
+</pre></div>
+</div>
+</section>
+<section id="new-symbol-with-new-scope">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">New Symbol with new Scope</a><a class="headerlink" href="#new-symbol-with-new-scope" title="Link to this heading">¶</a></h3>
+<p>For the following OpenMP regions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">target</span></code> regions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">target</span> <span class="pre">data</span></code> regions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">teams</span></code> regions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">parallel</span></code> regions</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">simd</span></code> regions</p></li>
+<li><p>task generating regions (created by <code class="docutils literal notranslate"><span class="pre">task</span></code> or <code class="docutils literal notranslate"><span class="pre">taskloop</span></code> constructs)</p></li>
+<li><p>worksharing regions
+(created by <code class="docutils literal notranslate"><span class="pre">do</span></code>, <code class="docutils literal notranslate"><span class="pre">sections</span></code>, <code class="docutils literal notranslate"><span class="pre">single</span></code>, or <code class="docutils literal notranslate"><span class="pre">workshare</span></code> constructs)</p></li>
+</ul>
+<p>A new <code class="docutils literal notranslate"><span class="pre">Scope</span></code> will be created
+when encountering the above OpenMP constructs
+to ensure the correct data environment during the Code Generation.
+To determine whether a variable referenced in these regions
+needs the creation of a new <code class="docutils literal notranslate"><span class="pre">Symbol</span></code>,
+all the data-sharing attribute rules
+described in OpenMP Spec [2.15.1] apply during the Name Resolution.
+The available data-sharing attributes are:
+<strong><em>shared</em></strong>,
+<strong><em>private</em></strong>,
+<strong><em>linear</em></strong>,
+<strong><em>firstprivate</em></strong>,
+and <strong><em>lastprivate</em></strong>.
+The attribute is represented as <code class="docutils literal notranslate"><span class="pre">Flag</span></code> in the <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> object.</p>
+<p>More details are listed in the following table:</p>
+<table>
+  <tr>
+   <td rowspan="2" >Attribute
+   </td>
+   <td rowspan="2" >Create New Symbol
+   </td>
+   <td colspan="2" >Add Flag
+   </td>
+  </tr>
+  <tr>
+   <td>on Symbol of
+   </td>
+   <td>Flag
+   </td>
+  </tr>
+  <tr>
+   <td>shared
+   </td>
+   <td>No
+   </td>
+   <td>Original variable
+   </td>
+   <td>OmpShared
+   </td>
+  </tr>
+  <tr>
+   <td>private
+   </td>
+   <td>Yes
+   </td>
+   <td>New Symbol
+   </td>
+   <td>OmpPrivate
+   </td>
+  </tr>
+  <tr>
+   <td>linear
+   </td>
+   <td>Yes
+   </td>
+   <td>New Symbol
+   </td>
+   <td>OmpLinear
+   </td>
+  </tr>
+  <tr>
+   <td>firstprivate
+   </td>
+   <td>Yes
+   </td>
+   <td>New Symbol
+   </td>
+   <td>OmpFirstPrivate
+   </td>
+  </tr>
+  <tr>
+   <td>lastprivate
+   </td>
+   <td>Yes
+   </td>
+   <td>New Symbol
+   </td>
+   <td>OmpLastPrivate
+   </td>
+  </tr>
+  <tr>
+   <td>use_device_ptr
+   </td>
+   <td>Yes
+   </td>
+   <td>New Symbol
+   </td>
+   <td>OmpUseDevicePtr
+   </td>
+  </tr>
+  <tr>
+   <td>use_device_addr
+   </td>
+   <td>Yes
+   </td>
+   <td>New Symbol
+   </td>
+   <td>OmpUseDeviceAddr
+   </td>
+  </tr>
+</table>
+<p>To determine the right data-sharing attribute,
+OpenMP defines that the data-sharing attributes
+of variables that are referenced in a construct can be
+<em>predetermined</em>, <em>explicitly determined</em>, or <em>implicitly determined</em>.</p>
+<section id="predetermined-data-sharing-attributes">
+<h4><a class="toc-backref" href="#id10" role="doc-backlink">Predetermined data-sharing attributes</a><a class="headerlink" href="#predetermined-data-sharing-attributes" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Assumed-size arrays are <strong>shared</strong></p></li>
+<li><p>The loop iteration variable(s)
+in the associated <em>do-loop(s)</em> of a
+<em>do</em>,
+<em>parallel do</em>,
+<em>taskloop</em>,
+or <em>distributeconstruct</em>
+is (are) <strong>private</strong></p></li>
+<li><p>A loop iteration variable
+for a sequential loop in a <em>parallel</em> or task generating construct
+is <strong>private</strong> in the innermost such construct that encloses the loop</p></li>
+<li><p>Implied-do indices and <em>forall</em> indices are <strong>private</strong></p></li>
+<li><p>The loop iteration variable in the associated <em>do-loop</em>
+of a <em>simd</em> construct with just one associated <em>do-loop</em>
+is <strong>linear</strong> with a linear-step
+that is the increment of the associated <em>do-loop</em></p></li>
+<li><p>The loop iteration variables in the associated <em>do-loop(s)</em> of a <em>simd</em>
+construct with multiple associated <em>do-loop(s)</em> are <strong>lastprivate</strong></p></li>
+</ul>
+</section>
+<section id="explicitly-determined-data-sharing-attributes">
+<h4><a class="toc-backref" href="#id11" role="doc-backlink">Explicitly determined data-sharing attributes</a><a class="headerlink" href="#explicitly-determined-data-sharing-attributes" title="Link to this heading">¶</a></h4>
+<p>Variables with <em>explicitly determined</em> data-sharing attributes are:</p>
+<ul class="simple">
+<li><p>Variables are referenced in a given construct</p></li>
+<li><p>Variables are listed in a data-sharing attribute clause on the construct.</p></li>
+</ul>
+<p>The data-sharing attribute clauses are:</p>
+<ul class="simple">
+<li><p><em>default</em> clause
+(discussed in “Implicitly determined data-sharing attributes”)</p></li>
+<li><p><em>shared</em> clause</p></li>
+<li><p><em>private</em> clause</p></li>
+<li><p><em>linear</em> clause</p></li>
+<li><p><em>firstprivate</em> clause</p></li>
+<li><p><em>lastprivate</em> clause</p></li>
+<li><p><em>reduction</em> clause
+(new <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> created with the flag <code class="docutils literal notranslate"><span class="pre">OmpReduction</span></code> set)</p></li>
+</ul>
+<p>Note that variables with <em>predetermined</em> data-sharing attributes
+may not be listed (with exceptions) in data-sharing attribute clauses.</p>
+</section>
+<section id="implicitly-determined-data-sharing-attributes">
+<h4><a class="toc-backref" href="#id12" role="doc-backlink">Implicitly determined data-sharing attributes</a><a class="headerlink" href="#implicitly-determined-data-sharing-attributes" title="Link to this heading">¶</a></h4>
+<p>Variables with implicitly determined data-sharing attributes are:</p>
+<ul class="simple">
+<li><p>Variables are referenced in a given construct</p></li>
+<li><p>Variables do not have <em>predetermined</em> data-sharing attributes</p></li>
+<li><p>Variables are not listed in a data-sharing attribute clause
+on the construct.</p></li>
+</ul>
+<p>Rules for variables with <em>implicitly determined</em> data-sharing attributes:</p>
+<ul class="simple">
+<li><p>In a <em>parallel</em> construct, if no <em>default</em> clause is present,
+these variables are <strong>shared</strong></p></li>
+<li><p>In a task generating construct,
+if no <em>default</em> clause is present,
+a variable for which the data-sharing attribute
+is not determined by the rules above
+and that in the enclosing context is determined
+to be shared by all implicit tasks
+bound to the current team is <strong>shared</strong></p></li>
+<li><p>In a <em>target</em> construct,
+variables that are not mapped after applying data-mapping attribute rules
+(discussed later) are <strong>firstprivate</strong></p></li>
+<li><p>In an orphaned task generating construct,
+if no <em>default</em> clause is present, dummy arguments are <strong>firstprivate</strong></p></li>
+<li><p>In a task generating construct, if no <em>default</em> clause is present,
+a variable for which the data-sharing attribute is not determined
+by the rules above is <strong>firstprivate</strong></p></li>
+<li><p>For constructs other than task generating constructs or <em>target</em> constructs,
+if no <em>default</em> clause is present,
+these variables reference the variables with the same names
+that exist in the enclosing context</p></li>
+<li><p>In a <em>parallel</em>, <em>teams</em>, or task generating construct,
+the data-sharing attributes of these variables are determined
+by the <em>default</em> clause, if present:</p>
+<ul>
+<li><p><em>default(shared)</em>
+clause causes all variables referenced in the construct
+that have <em>implicitly determined</em> data-sharing attributes
+to be <strong>shared</strong></p></li>
+<li><p><em>default(private)</em>
+clause causes all variables referenced in the construct
+that have <em>implicitly determined</em> data-sharing attributes
+to be <strong>private</strong></p></li>
+<li><p><em>default(firstprivate)</em>
+clause causes all variables referenced in the construct
+that have <em>implicitly determined</em> data-sharing attributes
+to be <strong>firstprivate</strong></p></li>
+<li><p><em>default(none)</em>
+clause requires that each variable
+that is referenced in the construct,
+and that does not have a <em>predetermined</em> data-sharing attribute,
+must have its data-sharing attribute <em>explicitly determined</em>
+by being listed in a data-sharing attribute clause</p></li>
+</ul>
+</li>
+</ul>
+</section>
+</section>
+<section id="data-mapping-attribute">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Data-mapping Attribute</a><a class="headerlink" href="#data-mapping-attribute" title="Link to this heading">¶</a></h3>
+<p>When encountering the <em>target data</em> and <em>target</em> directives,
+the data-mapping attributes of any variable referenced in a target region
+will be determined and represented as <code class="docutils literal notranslate"><span class="pre">Flag</span></code> in the <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> object
+of the variable.
+No <code class="docutils literal notranslate"><span class="pre">Symbol</span></code> or <code class="docutils literal notranslate"><span class="pre">Scope</span></code> will be created.</p>
+<p>However, there are some exceptions for this, Pointers that appear in a
+use_device_ptr clause are privatized and the device pointers to the
+corresponding list items in the device data environment are assigned into the
+private versions so it is best to follow the representation for privatised
+variables i.e represent them with a new Symbol and <code class="docutils literal notranslate"><span class="pre">OmpUseDevicePtr</span></code> flag.
+If a list item that appears in a use_device_addr clause has corresponding
+storage in the device data environment, references to the list item in the
+associated structured block are converted into references to the corresponding
+list item so following the same i.e. represent them with a new Symbol and
+<code class="docutils literal notranslate"><span class="pre">OmpUseDeviceAddr</span></code> flag.</p>
+<p>The basic steps to determine the data-mapping attribute are:</p>
+<ol class="arabic simple">
+<li><p>If <em>map</em> clause is present,
+the data-mapping attribute is determined by the <em>map-type</em>
+on the clause and its corresponding <code class="docutils literal notranslate"><span class="pre">Flag</span></code> are listed below:</p></li>
+</ol>
+<table>
+  <tr>
+   <td>
+data-mapping attribute
+   </td>
+   <td>Flag
+   </td>
+  </tr>
+  <tr>
+   <td>to
+   </td>
+   <td>OmpMapTo
+   </td>
+  </tr>
+  <tr>
+   <td>from
+   </td>
+   <td>OmpMapFrom
+   </td>
+  </tr>
+  <tr>
+   <td>tofrom
+(default if map-type is not present)
+   </td>
+   <td>OmpMapTo & OmpMapFrom
+   </td>
+  </tr>
+  <tr>
+   <td>alloc
+   </td>
+   <td>OmpMapAlloc
+   </td>
+  </tr>
+  <tr>
+   <td>release
+   </td>
+   <td>OmpMapRelease
+   </td>
+  </tr>
+  <tr>
+   <td>delete
+   </td>
+   <td>OmpMapDelete
+   </td>
+  </tr>
+</table>
+<ol class="arabic simple" start="2">
+<li><p>Otherwise, the following data-mapping rules apply
+for variables referenced in a <em>target</em> construct
+that are <em>not</em> declared in the construct and
+do not appear in data-sharing attribute or map clauses:</p>
+<ul class="simple">
+<li><p>If a variable appears in a <em>to</em> or <em>link</em> clause
+on a <em>declare target</em> directive then it is treated
+as if it had appeared in a <em>map</em> clause with a <em>map-type</em> of <strong>tofrom</strong></p></li>
+</ul>
+</li>
+<li><p>Otherwise, the following implicit data-mapping attribute rules apply:</p>
+<ul class="simple">
+<li><p>If a <em>defaultmap(tofrom:scalar)</em> clause is <em>not</em> present
+then a scalar variable is not mapped,
+but instead has an implicit data-sharing attribute of <strong>firstprivate</strong></p></li>
+<li><p>If a <em>defaultmap(tofrom:scalar)</em> clause is present
+then a scalar variable is treated as if it had appeared
+in a map clause with a map-type of <strong>tofrom</strong></p></li>
+<li><p>If a variable is not a scalar
+then it is treated as if it had appeared in a map clause
+with a <em>map-type</em> of <strong>tofrom</strong></p></li>
+</ul>
+</li>
+</ol>
+<p>After the completion of the Name Resolution phase,
+all the data-sharing or data-mapping attributes marked for the <code class="docutils literal notranslate"><span class="pre">Symbols</span></code>
+may be used later in the Semantics Analysis and in the Code Generation.</p>
+</section>
+</section>
+<section id="module-file-extensions-for-openmp">
+<h2><a class="toc-backref" href="#id14" role="doc-backlink">Module File Extensions for OpenMP</a><a class="headerlink" href="#module-file-extensions-for-openmp" title="Link to this heading">¶</a></h2>
+<p>After the successful compilation of modules and submodules
+that may contain the following Declarative Directives,
+the entire directive starting from <code class="docutils literal notranslate"><span class="pre">!$OMP</span></code> needs to be written out
+into <code class="docutils literal notranslate"><span class="pre">.mod</span></code> files in their corresponding Specification Part:</p>
+<ul>
+<li><p><em>declare simd</em> or <em>declare target</em></p>
+<p>In the “New Symbol without new Scope” section,
+we described that when encountering these two declarative directives,
+new <code class="docutils literal notranslate"><span class="pre">Flag</span></code> will be applied to the Symbol of the name of
+the enclosing function, subroutine, or interface body to
+which it applies, or proc-name.
+This <code class="docutils literal notranslate"><span class="pre">Flag</span></code> should be part of the API information
+for the given subroutine or function</p>
+</li>
+<li><p><em>declare reduction</em></p>
+<p>The <em>reduction-identifier</em> in this directive
+can be use-associated or host-associated.
+However, it will not act like other Symbols
+because user may have a reduction name
+that is the same as a Fortran entity name in the same scope.
+Therefore a specific data structure needs to be created
+to save the <em>reduction-identifier</em> information
+in the Scope and this directive needs to be written into <code class="docutils literal notranslate"><span class="pre">.mod</span></code> files</p>
+</li>
+</ul>
+</section>
+<section id="phases-of-openmp-analysis">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">Phases of OpenMP Analysis</a><a class="headerlink" href="#phases-of-openmp-analysis" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Create the parse tree for OpenMP</p>
+<ol class="arabic simple">
+<li><p>Add types for directives and clauses</p>
+<ol class="arabic simple">
+<li><p>Add type(s) that will be used for directives</p></li>
+<li><p>Add type(s) that will be used for clauses</p></li>
+<li><p>Add other types, e.g. wrappers or other containers</p></li>
+<li><p>Use std::variant to encapsulate meaningful types</p></li>
+</ol>
+</li>
+<li><p>Implemented in the parser for OpenMP (openmp-grammar.h)</p></li>
+</ol>
+</li>
+<li><p>Create canonical nesting</p>
+<ol class="arabic simple">
+<li><p>Restructure parse tree to reflect the association
+of directives and stmts</p>
+<ol class="arabic simple">
+<li><p>Associate <code class="docutils literal notranslate"><span class="pre">OpenMPLoopConstruct</span></code>
+with <code class="docutils literal notranslate"><span class="pre">DoConstruct</span></code> and <code class="docutils literal notranslate"><span class="pre">OpenMPEndLoopDirective</span></code></p></li>
+</ol>
+</li>
+<li><p>Investigate, and perhaps reuse,
+the algorithm used to restructure do-loops</p></li>
+<li><p>Add a pass near the code that restructures do-loops;
+but do not extend the code that handles do-loop for OpenMP;
+keep this code separate.</p></li>
+<li><p>Report errors that prevent restructuring
+(e.g. loop directive not followed by loop)
+We should abort in case of errors
+because there is no point to perform further checks
+if it is not a legal OpenMP construct</p></li>
+</ol>
+</li>
+<li><p>Validate the structured-block</p>
+<ol class="arabic simple">
+<li><p>Structured-block is a block of executable statements</p></li>
+<li><p>Single entry and single exit</p></li>
+<li><p>Access to the structured block must not be the result of a branch</p></li>
+<li><p>The point of exit cannot be a branch out of the structured block</p></li>
+</ol>
+</li>
+<li><p>Check that directive and clause combinations are legal</p>
+<ol class="arabic simple">
+<li><p>Begin and End directive should match</p></li>
+<li><p>Simply check that the clauses are allowed by the directives</p></li>
+<li><p>Write as a separate pass for simplicity and correctness of the parse tree</p></li>
+</ol>
+</li>
+<li><p>Write parse tree tests</p>
+<ol class="arabic simple">
+<li><p>At this point, the parse tree should be perfectly formed</p></li>
+<li><p>Write tests that check for correct form and provenance information</p></li>
+<li><p>Write tests for errors that can occur during the restructuring</p></li>
+</ol>
+</li>
+<li><p>Scope, symbol tables, and name resolution</p>
+<ol class="arabic simple">
+<li><p>Update the existing code to handle names and scopes introduced by OpenMP</p></li>
+<li><p>Write tests to make sure names are properly implemented</p></li>
+</ol>
+</li>
+<li><p>Check semantics that is specific to each directive</p>
+<ol class="arabic simple">
+<li><p>Validate the directive and its clauses</p></li>
+<li><p>Some clause checks require the result of name resolution,
+i.e. “A list item may appear in a <em>linear</em> or <em>firstprivate</em> clause
+but not both.”</p></li>
+<li><p>TBD:
+Validate the nested statement for legality in the scope of the directive</p></li>
+<li><p>Check the nesting of regions [OpenMP 4.5 spec 2.17]</p></li>
+</ol>
+</li>
+<li><p>Module file utilities</p>
+<ol class="arabic simple">
+<li><p>Write necessary OpenMP declarative directives to <code class="docutils literal notranslate"><span class="pre">.mod</span></code> files</p></li>
+<li><p>Update the existing code
+to read available OpenMP directives from the <code class="docutils literal notranslate"><span class="pre">.mod</span></code> files</p></li>
+</ol>
+</li>
+</ol>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="OpenMP-descriptor-management.html">Fortran descriptor type mapping for OpenMP offload</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="OptionComparison.html">Compiler options comparison</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Jan 16, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

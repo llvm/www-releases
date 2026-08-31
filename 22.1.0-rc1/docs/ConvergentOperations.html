@@ -1,0 +1,1573 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Convergent Operation Semantics &#8212; LLVM 22.1.0-rc1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=2797fd66"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Coroutines in LLVM" href="Coroutines.html" />
+    <link rel="prev" title="Convergence And Uniformity" href="ConvergenceAndUniformity.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="Coroutines.html" title="Coroutines in LLVM"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="ConvergenceAndUniformity.html" title="Convergence And Uniformity"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" accesskey="U">Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Convergent Operation Semantics</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/ConvergentOperations.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="convergent-operation-semantics">
+<h1>Convergent Operation Semantics<a class="headerlink" href="#convergent-operation-semantics" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#overview" id="id7">Overview</a></p></li>
+<li><p><a class="reference internal" href="#convergent-operations" id="id8">Convergent Operations</a></p></li>
+<li><p><a class="reference internal" href="#examples-of-convergent-operations" id="id9">Examples of Convergent Operations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#texture-sampling-in-a-pixel-shader" id="id10">Texture sampling in a pixel shader</a></p></li>
+<li><p><a class="reference internal" href="#reductions-inside-divergent-control-flow" id="id11">Reductions inside divergent control flow</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#motivating-examples-of-convergence-control" id="id12">Motivating Examples of Convergence Control</a></p>
+<ul>
+<li><p><a class="reference internal" href="#unstructured-control-flow" id="id13">Unstructured control flow</a></p></li>
+<li><p><a class="reference internal" href="#opportunistic-convergent-operations" id="id14">Opportunistic convergent operations</a></p></li>
+<li><p><a class="reference internal" href="#extended-cycles-divergent-exit-from-a-loop" id="id15">Extended Cycles: Divergent Exit from a Loop</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#dynamic-instances-and-convergence-tokens" id="id16">Dynamic Instances and Convergence Tokens</a></p></li>
+<li><p><a class="reference internal" href="#convergence-control-intrinsics" id="id17">Convergence Control Intrinsics</a></p>
+<ul>
+<li><p><a class="reference internal" href="#llvm-experimental-convergence-entry" id="id18"><code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.entry</span></code></a></p></li>
+<li><p><a class="reference internal" href="#llvm-experimental-convergence-loop" id="id19"><code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.loop</span></code></a></p></li>
+<li><p><a class="reference internal" href="#llvm-experimental-convergence-anchor" id="id20"><code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.anchor</span></code></a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#uncontrolled-convergent-operations" id="id21">Uncontrolled Convergent Operations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#inferring-tokens" id="id22">Inferring Tokens</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#static-rules" id="id23">Static Rules</a></p>
+<ul>
+<li><p><a class="reference internal" href="#closed-paths" id="id24">Closed Paths</a></p></li>
+<li><p><a class="reference internal" href="#convergence-regions" id="id25">Convergence Regions</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#inferring-non-convergence" id="id26">Inferring non-convergence</a></p></li>
+<li><p><a class="reference internal" href="#memory-model-non-interaction" id="id27">Memory Model Non-Interaction</a></p></li>
+<li><p><a class="reference internal" href="#other-interactions" id="id28">Other Interactions</a></p></li>
+<li><p><a class="reference internal" href="#controlled-maximal-convergence" id="id29">Controlled Maximal Convergence</a></p>
+<ul>
+<li><p><a class="reference internal" href="#temporal-divergence-at-cycle-exit" id="id30">Temporal Divergence at Cycle Exit</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#rationales-for-static-rules-about-cycles" id="id31">Rationales for Static rules about cycles</a></p></li>
+<li><p><a class="reference internal" href="#examples-for-the-correctness-of-program-transforms" id="id32">Examples for the Correctness of Program Transforms</a></p>
+<ul>
+<li><p><a class="reference internal" href="#loop-unrolling-examples" id="id33">Loop unrolling examples</a></p></li>
+<li><p><a class="reference internal" href="#hoisting-and-sinking" id="id34">Hoisting and sinking</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="overview">
+<h2><a class="toc-backref" href="#id7" role="doc-backlink">Overview</a><a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>Some parallel execution environments execute threads in groups that allow
+efficient communication within the group using special primitives called
+<em>convergent</em> operations. The outcome of a convergent operation is sensitive to
+the set of threads that executes it “together”, i.e., convergently. When control
+flow <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-and-uniformity"><span class="std std-ref">diverges</span></a>, i.e., threads of the same
+group follow different
+paths through the CFG, not all threads of the group may be available to
+participate in this communication. This is the defining characteristic that
+distinguishes convergent operations from other inter-thread communication:</p>
+<blockquote>
+<div><p>A convergent operation involves inter-thread communication or synchronization
+that occurs outside of the memory model, where the set of threads which
+participate in communication is implicitly affected by control flow.</p>
+</div></blockquote>
+<p>For example, in the following GPU compute kernel, communication during the
+convergent operation is expected to occur precisely among those threads of an
+implementation-defined execution scope (such as workgroup or subgroup) for
+which <code class="docutils literal notranslate"><span class="pre">condition</span></code> is true:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">example_kernel</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">condition</span><span class="p">)</span>
+<span class="w">        </span><span class="n">convergent_operation</span><span class="p">();</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In structured programming languages, there is often an intuitive and
+unambiguous way of determining the threads that are expected to communicate.
+However, this is not always the case even in structured programming languages,
+and the intuition breaks down entirely in unstructured control flow. This
+document describes the formal semantics in LLVM, i.e., how to determine the set
+of communicating threads for convergent operations.</p>
+<p>The definitions in this document leave many details open, such as how groups of
+threads are formed in the first place. It focuses on the questions that are
+relevant for deciding the correctness of generic program transforms and
+convergence-related analyses such as <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-and-uniformity"><span class="std std-ref">uniformity analysis</span></a>.</p>
+</section>
+<section id="convergent-operations">
+<span id="id1"></span><h2><a class="toc-backref" href="#id8" role="doc-backlink">Convergent Operations</a><a class="headerlink" href="#convergent-operations" title="Link to this heading">¶</a></h2>
+<p>In LLVM IR, the only way to communicate between threads as described
+above is by calling target-defined convergent intrinsics. Hence, only
+a call-site in LLVM IR (a <a class="reference internal" href="LangRef.html#i-call"><span class="std std-ref">call</span></a>, <a class="reference internal" href="LangRef.html#i-invoke"><span class="std std-ref">invoke</span></a>, or <a class="reference internal" href="LangRef.html#i-callbr"><span class="std std-ref">callbr</span></a> instruction) can result in a
+convergent operation.</p>
+<p>A function in LLVM IR is said to be <em>convergent</em> if it has the
+<a class="reference internal" href="LangRef.html#attr-convergent"><span class="std std-ref">convergent</span></a> attribute.</p>
+<p>A call-site in LLVM IR is said to be <em>convergent</em> if it is a direct
+call to a convergent function or it has the <a class="reference internal" href="LangRef.html#attr-convergent"><span class="std std-ref">convergent</span></a> attribute or a <a class="reference internal" href="LangRef.html#convergencectrl"><span class="std std-ref">convergencectrl operand bundle</span></a>.</p>
+<p>Informational notes:</p>
+<blockquote>
+<div><p>A function may have to be treated as convergent if that function, or
+transitively, any function called from it, contains a convergent call-site. A
+frontend generating the <code class="docutils literal notranslate"><span class="pre">convergent</span></code> attribute should take this into account
+when emitting functions and function calls. But this is not always the case:</p>
+<p>A non-convergent function may contain convergent operations; such operations
+do not directly depend on the set of threads that enter the function as a
+single communicating group. Instead, these operations depend on an
+implementation-defined subset of threads within the body of the function, as
+shown in <a class="reference internal" href="#opportunistic-convergence"><span class="std std-ref">Opportunistic convergent operations</span></a>.</p>
+</div></blockquote>
+</section>
+<section id="examples-of-convergent-operations">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Examples of Convergent Operations</a><a class="headerlink" href="#examples-of-convergent-operations" title="Link to this heading">¶</a></h2>
+<p>(This section is informative.)</p>
+<section id="texture-sampling-in-a-pixel-shader">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Texture sampling in a pixel shader</a><a class="headerlink" href="#texture-sampling-in-a-pixel-shader" title="Link to this heading">¶</a></h3>
+<p>The following stylized pixel shader samples a texture at a given set of
+coordinates, using the builtin function <cite>textureSample</cite>. Texture sampling
+requires screen-space derivatives of the coordinates to determine the level of
+detail (mipmap level) of the sample. They are commonly approximated by taking
+the difference between neighboring pixels, which are computed by different
+threads in the same group:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">example_shader</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">textureSample</span><span class="p">(</span><span class="n">texture</span><span class="p">,</span><span class="w"> </span><span class="n">coordinates</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">use</span><span class="p">(</span><span class="n">color</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>From a purely single-threaded perspective, sinking the <cite>textureSample</cite> into
+the if-statement appears legal. However, if the condition is false for some
+neighboring pixels, then their corresponding threads will not execute together
+in the group, making it impossible to take the difference of coordinates as an
+approximation of the screen-space derivative. In practice, the outcome will be
+an undefined value.</p>
+<p>That is, the <cite>textureSample</cite> operation fits our definition of a convergent
+operation:</p>
+<blockquote>
+<div><ol class="arabic simple">
+<li><p>It communicates with a set of threads that implicitly depends on control
+flow.</p></li>
+<li><p>Correctness depends on this set of threads.</p></li>
+</ol>
+</div></blockquote>
+<p>The compiler frontend can emit IR that expresses the convergence constraints as
+follows:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@example_shader</span><span class="p">()</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%entry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="nv">%color</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@textureSample</span><span class="p">(</span><span class="err">U</span><span class="w"> </span><span class="nv">%texture</span><span class="p">,</span><span class="w"> </span><span class="err">V</span><span class="w"> </span><span class="nv">%coordinates</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%condition</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">then:</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@use</span><span class="p">(</span><span class="err">T</span><span class="w"> </span><span class="nv">%color</span><span class="p">)</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">end:</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The <a class="reference internal" href="#llvm-experimental-convergence-entry"><span class="std std-ref">llvm.experimental.convergence.entry</span></a>
+intrinsic is itself <code class="docutils literal notranslate"><span class="pre">convergent</span></code>, and we expect it to communicate at least
+among all threads of the same “quad” – a group of 2x2 pixels that are
+evaluated together for the purpose of approximating screen-space derivatives.
+This fact is not part of the generic LLVM IR semantics; it would have to be
+defined somewhere else, for example as part of target-specific ABI definitions
+and/or in reference to some relevant API specs.</p>
+<p>Since the <code class="docutils literal notranslate"><span class="pre">&#64;textureSample</span></code> call then uses the token produced by the entry
+intrinsic in its <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> bundle, and has no additional control
+dependencies, it must communicate among the same set of threads. This indicates
+to generic program transforms that sinking the <code class="docutils literal notranslate"><span class="pre">&#64;textureSample</span></code> call is
+forbidden. (A program transform can still sink the call if it can prove somehow,
+e.g. by leaning on target-specific callbacks that can analyze the program with
+additional knowledge, that <code class="docutils literal notranslate"><span class="pre">%condition</span></code> is always uniform across the threads
+referenced by the <em>convergence token</em> <code class="docutils literal notranslate"><span class="pre">%entry</span></code>.)</p>
+</section>
+<section id="reductions-inside-divergent-control-flow">
+<span id="convergence-example-reductions"></span><h3><a class="toc-backref" href="#id11" role="doc-backlink">Reductions inside divergent control flow</a><a class="headerlink" href="#reductions-inside-divergent-control-flow" title="Link to this heading">¶</a></h3>
+<p>The following example shows that merging common code of branches can be
+incorrect in the face of convergent operations:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">example_kernel</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">delta</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">delta</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">total_gains</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">subgroupAdd</span><span class="p">(</span><span class="n">delta</span><span class="p">);</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">total_losses</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">subgroupAdd</span><span class="p">(</span><span class="n">delta</span><span class="p">);</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">subgroupAdd</span></code> computing the <code class="docutils literal notranslate"><span class="pre">total_gains</span></code> will be executed by the
+subset of threads with positive <code class="docutils literal notranslate"><span class="pre">delta</span></code> in a subgroup (wave), and so will sum
+up all the <code class="docutils literal notranslate"><span class="pre">delta</span></code> values of those threads; and similarly for the
+<code class="docutils literal notranslate"><span class="pre">subgroupAdd</span></code> that computes the <code class="docutils literal notranslate"><span class="pre">total_losses</span></code>.</p>
+<p>If we were to hoist and merge the <code class="docutils literal notranslate"><span class="pre">subgroupAdd</span></code> above the if-statement, it
+would sum up the <code class="docutils literal notranslate"><span class="pre">delta</span></code> across <em>all</em> threads instead.</p>
+<p>The compiler frontend can emit IR that expresses the convergence constraints
+as follows:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@example_kernel</span><span class="p">()</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%entry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="w">  </span><span class="nv">%delta</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="nv">%cc</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">icmp</span><span class="w"> </span><span class="k">sgt</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%delta</span><span class="p">,</span><span class="w"> </span><span class="m">0</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%cc</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%else</span>
+
+<span class="nl">then:</span>
+<span class="w">  </span><span class="nv">%total_gains</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@subgroupAdd</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%delta</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">else:</span>
+<span class="w">  </span><span class="nv">%total_losses</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@subgroupAdd</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%delta</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">end:</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The entry intrinsic behaves like in the previous example: assuming that
+<code class="docutils literal notranslate"><span class="pre">&#64;example_kernel</span></code> is an OpenCL kernel (as hinted at by the “subgroup”
+terminology), we expect it to communicate among all threads within the
+“subgroup”. This typically maps to a SIMD vector on GPU hardware.</p>
+<p>The calls to <code class="docutils literal notranslate"><span class="pre">&#64;subgroupAdd</span></code> use the token produced by the entry intrinsic,
+but they also have an additional control dependency. According to the rules
+defined in this document, they only communicate among the subset of threads
+that actually end up executing the respective (static) call site.</p>
+<p>Hoisting them would remove the control dependency and cause them to communicate
+among the full set of threads that the entry intrinsic communicated with.
+Again, hoisting is allowed if it can be proven that <code class="docutils literal notranslate"><span class="pre">%cc</span></code> is always uniform
+among the relevant set of threads: in that case, the <code class="docutils literal notranslate"><span class="pre">&#64;subgroupAdd</span></code> already
+communicates among the full set of threads in the original program.</p>
+</section>
+</section>
+<section id="motivating-examples-of-convergence-control">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Motivating Examples of Convergence Control</a><a class="headerlink" href="#motivating-examples-of-convergence-control" title="Link to this heading">¶</a></h2>
+<p>(This section is informative.)</p>
+<section id="unstructured-control-flow">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Unstructured control flow</a><a class="headerlink" href="#unstructured-control-flow" title="Link to this heading">¶</a></h3>
+<p>Consider an example of how jump threading removes structure in a way that can
+make semantics non-obvious without the convergence intrinsics described in this
+document:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">void</span><span class="w"> </span><span class="err">example_original</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="nl">entry:</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%cond1</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then1</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%mid</span>
+
+<span class="nl">then1:</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="nv">%cond2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%mid</span>
+
+<span class="nl">mid:</span>
+<span class="w">    </span><span class="nv">%flag</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">phi</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="nv">%entry</span><span class="w"> </span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="nv">%cond2</span><span class="p">,</span><span class="w"> </span><span class="nv">%then1</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%flag</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then2</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">then2:</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@subgroupControlBarrier</span><span class="p">()</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">end:</span>
+<span class="p">}</span>
+
+<span class="k">void</span><span class="w"> </span><span class="err">example_jumpthreaded</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="nl">entry:</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%cond1</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then1</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then2</span>
+
+<span class="nl">then1:</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="nv">%cond2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%cond2</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then2</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">then2:</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@subgroupControlBarrier</span><span class="p">()</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">    </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">end:</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Is the control barrier guaranteed to synchronize among the same set of threads
+in both cases? Different implementations in the literature may give different
+answers to this question:</p>
+<ul class="simple">
+<li><p>In an implementation that reconverges at post-dominators, threads reconverge
+at <code class="docutils literal notranslate"><span class="pre">mid</span></code> in the first version, so that all threads (within a subgroup/wave)
+that execute the control barrier do so together. In the second version,
+threads that reach the control barrier via different paths synchronize
+separately: the first (and only) post-dominator is <code class="docutils literal notranslate"><span class="pre">end</span></code>, so threads do not
+reconverge before then.</p></li>
+<li><p>An implementation that sorts basic blocks topologically and ensures maximal
+reconvergence for each basic block would behave the same way in both
+versions.</p></li>
+</ul>
+<p>We generally take the stance that reconvergence in acyclic control flow must
+be maximal. The compiler frontend could augment the original code as follows:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@example_original</span><span class="p">()</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="nl">entry:</span>
+<span class="w">  </span><span class="nv">%entry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%cond1</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then1</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%mid</span>
+
+<span class="nl">then1:</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="nv">%cond2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%mid</span>
+
+<span class="nl">mid:</span>
+<span class="w">  </span><span class="nv">%flag</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">phi</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="nv">%entry</span><span class="w"> </span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="nv">%cond2</span><span class="p">,</span><span class="w"> </span><span class="nv">%then1</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%flag</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then2</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">then2:</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@subgroupControlBarrier</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">end:</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If S is the set of threads that the entry intrinsic communicated with, then
+the <code class="docutils literal notranslate"><span class="pre">&#64;subgroupControlBarrier</span></code> call communicates with the subset of S that
+actually reaches the call site. This set of threads doesn’t change after
+jump-threading, so the answer to the question posed above remains the same.</p>
+</section>
+<section id="opportunistic-convergent-operations">
+<span id="opportunistic-convergence"></span><h3><a class="toc-backref" href="#id14" role="doc-backlink">Opportunistic convergent operations</a><a class="headerlink" href="#opportunistic-convergent-operations" title="Link to this heading">¶</a></h3>
+<p>Some programs have local regions of code that contain a sequence of convergent
+operations where the code does not care about the exact set of threads with
+which it is executed, but only that the set of threads is the same for all the
+operations within the sequence. (If a subset of the convergent operations in the
+sequence have additional, non-uniform control dependencies, then this is not
+possible. However, the code may still require that the sets of threads are
+logically consistent with the conditions of those control dependencies.) In this
+case, <a class="reference internal" href="#llvm-experimental-convergence-anchor"><span class="std std-ref">llvm.experimental.convergence.anchor</span></a> can be used to express the desired
+semantics.</p>
+<p>The following example function could be part of a hypothetical “append buffer”
+implementation, where threads conditionally write fixed-sized records
+contiguously into a global buffer. The function <code class="docutils literal notranslate"><span class="pre">&#64;reserveSpaceInBuffer</span></code>
+returns the index into the buffer at which the calling thread should store its
+data.</p>
+<p>This could be achieved by using a simple atomic operation in every thread to
+bump an allocation counter.</p>
+<p>However, the following implementation can be more performant on some hardware,
+because it uses only a single atomic operation for an entire group of threads.
+To do this, it first determines the total size of the group, which will be the
+operand to the atomic operation, and then later broadcasts the result of the
+atomic operation to all threads of the group, so that each thread can compute
+its individual position in the buffer:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@reserveSpaceInBuffer</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w">    </span><span class="c">; NOTE: _not_ a convergent function!</span>
+<span class="nl">entry:</span>
+<span class="w">  </span><span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+
+<span class="w">  </span><span class="nv">%ballot</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@subgroupBallot</span><span class="p">(</span><span class="kt">i1</span><span class="w"> </span><span class="k">true</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="nv">%numThreads.p</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ctpop.i64</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="nv">%ballot</span><span class="p">)</span>
+<span class="w">  </span><span class="nv">%numThreads</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">trunc</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="nv">%numThreads.p</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i32</span>
+
+<span class="w">  </span><span class="nv">%absoluteThreadIdx</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@getSubgroupLocalInvocationId</span><span class="p">()</span>
+<span class="w">  </span><span class="nv">%absoluteThreadIdx.ext</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">zext</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%absoluteThreadIdx</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i64</span>
+<span class="w">  </span><span class="nv">%mask.p</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">shl</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nv">%absoluteThreadIdx.ext</span>
+<span class="w">  </span><span class="nv">%mask</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">sub</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="nv">%mask.p</span><span class="p">,</span><span class="w"> </span><span class="m">1</span>
+
+<span class="w">  </span><span class="nv">%maskedBallot</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="nv">%ballot</span><span class="p">,</span><span class="w"> </span><span class="nv">%mask</span>
+<span class="w">  </span><span class="nv">%relativeThreadIdx.p</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ctpop.i64</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="nv">%maskedBallot</span><span class="p">)</span>
+<span class="w">  </span><span class="nv">%relativeThreadIdx</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">trunc</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="nv">%relativeThreadIdx.p</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i32</span>
+
+<span class="w">  </span><span class="nv">%isFirstThread</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">icmp</span><span class="w"> </span><span class="k">eq</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%relativeThreadIdx</span><span class="p">,</span><span class="w"> </span><span class="m">0</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%isFirstThread</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%then</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">then:</span>
+<span class="w">  </span><span class="nv">%baseOffset.1</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">atomicrmw</span><span class="w"> </span><span class="k">add</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="vg">@bufferAllocationCount</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%numThreads</span><span class="w"> </span><span class="k">monotonic</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%end</span>
+
+<span class="nl">end:</span>
+<span class="w">  </span><span class="nv">%baseOffset.2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">phi</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="k">undef</span><span class="p">,</span><span class="w"> </span><span class="nv">%entry</span><span class="w"> </span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="nv">%baseOffset.1</span><span class="p">,</span><span class="w"> </span><span class="nv">%then</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="nv">%baseOffset</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@subgroupBroadcastFirst</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%baseOffset.2</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="nv">%offset</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">add</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%baseOffset</span><span class="p">,</span><span class="w"> </span><span class="nv">%relativeThreadIdx</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%offset</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The key here is that the function really doesn’t care which set of threads it
+is being called with. It takes whatever set of threads it can get. What the
+implementation of the function cares about is that the initial
+<code class="docutils literal notranslate"><span class="pre">&#64;subgroupBallot</span></code> – which is used to retrieve the bitmask of threads that
+executed the anchor together – executes with the same set of threads as the
+final <code class="docutils literal notranslate"><span class="pre">&#64;subgroupBroadcastFirst</span></code>. Nothing else is required for correctness as
+far as convergence is concerned.</p>
+<p>The function <code class="docutils literal notranslate"><span class="pre">&#64;reserveSpaceInBuffer</span></code> itself is _not_ <code class="docutils literal notranslate"><span class="pre">convergent</span></code>: callers
+are free to move call sites of the function as they see fit. This can change
+the behavior in practice, by changing the sets of threads that are grouped
+together for the atomic operation. This can be visible in the output of the
+program, since the order in which outputs appear in the buffer is changed.
+However, this does not break the overall contract that <code class="docutils literal notranslate"><span class="pre">&#64;reserveSpaceInBuffer</span></code>
+has with its caller – which makes sense: the order of outputs is
+non-deterministic anyway because of the atomic operation that is involved.</p>
+<p>If the function is inlined, the use of the anchor intrinsic similarly indicates
+that certain transforms which are usually forbidden by the presence of
+convergent operations are in fact allowed, as long as they don’t break up the
+region of code that is controlled by the anchor.</p>
+</section>
+<section id="extended-cycles-divergent-exit-from-a-loop">
+<span id="convergence-high-level-break"></span><h3><a class="toc-backref" href="#id15" role="doc-backlink">Extended Cycles: Divergent Exit from a Loop</a><a class="headerlink" href="#extended-cycles-divergent-exit-from-a-loop" title="Link to this heading">¶</a></h3>
+<p>High-level languages typically provide a <code class="docutils literal notranslate"><span class="pre">break</span></code> statement that transfers
+control out of a loop statement. In most cases, the loop is structured and hence
+there is no ambiguity about convergence inside the loop. But an ambiguity arises
+when a <code class="docutils literal notranslate"><span class="pre">break</span></code> is control dependent on a divergent condition inside the loop.
+Consider the following example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="nf">example</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// A</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// B</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// divergent condition</span>
+<span class="w">      </span><span class="c1">// C</span>
+<span class="w">      </span><span class="n">convergent_op</span><span class="p">();</span>
+<span class="w">      </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// D</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c1">// E</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In this program, the call to <code class="docutils literal notranslate"><span class="pre">convergent_op()</span></code> is lexically “inside” the <code class="docutils literal notranslate"><span class="pre">for</span></code>
+loop. But when translated to LLVM IR, the basic block B is an exiting block
+ending in a divergent branch, and the basic block C is an exit of the loop.
+Thus, the call to <code class="docutils literal notranslate"><span class="pre">convergent_op()</span></code> is outside the loop. This causes a mismatch
+between the programmer’s expectation and the compiled program. The call should
+be executed convergently on every iteration of the loop, by threads that
+together take the branch to exit the loop. But when compiled, all threads that
+take the divergent exit on different iterations first converge at the beginning
+of basic block C and then together execute the call to <code class="docutils literal notranslate"><span class="pre">convergent_op()</span></code>.</p>
+<p>In this case, <a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a> can be used to express the desired
+semantics. A call to this intrinsic is placed in the loop header, which tracks
+each iteration of the loop. The token produced by this is used as a
+<code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand to the convergent call. The semantics of the
+<code class="docutils literal notranslate"><span class="pre">loop</span></code> intrinsic ensures that the convergent call is performed convergently
+only by those threads that convergently exited the loop in a given iteration.</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@example</span><span class="p">()</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%entry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%for</span>
+
+<span class="nl">for:</span>
+<span class="w">  </span><span class="nv">%inner</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)]</span>
+<span class="w">  </span><span class="nv">%for.cond</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%for.cond</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%B</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%E</span>
+
+<span class="nl">B:</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="nv">%condition</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%condition</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%C</span><span class="p">,</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%D</span>
+
+<span class="nl">C:</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent_op</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)]</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%E</span>
+
+<span class="nl">D:</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">br</span><span class="w"> </span><span class="kt">label</span><span class="w"> </span><span class="nv">%for</span>
+
+<span class="nl">E:</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The LLVM IR version of the same program shows a cycle consisting of the basic
+blocks <code class="docutils literal notranslate"><span class="pre">%for</span></code>, <code class="docutils literal notranslate"><span class="pre">%B</span></code> and <code class="docutils literal notranslate"><span class="pre">%D</span></code>, while <code class="docutils literal notranslate"><span class="pre">%C</span></code> is an exit reached by the
+divergent branch at the end of the exiting block <code class="docutils literal notranslate"><span class="pre">%B</span></code>. But the use of
+convergence control tokens makes it clear that block <code class="docutils literal notranslate"><span class="pre">%C</span></code> must be executed
+convergently only by those threads that convergently take the exit edge from %B
+to <code class="docutils literal notranslate"><span class="pre">%C</span></code>. In other words, the convergent execution of <code class="docutils literal notranslate"><span class="pre">%C</span></code> is governed by the
+call to the <a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a> intrinsic inside the cycle. The cycle is
+effectively extended to include all uses of this token that lie outside the
+cycle.</p>
+</section>
+</section>
+<section id="dynamic-instances-and-convergence-tokens">
+<span id="id2"></span><h2><a class="toc-backref" href="#id16" role="doc-backlink">Dynamic Instances and Convergence Tokens</a><a class="headerlink" href="#dynamic-instances-and-convergence-tokens" title="Link to this heading">¶</a></h2>
+<p>Every execution of an LLVM IR instruction occurs in a <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-dynamic-instances"><span class="std std-ref">dynamic instance</span></a> of the instruction. Dynamic instances are the
+formal objects by which we talk about communicating threads in convergent
+operations. Dynamic instances are defined for <em>all</em> operations in an LLVM
+program, whether convergent or not. Convergence control is primarily about the
+dynamic instances of convergent operations since they affect execution of the
+program through inter-thread communication. The dynamic instances for
+non-convergent operations are relevant for determining <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-and-uniformity"><span class="std std-ref">uniformity</span></a> of values.</p>
+<p>Dynamic instances produced by the execution of the same <em>convergent operation</em>
+by different threads may be <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-definition"><span class="std std-ref">converged</span></a>. When
+executing a convergent operation, the set of threads that execute converged
+dynamic instances is the set of threads that communicate with each other.
+<em>Convergence tokens</em> capture this convergence as described below.</p>
+<p><em>Convergence tokens</em> are values of <code class="docutils literal notranslate"><span class="pre">token</span></code> type, i.e. they cannot be used in
+<code class="docutils literal notranslate"><span class="pre">phi</span></code> or <code class="docutils literal notranslate"><span class="pre">select</span></code> instructions. A convergence token value represents the
+dynamic instance of the instruction that produced it.</p>
+<p>Convergent operations may have an optional <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand bundle with
+a convergence token operand to define the set of communicating threads relative
+to the operation that defined the token.</p>
+<blockquote>
+<div><p>Let <code class="docutils literal notranslate"><span class="pre">U</span></code> be a convergent operation other than a call to a convergence
+control intrinsic, and <code class="docutils literal notranslate"><span class="pre">D</span></code> be the convergent operation that defines
+the token value used as the <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand to <code class="docutils literal notranslate"><span class="pre">U</span></code>. Two
+threads execute converged dynamic instances of <code class="docutils literal notranslate"><span class="pre">U</span></code> if and only if the
+token value in both threads was returned by converged dynamic
+instances of <code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+</div></blockquote>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The text defines convergence token values as representing dynamic instances.
+But if we were to assume that converged dynamic instances produce the same
+token value, then we could almost think of the token value as representing a
+set of threads instead – specifically, the set <code class="docutils literal notranslate"><span class="pre">S</span></code> of threads that
+executed converged dynamic instances of the defining instruction <code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+<p>In this intuitive picture, when a convergence token value <code class="docutils literal notranslate"><span class="pre">T</span></code> is used by a
+<code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> bundle on an instruction <code class="docutils literal notranslate"><span class="pre">I</span></code>, then the set of threads that
+communicates in <code class="docutils literal notranslate"><span class="pre">I</span></code> is a subset of the set <code class="docutils literal notranslate"><span class="pre">S</span></code> represented by the token value.
+Specifically, it is the subset of threads that ends up executing <code class="docutils literal notranslate"><span class="pre">I</span></code> while
+using the token value.</p>
+<p>This by itself wouldn’t quite work as a definition: what if <code class="docutils literal notranslate"><span class="pre">I</span></code> is executed
+multiple times by the same threads? Which execution of <code class="docutils literal notranslate"><span class="pre">I</span></code> in thread 1
+communicates with which execution of <code class="docutils literal notranslate"><span class="pre">I</span></code> in thread 2? Leaning on the notion
+of dynamic instances gives a robust answer to this question as long as <code class="docutils literal notranslate"><span class="pre">D</span></code>
+and <code class="docutils literal notranslate"><span class="pre">I</span></code> are at the same loop (or cycle) nesting level.</p>
+<p>The case where <code class="docutils literal notranslate"><span class="pre">D</span></code> and <code class="docutils literal notranslate"><span class="pre">I</span></code> are at different loop nesting levels is
+forbidden by the <a class="reference internal" href="#convergence-static-rules"><span class="std std-ref">static rules</span></a> – handling
+that case is the purpose of <a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a>.</p>
+</div>
+</section>
+<section id="convergence-control-intrinsics">
+<span id="id3"></span><h2><a class="toc-backref" href="#id17" role="doc-backlink">Convergence Control Intrinsics</a><a class="headerlink" href="#convergence-control-intrinsics" title="Link to this heading">¶</a></h2>
+<p>This section describes target-independent intrinsics that can be used to
+produce convergence tokens.</p>
+<p>Behaviour is undefined if a convergence control intrinsic is called
+indirectly.</p>
+<section id="llvm-experimental-convergence-entry">
+<span id="id4"></span><h3><a class="toc-backref" href="#id18" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.entry</span></code></a><a class="headerlink" href="#llvm-experimental-convergence-entry" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="k">readnone</span>
+</pre></div>
+</div>
+<p>This intrinsic is used to tie the dynamic instances inside a function to
+those in the caller.</p>
+<ol class="arabic simple">
+<li><p>If the function is called from outside the scope of LLVM, the convergence of
+dynamic instances of this intrinsic is environment-defined. For example:</p>
+<ol class="loweralpha simple">
+<li><p>In an OpenCL <em>kernel launch</em>, the maximal set of threads that
+can communicate outside the memory model is a <em>workgroup</em>.
+Hence, a suitable choice is to specify that all the threads from
+a single workgroup in OpenCL execute converged dynamic instances
+of this intrinsic.</p></li>
+<li><p>In a C/C++ program, threads are launched independently and can
+communicate only through the memory model. Hence the dynamic instances of
+this intrinsic in a C/C++ program are never converged.</p></li>
+</ol>
+</li>
+<li><p>If the function is called from a call-site in LLVM IR, then two
+threads execute converged dynamic instances of this intrinsic if and
+only if both threads entered the function by executing converged
+dynamic instances of the call-site.</p></li>
+</ol>
+<p>This intrinsic can occur at most once in a function, and only in the entry
+block of the function. If this intrinsic occurs in a basic block, then it must
+precede any other convergent operation in the same basic block.</p>
+<p>It is an error if this intrinsic appears in a non-convergent function.</p>
+<p>It is an error to specify a <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand bundle at a
+call to this intrinsic.</p>
+<p>Function inlining substitutes this intrinsic with the token from the operand
+bundle. For example:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// Before inlining:</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">callee</span><span class="p">()</span><span class="w"> </span><span class="n">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="o">%</span><span class="n">tok</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">call</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="err">@</span><span class="n">llvm</span><span class="p">.</span><span class="n">experimental</span><span class="p">.</span><span class="n">convergence</span><span class="p">.</span><span class="n">entry</span><span class="p">()</span>
+<span class="w">  </span><span class="n">convergent_operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="n">token</span><span class="w"> </span><span class="o">%</span><span class="n">tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="o">%</span><span class="n">outer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">call</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="err">@</span><span class="n">llvm</span><span class="p">.</span><span class="n">experimental</span><span class="p">.</span><span class="n">convergence</span><span class="p">.</span><span class="n">anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="o">%</span><span class="n">inner</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">call</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="err">@</span><span class="n">llvm</span><span class="p">.</span><span class="n">experimental</span><span class="p">.</span><span class="n">convergence</span><span class="p">.</span><span class="n">loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="n">token</span><span class="w"> </span><span class="o">%</span><span class="n">outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="n">callee</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="n">token</span><span class="w"> </span><span class="o">%</span><span class="n">inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// After inlining:</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="o">%</span><span class="n">outer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">call</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="err">@</span><span class="n">llvm</span><span class="p">.</span><span class="n">experimental</span><span class="p">.</span><span class="n">convergence</span><span class="p">.</span><span class="n">anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(...)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="o">%</span><span class="n">inner</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">call</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="err">@</span><span class="n">llvm</span><span class="p">.</span><span class="n">experimental</span><span class="p">.</span><span class="n">convergence</span><span class="p">.</span><span class="n">loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="n">token</span><span class="w"> </span><span class="o">%</span><span class="n">outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="n">convergent_operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="n">token</span><span class="w"> </span><span class="o">%</span><span class="n">inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="llvm-experimental-convergence-loop">
+<span id="id5"></span><h3><a class="toc-backref" href="#id19" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.loop</span></code></a><a class="headerlink" href="#llvm-experimental-convergence-loop" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="p">)</span><span class="w"> </span><span class="p">]</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="k">readnone</span>
+</pre></div>
+</div>
+<p>This intrinsic represents the place where an imaginary counter is incremented
+for determining convergence inside a control flow cycle.</p>
+<p>Let <code class="docutils literal notranslate"><span class="pre">U</span></code> be a call to this intrinsic and <code class="docutils literal notranslate"><span class="pre">D</span></code> be the convergent operation that
+defines the token value used as the <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand to <code class="docutils literal notranslate"><span class="pre">U</span></code>. Two
+threads execute converged dynamic instances of <code class="docutils literal notranslate"><span class="pre">U</span></code> if and only if:</p>
+<ol class="arabic simple">
+<li><p>The token value in both threads was returned by converged dynamic
+instances of <code class="docutils literal notranslate"><span class="pre">D</span></code>, and,</p></li>
+<li><p>There is an integer <em>n</em> such that both threads execute <code class="docutils literal notranslate"><span class="pre">U</span></code> for the <em>n</em>’th time
+with that token value.</p></li>
+</ol>
+<p>It is an error to omit the <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand bundle on a
+call to this intrinsic.</p>
+<p>If this intrinsic occurs in a basic block, then it must precede any other
+convergent operation in the same basic block.</p>
+<p id="convergence-cycle-heart"><strong>Heart of a Cycle:</strong></p>
+<blockquote>
+<div><p>If a <a class="reference internal" href="CycleTerminology.html#cycle-terminology"><span class="std std-ref">cycle</span></a> <code class="docutils literal notranslate"><span class="pre">C</span></code> contains an occurrence <code class="docutils literal notranslate"><span class="pre">H</span></code> of
+this intrinsic whose token operand is defined outside <code class="docutils literal notranslate"><span class="pre">C</span></code>, then <code class="docutils literal notranslate"><span class="pre">H</span></code> is
+called the heart of <code class="docutils literal notranslate"><span class="pre">C</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The static rules for cycles imply that a heart can occur only in the header
+of a natural loop. This ensures that the heart closely represents the
+intuitive notion of a loop iteration. If this restriction is relaxed, the
+resulting semantics provides a new notion of “cycle iteration” even for
+irreducible cycles. But this allows a natural loop to have a heart in a
+node other than its header, which has interesting consequences on the
+meaning of a loop iteration in terms of convergence. For now, we disallow
+this situation since its practical application is very rare.</p>
+</div>
+</div></blockquote>
+</section>
+<section id="llvm-experimental-convergence-anchor">
+<span id="id6"></span><h3><a class="toc-backref" href="#id20" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.anchor</span></code></a><a class="headerlink" href="#llvm-experimental-convergence-anchor" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="k">readnone</span>
+</pre></div>
+</div>
+<p>This intrinsic produces an initial convergence token that is independent of
+any “outer scope”. The set of threads executing converged dynamic instances of
+this intrinsic is implementation-defined.</p>
+<p>It is an error to pass a <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand bundle at a
+call to this intrinsic.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The expectation is that all threads within a group that “happen to be active
+at the same time” will execute converged dynamic instances, so that programs
+can detect the maximal set of threads that can communicate efficiently within
+some local region of the program.</p>
+</div>
+</section>
+</section>
+<section id="uncontrolled-convergent-operations">
+<span id="convergence-uncontrolled"></span><h2><a class="toc-backref" href="#id21" role="doc-backlink">Uncontrolled Convergent Operations</a><a class="headerlink" href="#uncontrolled-convergent-operations" title="Link to this heading">¶</a></h2>
+<p>Convergent operations with an explicit <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand bundle are
+called <em>controlled convergent operations</em>. All other convergent operations are
+said to be <em>uncontrolled</em>.</p>
+<p>An uncontrolled convergent operation is said to have <em>implicit convergence
+control</em> determined by the <code class="docutils literal notranslate"><span class="pre">convergent</span></code> attribute alone. The semantics of the
+<code class="docutils literal notranslate"><span class="pre">convergent</span></code> attribute as implemented in LLVM differs from the documented
+semantics. The implementation tries to follow common intuition about convergent
+operations, which remains under-specified. As such, it is not possible to fully
+translate implicit convergence control into explicit convergence control tokens,
+and these two modes cannot be mixed in the same function.</p>
+<blockquote>
+<div><p>If a function contains a controlled convergent operation, then all convergent
+operations in that function must either be controlled operations or calls to
+the convergence control intrinsics.</p>
+</div></blockquote>
+<section id="inferring-tokens">
+<h3><a class="toc-backref" href="#id22" role="doc-backlink">Inferring Tokens</a><a class="headerlink" href="#inferring-tokens" title="Link to this heading">¶</a></h3>
+<p>(This section is informational)</p>
+<p>Sometimes, it may be necessary to reinterpret the implicit convergence control
+in terms of explicit convergence control tokens. For example, this may happen
+when a function call is inlined, and either the caller or the callee contains
+uncontrolled convergent operations.</p>
+<p>Some uses of uncontrolled convergent operations may need to satisfy the
+following property:</p>
+<blockquote>
+<div><p>For an environment-defined group of threads (such as an OpenCL workgroup or
+subgroup), if one thread in the group executes a convergent operation, then
+all threads in the group do so convergently with that thread.</p>
+</div></blockquote>
+<p>In terms of explicit convergence control, this means that the
+<code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand on each convergent operation <code class="docutils literal notranslate"><span class="pre">X</span></code> must ultimately
+originate from a call to the <a class="reference internal" href="#llvm-experimental-convergence-entry"><span class="std std-ref">llvm.experimental.convergence.entry</span></a> intrinsic. This preserves the possibility
+that the group of threads that converge on reaching <code class="docutils literal notranslate"><span class="pre">X</span></code> is the same group that
+originally started executing the program in convergence. In comparison, the
+<a class="reference internal" href="#llvm-experimental-convergence-anchor"><span class="std std-ref">llvm.experimental.convergence.anchor</span></a> intrinsic captures an
+implementation-defined group of threads, which is insufficient to support the
+above property.</p>
+<p>One way to approximate implicit convergence control in terms of explicit
+convergence control tokens is the following procedure, which preserves the above
+mentioned property:</p>
+<ol class="arabic simple">
+<li><p>Convert every irreducible cycle into a reducible cycle.</p></li>
+<li><p>Insert a call to <a class="reference internal" href="#llvm-experimental-convergence-entry"><span class="std std-ref">llvm.experimental.convergence.entry</span></a> at the start of the entry block of the
+function.</p></li>
+<li><p>Insert a call to <a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a> at the start of every loop header. If
+this loop is an outermost loop, the <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand is the call
+to <a class="reference internal" href="#llvm-experimental-convergence-entry"><span class="std std-ref">llvm.experimental.convergence.entry</span></a> in the entry block of the function.
+Otherwise, the <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand is the call to
+<a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a> in the parent loop’s header.</p></li>
+<li><p>For each uncontrolled convergent operation <code class="docutils literal notranslate"><span class="pre">X</span></code>, add a <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code>
+operand bundle using the token defined by a definition <code class="docutils literal notranslate"><span class="pre">D</span></code> that is a
+<a class="reference internal" href="CycleTerminology.html#cycle-sibling"><span class="std std-ref">sibling</span></a> to this operation. <code class="docutils literal notranslate"><span class="pre">D</span></code> always dominates
+<code class="docutils literal notranslate"><span class="pre">X</span></code> — if <code class="docutils literal notranslate"><span class="pre">X</span></code> is not in any cycle, then <code class="docutils literal notranslate"><span class="pre">D</span></code> is a call to
+<a class="reference internal" href="#llvm-experimental-convergence-entry"><span class="std std-ref">llvm.experimental.convergence.entry</span></a>; otherwise <code class="docutils literal notranslate"><span class="pre">D</span></code> is the heart of the
+parent cycle of <code class="docutils literal notranslate"><span class="pre">X</span></code>.</p></li>
+</ol>
+</section>
+</section>
+<section id="static-rules">
+<span id="convergence-static-rules"></span><h2><a class="toc-backref" href="#id23" role="doc-backlink">Static Rules</a><a class="headerlink" href="#static-rules" title="Link to this heading">¶</a></h2>
+<p>A <em>well-formed</em> program in LLVM IR must satisfy the following static
+rules about cycles and convergence regions.</p>
+<section id="closed-paths">
+<h3><a class="toc-backref" href="#id24" role="doc-backlink">Closed Paths</a><a class="headerlink" href="#closed-paths" title="Link to this heading">¶</a></h3>
+<p>A <a class="reference internal" href="CycleTerminology.html#cycle-closed-path"><span class="std std-ref">closed path</span></a> in a CFG is a connected sequence of
+nodes and edges in the CFG whose start and end points are the same.</p>
+<ol class="arabic simple">
+<li><p>Every closed path in the CFG that contains a use of a convergence token T other
+than a use by
+<a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a>
+must also contain the definition of T.</p></li>
+<li><p>Every closed path in the CFG that contains two different uses of a convergence
+token T must also contain the definition of T.</p></li>
+<li><p>Every closed path in the CFG that contains uses of two different convergence tokens
+T1 and T2 must also contain the definition of at least one of them.</p></li>
+</ol>
+<p>Taken together, these rules imply that for every closed path C, there can be at most
+one convergence token T which is used in C but defined outside of it, and that
+T can be used only once in C, and only by <code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.loop</span></code>.</p>
+<ol class="arabic simple" start="4">
+<li><p>In every closed path that contains a use U of a token T but not the
+definition of T, U must dominate all nodes in the closed path.</p></li>
+</ol>
+<p>This implies that <code class="docutils literal notranslate"><span class="pre">llvm.experimental.convergence.loop</span></code> can appear as a heart
+only in the header of a natural loop.</p>
+<p><strong>Sufficient Conditions:</strong> From the <a class="reference internal" href="CycleTerminology.html#cycle-closed-path"><span class="std std-ref">properties of cycles</span></a>, it is sufficient to prove the above properties
+for cycles instead of closed paths. Briefly, any closed path that violates
+one or more of the above static rules is contained in a cycle that also
+violates the same rule(s).</p>
+</section>
+<section id="convergence-regions">
+<span id="convergence-region"></span><h3><a class="toc-backref" href="#id25" role="doc-backlink">Convergence Regions</a><a class="headerlink" href="#convergence-regions" title="Link to this heading">¶</a></h3>
+<p>The <em>convergence region</em> of a convergence token T is the minimal region in
+which T is live and used, i.e., the set of program points dominated by the
+definition D of T from which a use of T can be reached.</p>
+<p>The following static rule about convergence regions must be satisfied by
+valid programs:</p>
+<blockquote>
+<div><p>If a convergence region R for a token T1 contains a use of a convergence
+token T2, then R must also contain the definition of T2. (In other words,
+convergence regions must be reasonably nested.)</p>
+</div></blockquote>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For brevity, this document uses the term “convergence region of a token
+definition <code class="docutils literal notranslate"><span class="pre">D</span></code>” to actually refer to the convergence region of the token
+<code class="docutils literal notranslate"><span class="pre">T</span></code> defined by <code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+</div>
+</section>
+</section>
+<section id="inferring-non-convergence">
+<span id="inferring-noconvergent"></span><h2><a class="toc-backref" href="#id26" role="doc-backlink">Inferring non-convergence</a><a class="headerlink" href="#inferring-non-convergence" title="Link to this heading">¶</a></h2>
+<p>When the target or the environment guarantees that threads do not
+communicate using convergent operations or that threads never diverge,
+the dynamic instances in the program are irrelevant and an optimizer
+may remove any occurrence of the <code class="docutils literal notranslate"><span class="pre">convergent</span></code> attribute on a
+call-site or a function and any explicit <code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand
+bundle at a call-site.</p>
+<p>An optimizer may remove the <code class="docutils literal notranslate"><span class="pre">convergent</span></code> attribute and any explicit
+<code class="docutils literal notranslate"><span class="pre">convergencectrl</span></code> operand bundle from a call-site if it can prove
+that the execution of this call-site always results in a call to a
+non-convergent function.</p>
+<p>An optimizer may remove the <code class="docutils literal notranslate"><span class="pre">convergent</span></code> attribute on a function if it can
+prove that the function does not contain a call to
+<a class="reference internal" href="#llvm-experimental-convergence-entry"><span class="std std-ref">llvm.experimental.convergence.entry</span></a>, or any uncontrolled convergent
+operations.</p>
+</section>
+<section id="memory-model-non-interaction">
+<h2><a class="toc-backref" href="#id27" role="doc-backlink">Memory Model Non-Interaction</a><a class="headerlink" href="#memory-model-non-interaction" title="Link to this heading">¶</a></h2>
+<p>The fact that an operation is convergent has no effect on how it is treated for
+memory model purposes. In particular, an operation that is <code class="docutils literal notranslate"><span class="pre">convergent</span></code> and
+<code class="docutils literal notranslate"><span class="pre">readnone</span></code> does not introduce additional ordering constraints as far as the
+memory model is concerned. There is no implied barrier, neither in the memory
+barrier sense nor in the control barrier sense of synchronizing the execution
+of threads.</p>
+<p>Informational note: Threads that execute converged dynamic instances do not
+necessarily do so at the same time.</p>
+</section>
+<section id="other-interactions">
+<h2><a class="toc-backref" href="#id28" role="doc-backlink">Other Interactions</a><a class="headerlink" href="#other-interactions" title="Link to this heading">¶</a></h2>
+<p>A function can be both <code class="docutils literal notranslate"><span class="pre">convergent</span></code> and
+<code class="docutils literal notranslate"><span class="pre">speculatable</span></code>, indicating that the function does not have undefined
+behavior and has no effects besides calculating its result, but is still
+affected by the set of threads executing this function. This typically
+prevents speculation of calls to the function unless the constraint imposed
+by <code class="docutils literal notranslate"><span class="pre">convergent</span></code> is further relaxed by some other means.</p>
+</section>
+<section id="controlled-maximal-convergence">
+<h2><a class="toc-backref" href="#id29" role="doc-backlink">Controlled Maximal Convergence</a><a class="headerlink" href="#controlled-maximal-convergence" title="Link to this heading">¶</a></h2>
+<p>The <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-definition"><span class="std std-ref">converged-with relation</span></a> over dynamic
+instances of each controlled convergent operation is completely defined by the
+semantics of convergence tokens. But the implementation-defined convergence at a
+call to <a class="reference internal" href="#llvm-experimental-convergence-anchor"><span class="std std-ref">llvm.experimental.convergence.anchor</span></a> also depends on the cycle hierarchy
+chosen if it occurs inside an irreducible cycle.</p>
+<p>When the token defined by a convergent operation <code class="docutils literal notranslate"><span class="pre">D</span></code> is used at another
+convergent operation <code class="docutils literal notranslate"><span class="pre">U</span></code>, the implementation must ensure that the threads that
+converge at <code class="docutils literal notranslate"><span class="pre">U</span></code> are all the threads that reached <code class="docutils literal notranslate"><span class="pre">U</span></code> after converging at
+<code class="docutils literal notranslate"><span class="pre">D</span></code>. On most implementations, it is reasonable to assume that only these
+threads are converged at every node they reach on any path from <code class="docutils literal notranslate"><span class="pre">D</span></code> to <code class="docutils literal notranslate"><span class="pre">U</span></code>.
+In other words, the converged-with relation at <code class="docutils literal notranslate"><span class="pre">D</span></code> produces groups of threads
+that can converge only within each group, while inside the convergence region of
+<code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+<p>All this affects the <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-maximal"><span class="std std-ref">maximal converged-with relation</span></a> over dynamic instances and in turn the <a class="reference internal" href="ConvergenceAndUniformity.html#uniformity-analysis"><span class="std std-ref">m-converged
+property</span></a> of static instances in the convergence region of
+<code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+<blockquote id="controlled-maximal-converged-with">
+<div><p><strong>Controlled Maximal converged-with Relation</strong></p>
+<ol class="arabic simple">
+<li><p>Dynamic instances of a <em>convergent operation</em> are related in the controlled
+maximal converged-with relation according to the semantics of the convergence
+control tokens.</p></li>
+<li><p>Dynamic instances <code class="docutils literal notranslate"><span class="pre">X1</span></code> and <code class="docutils literal notranslate"><span class="pre">X2</span></code> produced by different threads for the
+same <em>non-convergent operation</em> <code class="docutils literal notranslate"><span class="pre">X</span></code> are related in the controlled maximal
+converged-with relation if and only if:</p>
+<ol class="arabic simple">
+<li><p>Both threads executed converged dynamic instances of every token
+definition <code class="docutils literal notranslate"><span class="pre">D</span></code> such that <code class="docutils literal notranslate"><span class="pre">X</span></code> is in the convergence region of <code class="docutils literal notranslate"><span class="pre">D</span></code>,
+and,</p></li>
+<li><p>Either <code class="docutils literal notranslate"><span class="pre">X</span></code> is not contained in any cycle, or, for every cycle <code class="docutils literal notranslate"><span class="pre">C</span></code>
+with header <code class="docutils literal notranslate"><span class="pre">H</span></code> that contains <code class="docutils literal notranslate"><span class="pre">X</span></code>:</p>
+<ul class="simple">
+<li><p>every dynamic instance <code class="docutils literal notranslate"><span class="pre">H1</span></code> of <code class="docutils literal notranslate"><span class="pre">H</span></code> that precedes <code class="docutils literal notranslate"><span class="pre">X1</span></code> in the
+respective thread is convergence-before <code class="docutils literal notranslate"><span class="pre">X2</span></code>, and,</p></li>
+<li><p>every dynamic instance <code class="docutils literal notranslate"><span class="pre">H2</span></code> of <code class="docutils literal notranslate"><span class="pre">H</span></code> that precedes <code class="docutils literal notranslate"><span class="pre">X2</span></code> in the
+respective thread is convergence-before <code class="docutils literal notranslate"><span class="pre">X1</span></code>,</p></li>
+<li><p>without assuming that <code class="docutils literal notranslate"><span class="pre">X1</span></code> is converged with <code class="docutils literal notranslate"><span class="pre">X2</span></code>.</p></li>
+</ul>
+</li>
+</ol>
+</li>
+</ol>
+</div></blockquote>
+<blockquote id="controlled-m-converged">
+<div><p><strong>Controlled m-converged Static Instances</strong></p>
+<p>A node <code class="docutils literal notranslate"><span class="pre">X</span></code> in a given CFG is reported to be m-converged if and only if:</p>
+<ol class="arabic simple">
+<li><p>For any token definition <code class="docutils literal notranslate"><span class="pre">D</span></code> such that <code class="docutils literal notranslate"><span class="pre">X</span></code> is inside the convergence region
+of <code class="docutils literal notranslate"><span class="pre">D</span></code>, <code class="docutils literal notranslate"><span class="pre">D</span></code> itself is m-converged, and,</p></li>
+<li><p>Every cycle that contains <code class="docutils literal notranslate"><span class="pre">X</span></code> satisfies the following necessary
+conditions:</p>
+<ol class="loweralpha simple">
+<li><p>Every divergent branch inside the cycle satisfies the <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-diverged-entry"><span class="std std-ref">diverged
+entry criterion</span></a>, and,</p></li>
+<li><p>There are no <a class="reference internal" href="ConvergenceAndUniformity.html#convergence-diverged-outside"><span class="std std-ref">diverged paths reaching the
+cycle</span></a> from a divergent branch outside it.</p></li>
+</ol>
+</li>
+</ol>
+</div></blockquote>
+<section id="temporal-divergence-at-cycle-exit">
+<h3><a class="toc-backref" href="#id30" role="doc-backlink">Temporal Divergence at Cycle Exit</a><a class="headerlink" href="#temporal-divergence-at-cycle-exit" title="Link to this heading">¶</a></h3>
+<p>When a cycle has a divergent exit, maximal convergence assumes that all threads
+converge at the exit block. But if a controlled convergent operation outside the
+cycle uses a token defined by an operation <code class="docutils literal notranslate"><span class="pre">D</span></code> inside the cycle, the
+convergence region of <code class="docutils literal notranslate"><span class="pre">D</span></code> now extends outside the cycle. If two threads
+executed converged dynamic instances of <code class="docutils literal notranslate"><span class="pre">D</span></code> before exiting the cycle, then
+they continue to execute converged dynamic instances of nodes in the convergence
+region of <code class="docutils literal notranslate"><span class="pre">D</span></code> outside the cycle. Thus, for a value <code class="docutils literal notranslate"><span class="pre">V</span></code> defined inside the
+cycle, any use <code class="docutils literal notranslate"><span class="pre">U</span></code> of <code class="docutils literal notranslate"><span class="pre">V</span></code> within the convergence region of <code class="docutils literal notranslate"><span class="pre">T</span></code> uses the
+output of converged dynamic instances of <code class="docutils literal notranslate"><span class="pre">V</span></code>. If <code class="docutils literal notranslate"><span class="pre">V</span></code> is uniform, then its
+use at such a <code class="docutils literal notranslate"><span class="pre">U</span></code> is also uniform. In other words, temporal divergence applies
+only to a use of <code class="docutils literal notranslate"><span class="pre">V</span></code> that is outside the convergence region of <code class="docutils literal notranslate"><span class="pre">D</span></code>.</p>
+</section>
+</section>
+<section id="rationales-for-static-rules-about-cycles">
+<h2><a class="toc-backref" href="#id31" role="doc-backlink">Rationales for Static rules about cycles</a><a class="headerlink" href="#rationales-for-static-rules-about-cycles" title="Link to this heading">¶</a></h2>
+<p>(This section is informative.)</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For convenience, we use the operator <code class="docutils literal notranslate"><span class="pre">==</span></code> to represent the relation
+<code class="docutils literal notranslate"><span class="pre">converged-with</span></code> and the operator <code class="docutils literal notranslate"><span class="pre">!=</span></code> to represent its negation.</p>
+</div>
+<p>Consider a loop with (incorrect!) convergence control as in the following
+pseudocode:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; WARNING: Example of incorrect convergence control!</span>
+
+<span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This code is forbidden by the first static rule about cycles.</p>
+<p>A first formal argument why we have to do this is that the dynamic rule for
+deciding whether two threads execute converged dynamic instances of
+<code class="docutils literal notranslate"><span class="pre">&#64;convergent.op</span></code> leads to a logical contradiction in this code.
+Assume two threads execute converged dynamic instances of the anchor
+followed by two iterations of the loop. Thread 1 executes dynamic instances
+I1 and I2 of <code class="docutils literal notranslate"><span class="pre">&#64;convergent.op</span></code>, thread 2 executes dynamic instances J1 and J2.
+Using all the rules, we can deduce:</p>
+<ol class="arabic">
+<li><p><code class="docutils literal notranslate"><span class="pre">I1</span> <span class="pre">!=</span> <span class="pre">I2</span></code> and <code class="docutils literal notranslate"><span class="pre">J1</span> <span class="pre">!=</span> <span class="pre">J2</span></code> by the basic rules of dynamic instances.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">I1</span> <span class="pre">==</span> <span class="pre">J1</span></code> by the first dynamic rule about controlled convergent
+operations: both threads execute the same static instruction while using
+a convergence token value produced by converged dynamic instances of an
+instruction (the anchor).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">I1</span> <span class="pre">==</span> <span class="pre">J2</span></code> by the same argument. Also, <code class="docutils literal notranslate"><span class="pre">I2</span> <span class="pre">==</span> <span class="pre">J1</span></code> and <code class="docutils literal notranslate"><span class="pre">I2</span> <span class="pre">==</span> <span class="pre">J2</span></code>.</p>
+<p>The fact that one may be <em>intuitively</em> tempted to think of <code class="docutils literal notranslate"><span class="pre">I1</span></code> and <code class="docutils literal notranslate"><span class="pre">J2</span></code>
+as being executed in different loop iterations is completely irrelevant for
+the <em>formal</em> argument. There is no mechanism in LLVM IR semantics for
+forming associations between loop iterations in different threads, <em>except</em>
+for the rules defined in this document – and the rules in this document
+require a loop heart intrinsic for talking about loop iterations.</p>
+</li>
+<li><p>By transitivity, we have <code class="docutils literal notranslate"><span class="pre">I1</span> <span class="pre">==</span> <span class="pre">I2</span></code> and <code class="docutils literal notranslate"><span class="pre">J1</span> <span class="pre">==</span> <span class="pre">J2</span></code>. That is a
+contradiction.</p></li>
+</ol>
+<p>This problem goes away by inserting a loop heart intrinsic as follows, which
+establishes a relationship between loop iterations across threads.</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="nv">%loop</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%loop</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In the same scenario of two threads executing converged dynamic instances of the
+anchor and then two iterations of the loop, the dynamic rule about loop heart
+intrinsics implies that both threads execute the converged dynamic instances of
+the loop heart intrinsic in their respective first iterations and then again in
+their respective second iterations of the loop.</p>
+<p>This then implies that they execute converged dynamic instances <code class="docutils literal notranslate"><span class="pre">I1</span> <span class="pre">==</span> <span class="pre">J1</span></code> of
+the <code class="docutils literal notranslate"><span class="pre">&#64;convergent.op</span></code> in their first iterations and then
+<code class="docutils literal notranslate"><span class="pre">I2</span> <span class="pre">==</span> <span class="pre">J2</span></code> in their second iterations. The rule is an “if and only if” rule,
+so it also implies that <code class="docutils literal notranslate"><span class="pre">I1</span> <span class="pre">!=</span> <span class="pre">J2</span></code> and <code class="docutils literal notranslate"><span class="pre">I2</span> <span class="pre">!=</span> <span class="pre">J1</span></code>, because those executions
+see token values of <code class="docutils literal notranslate"><span class="pre">%loop</span></code> originating from non-converged dynamic
+instances of the loop intrinsic.</p>
+<p>One may ask whether we could change the dynamic rule instead of adding the
+static rule about cycles. That is impractical due to deeper difficulties.
+Consider the following loop, again with incorrect convergence control:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; WARNING: Example of incorrect convergence control!</span>
+
+<span class="c">; (A)</span>
+<span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="c">; (B)</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c">; (C)</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op.1</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c">; (D)</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c">; (E)</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op.2</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c">; (F)</span>
+<span class="p">}</span>
+<span class="c">; (G)</span>
+</pre></div>
+</div>
+<p>Assume two threads execute converged dynamic instances of the anchor followed
+by this sequence of basic blocks:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Thread 1: A B C D F B D E F G
+Thread 2: A B D E F B C D F G
+</pre></div>
+</div>
+<p>That is, both threads execute two iterations of the loop, but they execute
+the different convergent operations in different iterations. Without forming a
+relation between loop iterations across the threads, there is no reasonable way
+of defining which dynamic instances of the convergent operations should be the
+same across the threads, if any.</p>
+<p>Again, this can be addressed by adding a loop heart intrinsic, most naturally
+as:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; (A)</span>
+<span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="c">; (B)</span>
+<span class="w">  </span><span class="nv">%loop</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c">; (C)</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op.1</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%loop</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c">; (D)</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c">; (E)</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op.2</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%loop</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c">; (F)</span>
+<span class="p">}</span>
+<span class="c">; (G)</span>
+</pre></div>
+</div>
+<p>Let <code class="docutils literal notranslate"><span class="pre">%loop(i;j)</span></code> be the dynamic instance of <code class="docutils literal notranslate"><span class="pre">j</span></code>-th execution of the loop
+heart intrinsic by thread <code class="docutils literal notranslate"><span class="pre">i</span></code>, and analogously <code class="docutils literal notranslate"><span class="pre">&#64;op.k(i)</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;op.k(i)</span></code>
+the dynamic instances of the execution of <code class="docutils literal notranslate"><span class="pre">&#64;convergent.op.k</span></code> by thread <code class="docutils literal notranslate"><span class="pre">i</span></code>.
+Then we have:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">%loop(1;j)</span> <span class="pre">==</span> <span class="pre">%loop(2;j)</span></code> for <code class="docutils literal notranslate"><span class="pre">j</span> <span class="pre">=</span> <span class="pre">1,</span> <span class="pre">2</span></code> because of the dynamic rule
+about loop heart intrinsics.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">%loop(i;1)</span> <span class="pre">!=</span> <span class="pre">%loop(i;2)</span></code> for <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">=</span> <span class="pre">1,</span> <span class="pre">2</span></code> because of the basic rule that
+different executions by the same thread happen in different dynamic
+instances.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;op.1(1)</span> <span class="pre">!=</span> <span class="pre">&#64;op.1(2)</span></code>, since <code class="docutils literal notranslate"><span class="pre">&#64;op.1(1)</span></code> uses the token value of <code class="docutils literal notranslate"><span class="pre">%loop</span></code>
+referring to <code class="docutils literal notranslate"><span class="pre">%loop(1;1)</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;op.1(2)</span></code> uses that
+referring to <code class="docutils literal notranslate"><span class="pre">%loop(2;2)</span> <span class="pre">==</span> <span class="pre">%loop(1;2)</span></code>, which is different from
+<code class="docutils literal notranslate"><span class="pre">%loop(1;1)</span></code>.</p></li>
+<li><p>Similarly, <code class="docutils literal notranslate"><span class="pre">&#64;op.2(1)</span> <span class="pre">!=</span> <span class="pre">&#64;op.2(2)</span></code>.</p></li>
+</ol>
+<p>However, loop heart intrinsics could be inserted differently, at the cost
+of also inserting a free-standing anchor:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; (A)</span>
+<span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="c">; (B)</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c">; (C)</span>
+<span class="w">    </span><span class="nv">%loop</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op.1</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%loop</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c">; (D)</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c">; (E)</span>
+<span class="w">    </span><span class="nv">%free</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">    </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.op.2</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%free</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="c">; (F)</span>
+<span class="p">}</span>
+<span class="c">; (G)</span>
+</pre></div>
+</div>
+<p>This leads to the “unnatural counting of loop iterations” that is also mentioned
+elsewhere. Let <code class="docutils literal notranslate"><span class="pre">%loop(i)</span></code> be the dynamic instance of the execution of the
+loop heart intrinsic by thread <code class="docutils literal notranslate"><span class="pre">i</span></code> (each thread executes it only once), and
+let <code class="docutils literal notranslate"><span class="pre">&#64;op.k(i)</span></code> be as before. Then:</p>
+<ol class="arabic">
+<li><p><code class="docutils literal notranslate"><span class="pre">%loop(1)</span> <span class="pre">==</span> <span class="pre">%loop(2)</span></code> because of the dynamic rule about loop heart
+intrinsics.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;op.1(1)</span> <span class="pre">==</span> <span class="pre">&#64;op.1(2)</span></code> because <code class="docutils literal notranslate"><span class="pre">&#64;op.1(i)</span></code> uses the value of <code class="docutils literal notranslate"><span class="pre">%loop</span></code>
+referring to <code class="docutils literal notranslate"><span class="pre">%loop(i)</span></code>, and <code class="docutils literal notranslate"><span class="pre">%loop(1)</span> <span class="pre">==</span> <span class="pre">%loop(2)</span></code>.</p></li>
+<li><p>Whether <code class="docutils literal notranslate"><span class="pre">&#64;op.2(1)</span> <span class="pre">==</span> <span class="pre">&#64;op.2(2)</span></code> is implementation-defined because of the
+use of the <code class="docutils literal notranslate"><span class="pre">%free</span></code> anchor intrinsic.</p>
+<p>In practice, they almost certainly have to be non-converged dynamic
+instances. Consider that if an implementation strictly follows the order of
+instructions given in the program, the executions of the threads can be
+“aligned” as follows:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Thread 1: A B         C D F B D E F G
+Thread 2: A B D E F B C D F         G
+</pre></div>
+</div>
+<p>So then <code class="docutils literal notranslate"><span class="pre">&#64;op.2(1)</span></code> physically executes later than <code class="docutils literal notranslate"><span class="pre">&#64;op.2(2)</span></code> and there
+can be no communication between the threads, which means they execute
+non-converged dynamic instances.</p>
+<p>That said, it is conceivable that there aren’t actually any data or other
+dependencies that would enforce this execution order. In that case, a highly
+out-of-order implementation could potentially allow communication. That’s
+why the rules defined in this document are silent about whether
+<code class="docutils literal notranslate"><span class="pre">&#64;op.2(1)</span> <span class="pre">==</span> <span class="pre">&#64;op.2(2)</span></code> or not.</p>
+</li>
+</ol>
+<p>This type of convergence control seems relatively unlikely to appear in real
+programs. Its possibility is simply a logical consequence of the model.</p>
+<p>An equivalent issue arises if the convergent operations are replaced by nested
+loops with loop heart intrinsics that directly refer to <code class="docutils literal notranslate"><span class="pre">%anchor</span></code>, hence
+the variants of the static rules about cycles that apply to them:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; WARNING: Example of incorrect convergence control!</span>
+
+<span class="nv">%anchor</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">      </span><span class="nv">%loop1</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="m">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">      </span><span class="nv">%loop2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%anchor</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>There is a cycle (closed walk in the CFG) that goes through both loop heart
+intrinsics using <code class="docutils literal notranslate"><span class="pre">%anchor</span></code> but not through the definition of <code class="docutils literal notranslate"><span class="pre">%anchor</span></code>,
+so this code is invalid.</p>
+</section>
+<section id="examples-for-the-correctness-of-program-transforms">
+<h2><a class="toc-backref" href="#id32" role="doc-backlink">Examples for the Correctness of Program Transforms</a><a class="headerlink" href="#examples-for-the-correctness-of-program-transforms" title="Link to this heading">¶</a></h2>
+<p>(This section is informative.)</p>
+<p>As implied by the rules in the previous sections, program transforms are correct
+with respect to convergent operations if they preserve or refine their
+semantics. This means that the set of communicating threads in the transformed
+program must have been possible in the original program.</p>
+<p>Program transforms with a single-threaded focus are generally conservatively
+correct if they do not sink or hoist convergent operations across a branch.
+This applies even to program transforms that change the control flow graph.</p>
+<p>For example, unrolling a loop that does not contain convergent operations
+cannot break any of the guarantees required for convergent operations outside
+of the loop.</p>
+<section id="loop-unrolling-examples">
+<h3><a class="toc-backref" href="#id33" role="doc-backlink">Loop unrolling examples</a><a class="headerlink" href="#loop-unrolling-examples" title="Link to this heading">¶</a></h3>
+<p>We consider three kinds of loop unrolling here:</p>
+<ul class="simple">
+<li><p>Partial unrolling with no known trip multiple, so a “tail” is required to
+collect the remaining elements.</p></li>
+<li><p>Partial unrolling by a trip multiple, so no “tail” is required.</p></li>
+<li><p>Full unrolling, which eliminates the loop.</p></li>
+</ul>
+<p>The first kind is forbidden when <code class="docutils literal notranslate"><span class="pre">&#64;llvm.experimental.convergence.loop</span></code> is
+used. We illustrate the reasoning with some examples.</p>
+<p>First, an arbitrary loop that contains convergent operations <em>can</em> be unrolled
+in all of these ways, even with “tail”, if all convergent operations refer back
+to an anchor inside the loop. For example (in pseudo-code):</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter--</span><span class="c">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This can be unrolled to:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;=</span><span class="w"> </span><span class="m">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter</span><span class="w"> </span><span class="err">-</span><span class="p">=</span><span class="w"> </span><span class="m">2</span><span class="c">;</span>
+<span class="p">}</span>
+<span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter--</span><span class="c">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>This is likely to change the behavior of the convergent operation if there
+are threads whose initial counter value is not a multiple of 2. In particular,
+all threads with an odd trip count are now likely to execute the convergent
+operation in their respective final iterations together because the
+underlying implementation is likely to try to group as many threads together
+as possible for the execution of the “tail”.</p>
+<p>This change is allowed because the anchor intrinsic has implementation-defined
+convergence behavior and the loop unrolling transform is considered to be part
+of the implementation. Another way of reasoning is that while the <em>likely</em>
+behavior of the code has changed, the <em>guarantees</em> about its behavior have
+remained the same.</p>
+<p>If the loop contains uncontrolled convergent operations, this kind of unrolling
+is forbidden.</p>
+<p>Unrolling a loop with convergent operations that refer to tokens produced
+outside the loop is forbidden when a “tail” or “remainder” would have to
+be introduced. Consider:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; (A)</span>
+<span class="nv">%outer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%inner</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="c">; (B)</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter--</span><span class="c">;</span>
+<span class="p">}</span>
+<span class="c">; (C)</span>
+</pre></div>
+</div>
+<p>To understand why unrolling is forbidden, consider two threads that execute
+converged dynamic instances of the anchor and then proceed with 3 and 4 loop
+iterations, respectively:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Thread 1: A B B B C
+Thread 2: A B B B B C
+</pre></div>
+</div>
+<p>By the dynamic rule on loop heart intrinsics, these threads execute converged
+dynamic instances of the loop intrinsic for the first 3 iterations, and then
+thread 2 executes another dynamic instance by itself.</p>
+<p>By the dynamic rule on general convergent operations, the threads execute
+converged dynamic instances of the <code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> in the first 3
+iterations (that is, the dynamic instance executed by thread 1 in iteration
+<em>n</em> is the same as that executed by thread 2 in iteration <em>n</em>, for <em>n = 1,2,3</em>;
+the dynamic instance executed in iteration 1 is different from that in
+iteration 2, etc.).</p>
+<p>Now assume that the loop is unrolled by a factor of 2, which requires a
+remainder as follows:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; (A)</span>
+<span class="nv">%outer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;=</span><span class="w"> </span><span class="m">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%inner</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="c">; (B)</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter</span><span class="w"> </span><span class="err">-</span><span class="p">=</span><span class="w"> </span><span class="m">2</span><span class="c">;</span>
+<span class="p">}</span>
+<span class="c">; (C)</span>
+<span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%remainder</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="c">; (D)</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%remainder</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span>
+<span class="c">; (E)</span>
+</pre></div>
+</div>
+<p>First of all, note some interesting problems surrounding the loop intrinsic:</p>
+<ol class="arabic simple">
+<li><p>It is <em>not</em> duplicated inside the unrolled loop. This is to comply with
+the <a class="reference internal" href="#convergence-static-rules"><span class="std std-ref">Static Rules</span></a>.</p></li>
+<li><p>It is unclear whether the loop intrinsic ought to be duplicated in the
+remainder, or whether the final <code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> in D should just
+refer to either <code class="docutils literal notranslate"><span class="pre">%inner</span></code> (which is possible in SSA form) or directly to
+<code class="docutils literal notranslate"><span class="pre">%outer</span></code>. The decision made here is arbitrary and doesn’t change the
+argument that follows. Ultimately, it simply doesn’t matter because the
+transform is incorrect either way.</p></li>
+</ol>
+<p>The threads now execute the following sequences of blocks:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Thread 1: A B C D E
+Thread 2: A B B C D E
+</pre></div>
+</div>
+<p>Analogous to the argument above, they execute converged dynamic instances of the
+<code class="docutils literal notranslate"><span class="pre">%inner</span></code> intrinsic and the <code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> in the first iteration
+of the unrolled loop, which corresponds to the first 2 iterations of the
+original loop.</p>
+<p>However, they execute different static calls to <code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> for
+the 3rd iteration of the original loop. In thread 1, that iteration corresponds
+to the call in the remainder, while in thread 2 it corresponds to the first
+call to <code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> in the unrolled loop. Therefore, they execute
+non-converged dynamic instances, which means that the set of communicating threads
+for the 3rd iteration of the original loop is different. This is why the
+unrolling is incorrect.</p>
+<p>On the other hand, unrolling without “tail” is allowed. For example, assuming
+that the trip counter is known to be a multiple of 2, we can unroll the loop
+as follows:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%outer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%inner</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter</span><span class="w"> </span><span class="err">-</span><span class="p">=</span><span class="w"> </span><span class="m">2</span><span class="c">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Note again that the loop intrinsic is not duplicated.</p>
+<p>The
+<a class="reference internal" href="#llvm-experimental-convergence-loop"><span class="std std-ref">llvm.experimental.convergence.loop</span></a>
+intrinsic is typically expected to appear in the header of a natural loop.
+However, it can also appear in non-header blocks of a loop. In that case, the
+loop can generally not be unrolled.</p>
+</section>
+<section id="hoisting-and-sinking">
+<h3><a class="toc-backref" href="#id34" role="doc-backlink">Hoisting and sinking</a><a class="headerlink" href="#hoisting-and-sinking" title="Link to this heading">¶</a></h3>
+<p>In general, hoisting and sinking of convergent operations is forbidden. This is
+because moving the operation to a different point in control flow generally
+changes the set of threads that reach the operation and therefore, the set of
+threads that execute converged dynamic instances of the operation. By
+definition, this changes the set of threads that participate in the
+communication of the convergent operation, which will typically change its
+result.</p>
+<p>There are a number of exceptions, though most of them require additional
+knowledge.</p>
+<p>For example, hoisting and sinking across <em>uniform</em> conditional branches – i.e.,
+conditional branches where within every possible relevant set of threads, all
+threads will always take the same direction – is generally allowed. See the end
+of the <a class="reference internal" href="#convergence-example-reductions"><span class="std std-ref">example of reductions inside control flow</span></a> for a brief discussion.</p>
+<p>Some convergent operations can be hoisted but not sunk, or vice versa. A simple
+example is the <code class="docutils literal notranslate"><span class="pre">subgroupShuffle(data,</span> <span class="pre">id)</span></code> operation. It returns the <code class="docutils literal notranslate"><span class="pre">data</span></code>
+operand of the thread identified by <code class="docutils literal notranslate"><span class="pre">id</span></code>, where thread IDs are fixed and
+assigned to each thread at launch. The result is undefined (or perhaps there is
+UB, depending on the language and environment) if thread <code class="docutils literal notranslate"><span class="pre">id</span></code> is not in the
+communicating set of threads. So hoisting is allowed in the following
+pseudo-code example:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@example</span><span class="p">(...)</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%entry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="w">  </span><span class="nv">%data</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="nv">%id</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nv">%shuffled</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@subgroupShuffle</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%data</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%id</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="err">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nv">%shuffled</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@subgroupShuffle</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%data</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%id</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>After hoisting the calls to <code class="docutils literal notranslate"><span class="pre">&#64;subgroupShuffle</span></code>, the communicating set of
+threads is the union of the two sets of threads in the original program, so
+<code class="docutils literal notranslate"><span class="pre">%id</span></code> can only go “out of range” after hoisting if it did so in the original
+program.</p>
+<p>However, speculative execution of <code class="docutils literal notranslate"><span class="pre">&#64;subgroupShuffle</span></code> in the following program
+may be forbidden:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@example</span><span class="p">(...)</span><span class="w"> </span><span class="k">convergent</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%entry</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="w">  </span><span class="nv">%data</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="nv">%id</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">...</span>
+<span class="w">  </span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nv">%shuffled</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="vg">@subgroupShuffle</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%data</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%id</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%entry</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="p">...</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>There is no guarantee about the value of <code class="docutils literal notranslate"><span class="pre">%id</span></code> in the threads where
+<code class="docutils literal notranslate"><span class="pre">condition</span></code> is false. If <code class="docutils literal notranslate"><span class="pre">&#64;subgroupShuffle</span></code> is defined to have UB when
+<code class="docutils literal notranslate"><span class="pre">%id</span></code> is outside of the set of communicating threads, then speculating and
+hoisting <code class="docutils literal notranslate"><span class="pre">&#64;subgroupShuffle</span></code> might introduce UB.</p>
+<p>On the other hand, if <code class="docutils literal notranslate"><span class="pre">&#64;subgroupShuffle</span></code> is defined such that it merely
+produces an undefined value or poison as a result when <code class="docutils literal notranslate"><span class="pre">%id</span></code> is “out of range”,
+then speculating is okay.</p>
+<p>Even though
+<a class="reference internal" href="#llvm-experimental-convergence-anchor"><span class="std std-ref">llvm.experimental.convergence.anchor</span></a>
+is marked as <code class="docutils literal notranslate"><span class="pre">convergent</span></code>, it can be sunk in some cases. For example, in
+pseudo-code:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Assuming that <code class="docutils literal notranslate"><span class="pre">%tok</span></code> is only used inside the conditional block, the anchor can
+be sunk. The rationale is two-fold. First, the anchor has implementation-defined
+behavior, and the sinking is part of the implementation. Second, already in the
+original program, the set of threads that communicates in the
+<code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> is automatically a subset of the threads for which
+<code class="docutils literal notranslate"><span class="pre">condition</span></code> is true.</p>
+<p>Anchors can be hoisted in acyclic control flow. For example:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%tok1</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok1</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span><span class="w"> </span><span class="err">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%tok2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok2</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The anchors can be hoisted, resulting in:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span><span class="w"> </span><span class="err">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The behavior is unchanged, since each of the static convergent operations only
+ever communicates with threads that have the same <code class="docutils literal notranslate"><span class="pre">condition</span></code> value.
+By contrast, hoisting the convergent operations themselves is forbidden.</p>
+<p>Hoisting and sinking anchors out of and into loops is forbidden. For example:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="err">f</span><span class="k">or</span><span class="w"> </span><span class="p">(</span><span class="c">;;) {</span>
+<span class="w">  </span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Hoisting the anchor would make the program invalid according to the static
+validity rules. Conversely:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%outer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="err">while</span><span class="w"> </span><span class="p">(</span><span class="err">counter</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%inner</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.loop</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%outer</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@convergent.operation</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%inner</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">counter--</span><span class="c">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The program would stay valid if the anchor was sunk into the loop, but its
+behavior could end up being different. If the anchor is inside the loop, then
+each loop iteration has a new dynamic instance of the anchor, and the set of
+threads participating in those dynamic instances of the anchor could be
+different in arbitrary implementation-defined ways. Via the dynamic rules about
+dynamic instances of convergent operations, this then implies that the set of
+threads executing <code class="docutils literal notranslate"><span class="pre">&#64;convergent.operation</span></code> could be different in each loop
+iteration in arbitrary implementation-defined ways.</p>
+<p>Convergent operations can be sunk together with their anchor. Again in
+pseudo-code:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="nv">%a</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@pure.convergent.operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="nv">%b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@pure.convergent.operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="err">use</span><span class="p">(</span><span class="nv">%a</span><span class="p">,</span><span class="w"> </span><span class="nv">%b</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Assuming that <code class="docutils literal notranslate"><span class="pre">%tok</span></code>, <code class="docutils literal notranslate"><span class="pre">%a</span></code>, and <code class="docutils literal notranslate"><span class="pre">%b</span></code> are only used inside the conditional
+block, all can be sunk together:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.anchor</span><span class="p">()</span>
+<span class="w">  </span><span class="nv">%a</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@pure.convergent.operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="nv">%b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@pure.convergent.operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="err">use</span><span class="p">(</span><span class="nv">%a</span><span class="p">,</span><span class="w"> </span><span class="nv">%b</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The rationale is that the anchor intrinsic has implementation-defined behavior,
+and the sinking transform is considered to be part of the implementation:
+the sinking will restrict the set of communicating threads to those for which
+<code class="docutils literal notranslate"><span class="pre">condition</span></code> is true, but that could have happened in the original program
+anyway for some arbitrary other reason.</p>
+<p>However, sinking <em>only</em> the convergent operation producing <code class="docutils literal notranslate"><span class="pre">%b</span></code> would be
+incorrect. That would allow threads for which <code class="docutils literal notranslate"><span class="pre">condition</span></code> is false to
+communicate at <code class="docutils literal notranslate"><span class="pre">%a</span></code>, but not at <code class="docutils literal notranslate"><span class="pre">%b</span></code>, which the original program doesn’t
+allow.</p>
+<p>Note that the entry intrinsic behaves differently. Sinking the convergent
+operations is forbidden in the following snippet:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%tok</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">token</span><span class="w"> </span><span class="vg">@llvm.experimental.convergence.entry</span><span class="p">()</span>
+<span class="nv">%a</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@pure.convergent.operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="nv">%b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="err">T</span><span class="w"> </span><span class="vg">@pure.convergent.operation</span><span class="p">(...)</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;convergencectrl&quot;</span><span class="p">(</span><span class="k">token</span><span class="w"> </span><span class="nv">%tok</span><span class="p">)</span><span class="w"> </span><span class="p">]</span>
+<span class="err">if</span><span class="w"> </span><span class="p">(</span><span class="err">condition</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="err">use</span><span class="p">(</span><span class="nv">%a</span><span class="p">,</span><span class="w"> </span><span class="nv">%b</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="Coroutines.html" title="Coroutines in LLVM"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="ConvergenceAndUniformity.html" title="Convergence And Uniformity"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" >Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Convergent Operation Semantics</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-01-16.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
