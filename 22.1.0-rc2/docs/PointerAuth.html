@@ -1,0 +1,513 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Pointer Authentication &#8212; LLVM 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=106f770c"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Machine Learning - Guided Optimization (MLGO)" href="MLGO.html" />
+    <link rel="prev" title="CodeView Type Records" href="PDB/CodeViewTypes.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="MLGO.html" title="Machine Learning - Guided Optimization (MLGO)"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="PDB/CodeViewTypes.html" title="CodeView Type Records"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" accesskey="U">Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Pointer Authentication</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/PointerAuth.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="pointer-authentication">
+<h1>Pointer Authentication<a class="headerlink" href="#pointer-authentication" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Pointer Authentication is a mechanism by which certain pointers are signed.
+When a pointer gets signed, a cryptographic hash of its value and other values
+(pepper and salt) is stored in unused bits of that pointer.</p>
+<p>Before the pointer is used, it needs to be authenticated, i.e., have its
+signature checked.  This prevents pointer values of unknown origin from being
+used to replace the signed pointer value.</p>
+<p>For more details, see the clang documentation page for
+<a class="reference external" href="https://clang.llvm.org/docs/PointerAuthentication.html">Pointer Authentication</a>.</p>
+<p>At the IR level, it is represented using:</p>
+<ul class="simple">
+<li><p>a <a class="reference internal" href="#intrinsics">set of intrinsics</a> (to sign/authenticate pointers)</p></li>
+<li><p>a <a class="reference internal" href="#constant">signed pointer constant</a> (to sign globals)</p></li>
+<li><p>a <a class="reference internal" href="#operand-bundle">call operand bundle</a> (to authenticate called pointers)</p></li>
+<li><p>a <a class="reference internal" href="#function-attributes">set of function attributes</a> (to describe what
+pointers are signed and how, to control implicit codegen in the backend, as
+well as preserve invariants in the mid-level optimizer)</p></li>
+</ul>
+<p>The current implementation leverages the
+<a class="reference internal" href="#armv8-3-a-pauth-pointer-authentication-code">Armv8.3-A PAuth/Pointer Authentication Code</a>
+instructions in the <a class="reference internal" href="#aarch64-support">AArch64 backend</a>.
+This support is used to implement the Darwin arm64e ABI, as well as the
+<a class="reference external" href="https://github.com/ARM-software/abi-aa/blob/main/pauthabielf64/pauthabielf64.rst">PAuth ABI Extension to ELF</a>.</p>
+</section>
+<section id="llvm-ir-representation">
+<h2>LLVM IR Representation<a class="headerlink" href="#llvm-ir-representation" title="Link to this heading">¶</a></h2>
+<section id="intrinsics">
+<h3>Intrinsics<a class="headerlink" href="#intrinsics" title="Link to this heading">¶</a></h3>
+<p>These intrinsics are provided by LLVM to expose pointer authentication
+operations.</p>
+<section id="llvm-ptrauth-sign">
+<h4>‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign</span></code>’<a class="headerlink" href="#llvm-ptrauth-sign" title="Link to this heading">¶</a></h4>
+<section id="syntax">
+<h5>Syntax:<a class="headerlink" href="#syntax" title="Link to this heading">¶</a></h5>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">declare</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.sign</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">value</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">key</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;)</span>
+</pre></div>
+</div>
+</section>
+<section id="overview">
+<h5>Overview:<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign</span></code>’ intrinsic signs a raw pointer.</p>
+</section>
+<section id="arguments">
+<h5>Arguments:<a class="headerlink" href="#arguments" title="Link to this heading">¶</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">value</span></code> argument is the raw pointer value to be signed.
+The <code class="docutils literal notranslate"><span class="pre">key</span></code> argument is the identifier of the key to be used to generate the
+signed value.
+The <code class="docutils literal notranslate"><span class="pre">discriminator</span></code> argument is the additional diversity data to be used as a
+discriminator (an integer, an address, or a blend of the two).</p>
+</section>
+<section id="semantics">
+<h5>Semantics:<a class="headerlink" href="#semantics" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign</span></code>’ intrinsic implements the <code class="docutils literal notranslate"><span class="pre">sign</span></code>_ operation.
+It returns a signed value.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">value</span></code> is already a signed value, the behavior is undefined.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">value</span></code> is not a pointer value for which <code class="docutils literal notranslate"><span class="pre">key</span></code> is appropriate, the
+behavior is undefined.</p>
+</section>
+</section>
+<section id="llvm-ptrauth-auth">
+<h4>‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.auth</span></code>’<a class="headerlink" href="#llvm-ptrauth-auth" title="Link to this heading">¶</a></h4>
+<section id="id1">
+<h5>Syntax:<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h5>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">declare</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.auth</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">value</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">key</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;)</span>
+</pre></div>
+</div>
+</section>
+<section id="id2">
+<h5>Overview:<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.auth</span></code>’ intrinsic authenticates a signed pointer.</p>
+</section>
+<section id="id3">
+<h5>Arguments:<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">value</span></code> argument is the signed pointer value to be authenticated.
+The <code class="docutils literal notranslate"><span class="pre">key</span></code> argument is the identifier of the key that was used to generate
+the signed value.
+The <code class="docutils literal notranslate"><span class="pre">discriminator</span></code> argument is the additional diversity data to be used as a
+discriminator.</p>
+</section>
+<section id="id4">
+<h5>Semantics:<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.auth</span></code>’ intrinsic implements the <code class="docutils literal notranslate"><span class="pre">auth</span></code>_ operation.
+It returns a raw pointer value.
+If <code class="docutils literal notranslate"><span class="pre">value</span></code> does not have a correct signature for <code class="docutils literal notranslate"><span class="pre">key</span></code> and <code class="docutils literal notranslate"><span class="pre">discriminator</span></code>,
+the intrinsic traps in a target-specific way.</p>
+</section>
+</section>
+<section id="llvm-ptrauth-strip">
+<h4>‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.strip</span></code>’<a class="headerlink" href="#llvm-ptrauth-strip" title="Link to this heading">¶</a></h4>
+<section id="id5">
+<h5>Syntax:<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h5>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">declare</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.strip</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">value</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">key</span><span class="p">&gt;)</span>
+</pre></div>
+</div>
+</section>
+<section id="id6">
+<h5>Overview:<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.strip</span></code>’ intrinsic strips the embedded signature out of a
+possibly-signed pointer.</p>
+</section>
+<section id="id7">
+<h5>Arguments:<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">value</span></code> argument is the signed pointer value to be stripped.
+The <code class="docutils literal notranslate"><span class="pre">key</span></code> argument is the identifier of the key that was used to generate
+the signed value.</p>
+</section>
+<section id="id8">
+<h5>Semantics:<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.strip</span></code>’ intrinsic implements the <code class="docutils literal notranslate"><span class="pre">strip</span></code>_ operation.
+It returns a raw pointer value.  It does <strong>not</strong> check that the
+signature is valid.</p>
+<p><code class="docutils literal notranslate"><span class="pre">key</span></code> should identify a key that is appropriate for <code class="docutils literal notranslate"><span class="pre">value</span></code>, as defined
+by the target-specific <a class="reference internal" href="#keys">keys</a>).</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">value</span></code> is a raw pointer value, it is returned as-is (provided the <code class="docutils literal notranslate"><span class="pre">key</span></code>
+is appropriate for the pointer).</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">value</span></code> is not a pointer value for which <code class="docutils literal notranslate"><span class="pre">key</span></code> is appropriate, the
+behavior is target-specific.</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">value</span></code> is a signed pointer value, but <code class="docutils literal notranslate"><span class="pre">key</span></code> does not identify the
+same key that was used to generate <code class="docutils literal notranslate"><span class="pre">value</span></code>, the behavior is
+target-specific.</p>
+</section>
+</section>
+<section id="llvm-ptrauth-resign">
+<h4>‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.resign</span></code>’<a class="headerlink" href="#llvm-ptrauth-resign" title="Link to this heading">¶</a></h4>
+<section id="id9">
+<h5>Syntax:<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h5>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">declare</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.resign</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">value</span><span class="p">&gt;,</span>
+<span class="w">                                 </span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">old</span><span class="w"> </span><span class="err">key</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">old</span><span class="w"> </span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;,</span>
+<span class="w">                                 </span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">new</span><span class="w"> </span><span class="err">key</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">new</span><span class="w"> </span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;)</span>
+</pre></div>
+</div>
+</section>
+<section id="id10">
+<h5>Overview:<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.resign</span></code>’ intrinsic re-signs a signed pointer using
+a different key and diversity data.</p>
+</section>
+<section id="id11">
+<h5>Arguments:<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">value</span></code> argument is the signed pointer value to be authenticated.
+The <code class="docutils literal notranslate"><span class="pre">old</span> <span class="pre">key</span></code> argument is the identifier of the key that was used to generate
+the signed value.
+The <code class="docutils literal notranslate"><span class="pre">old</span> <span class="pre">discriminator</span></code> argument is the additional diversity data to be used
+as a discriminator in the auth operation.
+The <code class="docutils literal notranslate"><span class="pre">new</span> <span class="pre">key</span></code> argument is the identifier of the key to use to generate the
+resigned value.
+The <code class="docutils literal notranslate"><span class="pre">new</span> <span class="pre">discriminator</span></code> argument is the additional diversity data to be used
+as a discriminator in the sign operation.</p>
+</section>
+<section id="id12">
+<h5>Semantics:<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.resign</span></code>’ intrinsic performs a combined <code class="docutils literal notranslate"><span class="pre">auth</span></code>_ and <code class="docutils literal notranslate"><span class="pre">sign</span></code>_
+operation, without exposing the intermediate raw pointer.
+It returns a signed pointer value.
+If <code class="docutils literal notranslate"><span class="pre">value</span></code> does not have a correct signature for <code class="docutils literal notranslate"><span class="pre">old</span> <span class="pre">key</span></code> and
+<code class="docutils literal notranslate"><span class="pre">old</span> <span class="pre">discriminator</span></code>, the intrinsic traps in a target-specific way.</p>
+</section>
+</section>
+<section id="llvm-ptrauth-sign-generic">
+<h4>‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign_generic</span></code>’<a class="headerlink" href="#llvm-ptrauth-sign-generic" title="Link to this heading">¶</a></h4>
+<section id="id13">
+<h5>Syntax:<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h5>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">declare</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.sign_generic</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">value</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;)</span>
+</pre></div>
+</div>
+</section>
+<section id="id14">
+<h5>Overview:<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign_generic</span></code>’ intrinsic computes a generic signature of
+arbitrary data.</p>
+</section>
+<section id="id15">
+<h5>Arguments:<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">value</span></code> argument is the arbitrary data value to be signed.
+The <code class="docutils literal notranslate"><span class="pre">discriminator</span></code> argument is the additional diversity data to be used as a
+discriminator.</p>
+</section>
+<section id="id16">
+<h5>Semantics:<a class="headerlink" href="#id16" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign_generic</span></code>’ intrinsic computes the signature of a given
+combination of value and additional diversity data.</p>
+<p>It returns a full signature value (as opposed to a signed pointer value, with
+an embedded partial signature).</p>
+<p>As opposed to <a class="reference internal" href="#llvm-ptrauth-sign"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign</span></code></a>, it does not interpret
+<code class="docutils literal notranslate"><span class="pre">value</span></code> as a pointer value.  Instead, it is an arbitrary data value.</p>
+</section>
+</section>
+<section id="llvm-ptrauth-blend">
+<h4>‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.blend</span></code>’<a class="headerlink" href="#llvm-ptrauth-blend" title="Link to this heading">¶</a></h4>
+<section id="id17">
+<h5>Syntax:<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h5>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">declare</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.blend</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">address</span><span class="w"> </span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">integer</span><span class="w"> </span><span class="err">discriminat</span><span class="k">or</span><span class="p">&gt;)</span>
+</pre></div>
+</div>
+</section>
+<section id="id18">
+<h5>Overview:<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.blend</span></code>’ intrinsic blends a pointer address discriminator
+with a small integer discriminator to produce a new “blended” discriminator.</p>
+</section>
+<section id="id19">
+<h5>Arguments:<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">address</span> <span class="pre">discriminator</span></code> argument is a pointer value.
+The <code class="docutils literal notranslate"><span class="pre">integer</span> <span class="pre">discriminator</span></code> argument is a small integer, as specified by the
+target.</p>
+</section>
+<section id="id20">
+<h5>Semantics:<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h5>
+<p>The ‘<code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.blend</span></code>’ intrinsic combines a small integer discriminator
+with a pointer address discriminator, in a way that is specified by the target
+implementation.</p>
+</section>
+</section>
+</section>
+<section id="constant">
+<h3>Constant<a class="headerlink" href="#constant" title="Link to this heading">¶</a></h3>
+<p><a class="reference internal" href="#intrinsics">Intrinsics</a> can be used to produce signed pointers dynamically,
+in code, but not for signed pointers referenced by constants, in, e.g., global
+initializers.</p>
+<p>The latter are represented using a
+<a class="reference external" href="https://llvm.org/docs/LangRef.html#ptrauth-constant"><code class="docutils literal notranslate"><span class="pre">ptrauth</span></code> constant</a>,
+which describes an authenticated relocation producing a signed pointer.</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="kt">ptr</span><span class="err">auth</span><span class="w"> </span><span class="p">(</span><span class="kt">ptr</span><span class="w"> </span><span class="err">CST</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="err">KEY</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="err">DISC</span><span class="p">,</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="err">ADDRDISC</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>is equivalent to:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="nv">%disc</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.blend</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="k">ptrtoint</span><span class="p">(</span><span class="kt">ptr</span><span class="w"> </span><span class="err">ADDRDISC</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i64</span><span class="p">),</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="err">DISC</span><span class="p">)</span>
+<span class="w">  </span><span class="nv">%signedval</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.sign</span><span class="p">(</span><span class="kt">ptr</span><span class="w"> </span><span class="err">CST</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="err">KEY</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="nv">%disc</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="operand-bundle">
+<h3>Operand Bundle<a class="headerlink" href="#operand-bundle" title="Link to this heading">¶</a></h3>
+<p>Function pointers used as indirect call targets can be signed when materialized,
+and authenticated before calls.  This can be accomplished with the
+<a class="reference internal" href="#llvm-ptrauth-auth"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.auth</span></code></a> intrinsic, feeding its result to
+an indirect call.</p>
+<p>However, that exposes the intermediate, unauthenticated pointer, e.g., if it
+gets spilled to the stack.  An attacker can then overwrite the pointer in
+memory, negating the security benefit provided by pointer authentication.
+To prevent that, the <code class="docutils literal notranslate"><span class="pre">ptrauth</span></code> operand bundle may be used: it guarantees that
+the intermediate call target is kept in a register and never stored to memory.
+This hardening benefit is similar to that provided by
+<a class="reference internal" href="#llvm-ptrauth-resign"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.resign</span></code></a>).</p>
+<p>Concretely:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@f</span><span class="p">(</span><span class="k">void</span><span class="w"> </span><span class="p">()*</span><span class="w"> </span><span class="nv">%fp</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="nv">%fp</span><span class="p">()</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="s">&quot;ptrauth&quot;</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">key</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">data</span><span class="p">&gt;)</span><span class="w"> </span><span class="p">]</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>is functionally equivalent to:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@f</span><span class="p">(</span><span class="k">void</span><span class="w"> </span><span class="p">()*</span><span class="w"> </span><span class="nv">%fp</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%fp_i</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">ptrtoint</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="p">()*</span><span class="w"> </span><span class="nv">%fp</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i64</span>
+<span class="w">  </span><span class="nv">%fp_auth</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="vg">@llvm.ptrauth.auth</span><span class="p">(</span><span class="kt">i64</span><span class="w"> </span><span class="nv">%fp_i</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="p">&lt;</span><span class="err">key</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="p">&lt;</span><span class="err">data</span><span class="p">&gt;)</span>
+<span class="w">  </span><span class="nv">%fp_auth_p</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">inttoptr</span><span class="w"> </span><span class="kt">i64</span><span class="w"> </span><span class="nv">%fp_auth</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="p">()*</span>
+<span class="w">  </span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="nv">%fp_auth_p</span><span class="p">()</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>but with the added guarantee that <code class="docutils literal notranslate"><span class="pre">%fp_i</span></code>, <code class="docutils literal notranslate"><span class="pre">%fp_auth</span></code>, and <code class="docutils literal notranslate"><span class="pre">%fp_auth_p</span></code>
+are not stored to (and reloaded from) memory.</p>
+</section>
+<section id="function-attributes">
+<h3>Function Attributes<a class="headerlink" href="#function-attributes" title="Link to this heading">¶</a></h3>
+<p>Some function attributes are used to describe other pointer authentication
+operations that are not otherwise explicitly expressed in IR.</p>
+<section id="ptrauth-indirect-gotos">
+<h4><code class="docutils literal notranslate"><span class="pre">ptrauth-indirect-gotos</span></code><a class="headerlink" href="#ptrauth-indirect-gotos" title="Link to this heading">¶</a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">ptrauth-indirect-gotos</span></code> specifies that indirect gotos in this function
+should authenticate their target.  At the IR level, no other change is needed.
+When lowering <a class="reference external" href="https://llvm.org/docs/LangRef.html#blockaddress"><code class="docutils literal notranslate"><span class="pre">blockaddress</span></code> constants</a>,
+and <a class="reference external" href="https://llvm.org/docs/LangRef.html#i-indirectbr"><code class="docutils literal notranslate"><span class="pre">indirectbr</span></code> instructions</a>,
+this tells the backend to respectively sign and authenticate the pointers.</p>
+<p>The specific scheme isn’t ABI-visible.  Currently, the AArch64 backend
+signs blockaddresses using the <code class="docutils literal notranslate"><span class="pre">ASIA</span></code> key, with an integer discriminator
+derived from the parent function’s name, using the SipHash stable discriminator:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">ptrauth_string_discriminator</span><span class="p">(</span><span class="s2">&quot;&lt;function_name&gt; blockaddress&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+<section id="aarch64-support">
+<h2>AArch64 Support<a class="headerlink" href="#aarch64-support" title="Link to this heading">¶</a></h2>
+<p>AArch64 is currently the only architecture with full support of the pointer
+authentication primitives, based on Armv8.3-A instructions.</p>
+<section id="armv8-3-a-pauth-pointer-authentication-code">
+<h3>Armv8.3-A PAuth Pointer Authentication Code<a class="headerlink" href="#armv8-3-a-pauth-pointer-authentication-code" title="Link to this heading">¶</a></h3>
+<p>The Armv8.3-A architecture extension defines the PAuth feature, which provides
+support for instructions that manipulate Pointer Authentication Codes (PAC).</p>
+<section id="keys">
+<h4>Keys<a class="headerlink" href="#keys" title="Link to this heading">¶</a></h4>
+<p>5 keys are supported by the PAuth feature.</p>
+<p>Of those, 4 keys are interchangeably usable to specify the key used in IR
+constructs:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ASIA</span></code>/<code class="docutils literal notranslate"><span class="pre">ASIB</span></code> are instruction keys (encoded as respectively 0 and 1).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ASDA</span></code>/<code class="docutils literal notranslate"><span class="pre">ASDB</span></code> are data keys (encoded as respectively 2 and 3).</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">ASGA</span></code> is a special key that cannot be explicitly specified, and is only ever
+used implicitly, to implement the
+<a class="reference internal" href="#llvm-ptrauth-sign-generic"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign_generic</span></code></a> intrinsic.</p>
+</section>
+<section id="instructions">
+<h4>Instructions<a class="headerlink" href="#instructions" title="Link to this heading">¶</a></h4>
+<p>The IR <a class="reference internal" href="#intrinsics">Intrinsics</a> described above map onto these
+instructions as such:</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#llvm-ptrauth-sign"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign</span></code></a>: <code class="docutils literal notranslate"><span class="pre">PAC{I,D}{A,B}{Z,SP,}</span></code></p></li>
+<li><p><a class="reference internal" href="#llvm-ptrauth-auth"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.auth</span></code></a>: <code class="docutils literal notranslate"><span class="pre">AUT{I,D}{A,B}{Z,SP,}</span></code></p></li>
+<li><p><a class="reference internal" href="#llvm-ptrauth-strip"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.strip</span></code></a>: <code class="docutils literal notranslate"><span class="pre">XPAC{I,D}</span></code></p></li>
+<li><p><a class="reference internal" href="#llvm-ptrauth-blend"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.blend</span></code></a>: The semantics of the blend
+operation are specified by the ABI.  In both the ELF PAuth ABI Extension and
+arm64e, it’s a <code class="docutils literal notranslate"><span class="pre">MOVK</span></code> into the high 16 bits.  Consequently, this limits
+the width of the integer discriminator used in blends to 16 bits.</p></li>
+<li><p><a class="reference internal" href="#llvm-ptrauth-sign-generic"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.sign_generic</span></code></a>: <code class="docutils literal notranslate"><span class="pre">PACGA</span></code></p></li>
+<li><p><a class="reference internal" href="#llvm-ptrauth-resign"><code class="docutils literal notranslate"><span class="pre">llvm.ptrauth.resign</span></code></a>: <code class="docutils literal notranslate"><span class="pre">AUT*+PAC*</span></code>.  These are
+represented as a single pseudo-instruction in the backend to guarantee that
+the intermediate raw pointer value is not spilled and attackable.</p></li>
+</ul>
+</section>
+<section id="assembly-representation">
+<h4>Assembly Representation<a class="headerlink" href="#assembly-representation" title="Link to this heading">¶</a></h4>
+<p>At the assembly level, authenticated relocations are represented
+using the <code class="docutils literal notranslate"><span class="pre">&#64;AUTH</span></code> modifier:</p>
+<div class="highlight-asm notranslate"><div class="highlight"><pre><span></span><span class="w">    </span><span class="na">.quad</span><span class="w"> </span><span class="no">_target@AUTH</span><span class="p">(</span><span class="err">&lt;</span><span class="no">key</span><span class="err">&gt;</span><span class="p">,</span><span class="err">&lt;</span><span class="no">discriminator</span><span class="err">&gt;</span><span class="p">[,</span><span class="no">addr</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>where:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">key</span></code> is the Armv8.3-A key identifier (<code class="docutils literal notranslate"><span class="pre">ia</span></code>, <code class="docutils literal notranslate"><span class="pre">ib</span></code>, <code class="docutils literal notranslate"><span class="pre">da</span></code>, <code class="docutils literal notranslate"><span class="pre">db</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">discriminator</span></code> is the 16-bit unsigned discriminator value</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">addr</span></code> signifies that the authenticated pointer is address-discriminated
+(that is, that the relocation’s target address is to be blended into the
+<code class="docutils literal notranslate"><span class="pre">discriminator</span></code> before it is used in the sign operation.</p></li>
+</ul>
+<p>For example:</p>
+<div class="highlight-asm notranslate"><div class="highlight"><pre><span></span><span class="w">  </span><span class="nl">_authenticated_reference_to_sym:</span>
+<span class="w">    </span><span class="na">.quad</span><span class="w"> </span><span class="no">_sym@AUTH</span><span class="p">(</span><span class="no">db</span><span class="p">,</span><span class="mi">0</span><span class="p">)</span>
+<span class="w">  </span><span class="nl">_authenticated_reference_to_sym_addr_disc:</span>
+<span class="w">    </span><span class="na">.quad</span><span class="w"> </span><span class="no">_sym@AUTH</span><span class="p">(</span><span class="no">ia</span><span class="p">,</span><span class="mi">12</span><span class="p">,</span><span class="no">addr</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="macho-object-file-representation">
+<h4>MachO Object File Representation<a class="headerlink" href="#macho-object-file-representation" title="Link to this heading">¶</a></h4>
+<p>At the object file level, authenticated relocations are represented using the
+<code class="docutils literal notranslate"><span class="pre">ARM64_RELOC_AUTHENTICATED_POINTER</span></code> relocation kind (with value <code class="docutils literal notranslate"><span class="pre">11</span></code>).</p>
+<p>The pointer authentication information is encoded into the addend as follows:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">|</span> <span class="mi">63</span> <span class="o">|</span> <span class="mi">62</span> <span class="o">|</span> <span class="mi">61</span><span class="o">-</span><span class="mi">51</span> <span class="o">|</span> <span class="mi">50</span><span class="o">-</span><span class="mi">49</span> <span class="o">|</span>   <span class="mi">48</span>   <span class="o">|</span> <span class="mi">47</span>     <span class="o">-</span>     <span class="mi">32</span> <span class="o">|</span> <span class="mi">31</span>  <span class="o">-</span>  <span class="mi">0</span> <span class="o">|</span>
+<span class="o">|</span> <span class="o">--</span> <span class="o">|</span> <span class="o">--</span> <span class="o">|</span> <span class="o">-----</span> <span class="o">|</span> <span class="o">-----</span> <span class="o">|</span> <span class="o">------</span> <span class="o">|</span> <span class="o">---------------</span> <span class="o">|</span> <span class="o">--------</span> <span class="o">|</span>
+<span class="o">|</span>  <span class="mi">1</span> <span class="o">|</span>  <span class="mi">0</span> <span class="o">|</span>   <span class="mi">0</span>   <span class="o">|</span>  <span class="n">key</span>  <span class="o">|</span>  <span class="n">addr</span>  <span class="o">|</span>  <span class="n">discriminator</span>  <span class="o">|</span>  <span class="n">addend</span>  <span class="o">|</span>
+</pre></div>
+</div>
+</section>
+<section id="elf-object-file-representation">
+<h4>ELF Object File Representation<a class="headerlink" href="#elf-object-file-representation" title="Link to this heading">¶</a></h4>
+<p>At the object file level, authenticated relocations are represented
+using the <code class="docutils literal notranslate"><span class="pre">R_AARCH64_AUTH_ABS64</span></code> relocation kind (with value <code class="docutils literal notranslate"><span class="pre">0xE100</span></code>).</p>
+<p>The signing schema is encoded in the place of relocation to be applied
+as follows:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">|</span> <span class="mi">63</span>                <span class="o">|</span> <span class="mi">62</span>       <span class="o">|</span> <span class="mi">61</span><span class="p">:</span><span class="mi">60</span>    <span class="o">|</span> <span class="mi">59</span><span class="p">:</span><span class="mi">48</span>    <span class="o">|</span>  <span class="mi">47</span><span class="p">:</span><span class="mi">32</span>        <span class="o">|</span> <span class="mi">31</span><span class="p">:</span><span class="mi">0</span>                <span class="o">|</span>
+<span class="o">|</span> <span class="o">-----------------</span> <span class="o">|</span> <span class="o">--------</span> <span class="o">|</span> <span class="o">--------</span> <span class="o">|</span> <span class="o">--------</span> <span class="o">|</span> <span class="o">-------------</span> <span class="o">|</span> <span class="o">-------------------</span> <span class="o">|</span>
+<span class="o">|</span> <span class="n">address</span> <span class="n">diversity</span> <span class="o">|</span> <span class="n">reserved</span> <span class="o">|</span> <span class="n">key</span>      <span class="o">|</span> <span class="n">reserved</span> <span class="o">|</span> <span class="n">discriminator</span> <span class="o">|</span> <span class="n">reserved</span> <span class="k">for</span> <span class="n">addend</span> <span class="o">|</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="MLGO.html" title="Machine Learning - Guided Optimization (MLGO)"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="PDB/CodeViewTypes.html" title="CodeView Type Records"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="Reference.html" >Reference</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Pointer Authentication</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2026, LLVM Project.
+      Last updated on 2026-01-27.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

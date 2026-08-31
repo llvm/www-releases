@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Aliasing analysis in FIR &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Array Composition" href="ArrayComposition.html" />
+    <link rel="prev" title="Aliasing in Fortran" href="Aliasing.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Aliasing analysis in FIR</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Aliasing.html">Aliasing in Fortran</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ArrayComposition.html">Array Composition</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/Aliasing.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="aliasing-analysis-in-fir">
+<h1>Aliasing analysis in FIR<a class="headerlink" href="#aliasing-analysis-in-fir" title="Link to this heading">¶</a></h1>
+<p>This document describes the design of Alias Analysis for the FIR dialect, using the MLIR infrastructure. The intention is to use this analysis as a building block for more advanced analyses such as global code motion.</p>
+<p>The result will be</p>
+<ol class="arabic">
+<li><p>A class, implementing the  <a class="reference external" href="https://github.com/llvm/llvm-project/blob/189900eb149bb55ae3787346f57c1ccbdc50fb3c/mlir/include/mlir/Analysis/AliasAnalysis.h#L232">AliasAnalysis</a> interface. It will be able to answer two types of queries:</p>
+<ul>
+<li><p>AliasResult Alias (Value lhs, Value rhs)</p>
+<p>Given two memory references, return their aliasing behavior</p>
+</li>
+<li><p>ModRefResult getModRef(Operation *op, Value location)</p>
+<p>The possible results of whether a memory access modifies or references a memory location. This will not be performing a dataflow analysis. It will not take into account the instructions in the paths between the arguments. It will merely factor the type of side effects into the aliasing results.</p>
+</li>
+</ul>
+</li>
+<li><p>A testing pass, performing unit testing on the analysis.</p>
+<p>The pass will take FIR as an input, look for some predefined annotations  and report their aliasing behavior. This will provide a development framework that will allow for the initial implementation of a coarse analysis that can then be refined on an ongoing basis.</p>
+</li>
+</ol>
+<section id="definitions">
+<h2>Definitions<a class="headerlink" href="#definitions" title="Link to this heading">¶</a></h2>
+<section id="memory-side-effect-or-side-effect">
+<h3>Memory side effect or side effect:<a class="headerlink" href="#memory-side-effect-or-side-effect" title="Link to this heading">¶</a></h3>
+<ol class="arabic">
+<li><p>Presence of MemoryEffectOpInterface</p>
+<p>A side effect will be determined by the MemoryEffectOpInterface. The interface can inform for each operand of an MLIR operation, whether there is a side effect on it or not. The possible side effects are:</p>
+<ul class="simple">
+<li><p>Allocate</p></li>
+<li><p>Free</p></li>
+<li><p>Read</p></li>
+<li><p>Write</p></li>
+</ul>
+<p>An atomic read-modify-write can have both a read and write side-effect on its operands</p>
+<p>For the implementation of getModRef,  the effects will also be classified as</p>
+<ul class="simple">
+<li><p>Modifying (Allocate, Free, Write)</p></li>
+<li><p>Non-modifying (Read)</p></li>
+</ul>
+</li>
+<li><p>Absence of MemoryEffectOpInterface</p>
+<p>In the absence of a MemoryEffectOpInterface, the conservative assumption will have to be that there is a modifying effect on all operands.</p>
+<p>As far as user calls are concerned, this rule will be relaxed in the presence of the <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> or <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> attribute.</p>
+<p>Runtime calls are not covered by the Fortran language. They are C calls which can take raw pointers by value. We will need to define some convention for their aliasing behavior</p>
+</li>
+</ol>
+</section>
+<section id="memory-reference">
+<h3>Memory reference:<a class="headerlink" href="#memory-reference" title="Link to this heading">¶</a></h3>
+<p>Any SSA value on the RHS of an operation with a memory side effect as defined above.</p>
+</section>
+<section id="memory-source">
+<h3>Memory source:<a class="headerlink" href="#memory-source" title="Link to this heading">¶</a></h3>
+<p>The storage from which a memory reference is sourced. A memory reference may not be the source of the storage and may be reached by following the use-def chain through specific operations such as fir.convert, fir.coordinate_of, fir.array_coor, fir.embox, fir.rebox, fir.box_addr….</p>
+<p>Possible sources are:</p>
+<ul class="simple">
+<li><p>The LHS of an operation with Allocate side effect, this could be local or heap</p></li>
+<li><p>A global symbol: the RHS of fir.address_of (Note that a global symbol is not an SSA value but an attribute)</p></li>
+<li><p>A dummy argument: a block argument of the entry block of a func.func operation.</p></li>
+<li><p>Indirect source: load of memory reference stored at another memory reference</p></li>
+<li><p>Unknown source: when the use-def traversal does not reach any of the sources above.</p></li>
+</ul>
+</section>
+<section id="path-to-source">
+<h3>Path to source:<a class="headerlink" href="#path-to-source" title="Link to this heading">¶</a></h3>
+<p>Additional information can be collected on the way to the source such as type (fir.heap, fir.ptr), attributes (fir.target) and use-def chains (fir.coordinate_of, fir.array_coor, fir.declare…). Constant paths can help disambiguate aliasing.</p>
+<p>Because of block arguments, a memory reference may have multiple sources. If a block argument is encountered, all predecessors will have to be visited. When querying the aliasing behavior of two memory references the cartesian product of all paths need to be considered.</p>
+</section>
+<section id="pointer-type">
+<h3>Pointer type<a class="headerlink" href="#pointer-type" title="Link to this heading">¶</a></h3>
+<p>A type <code class="docutils literal notranslate"><span class="pre">fir.box&lt;fir.ptr&lt;T&gt;&gt;</span></code> or <code class="docutils literal notranslate"><span class="pre">fir.ptr&lt;T&gt;</span></code></p>
+</section>
+</section>
+<section id="aliasing-rules">
+<h2>Aliasing rules<a class="headerlink" href="#aliasing-rules" title="Link to this heading">¶</a></h2>
+<p>The goal is to match <a class="reference internal" href="Aliasing.html"><span class="std std-doc">Fortran’s rule for aliasing</span></a>. However FIR is all we have at this stage so the hope is that we can define an algorithm using the information from FIR to properly model Fortran’s aliasing rules. Wherever there is a gap, we may have to refine the algorithm, add information in FIR or both. Though, with the introduction of the fir.declare operation, most of the source level information relevant to aliasing will be populated in FIR.</p>
+<p>The first attempt to determine aliasing will be at the coarsest level: the source level. The answer to the query will be ‘yes’, ‘no’, ‘maybe’. If the answer is ‘yes’ or ‘no’, the query is complete. If the answer is ‘maybe’ then further analysis is required until a definite answer is reached. If no finer analysis is available then ‘maybe’ is returned.</p>
+<section id="coarse-rules">
+<h3>Coarse rules<a class="headerlink" href="#coarse-rules" title="Link to this heading">¶</a></h3>
+<p>Distinct sources are assumed to not alias except in the following cases:</p>
+<ol class="arabic simple">
+<li><p>A pointer type source may alias with any other pointer type source.</p></li>
+<li><p>A source with the fir.target attribute may alias with any other pointer type source.</p></li>
+<li><p>Indirect sources of non pointer type and unknown sources may alias with any source.</p></li>
+</ol>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Aliasing.html">Aliasing in Fortran</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="ArrayComposition.html">Array Composition</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Jan 27, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

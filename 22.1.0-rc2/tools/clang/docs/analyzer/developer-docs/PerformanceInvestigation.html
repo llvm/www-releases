@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>3.6. Performance Investigation &#8212; Clang 22.1.0-rc2 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/haiku.css?v=e491ac2d" />
+    <link rel="stylesheet" type="text/css" href="../../_static/graphviz.css?v=eafc0fe6" />
+    <script src="../../_static/documentation_options.js?v=106f770c"></script>
+    <script src="../../_static/doctools.js?v=888ff710"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="3.7. Analysis Statistics" href="Statistics.html" />
+    <link rel="prev" title="3.5. Region Store" href="RegionStore.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="../../index.html">
+          <span>Clang 22.1.0-rc2 documentation</span></a></h1>
+        <h2 class="heading"><span>3.6. Performance Investigation</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="RegionStore.html"><span class="section-number">3.5. </span>Region Store</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Statistics.html"><span class="section-number">3.7. </span>Analysis Statistics</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <section id="performance-investigation">
+<h1><span class="section-number">3.6. </span>Performance Investigation<a class="headerlink" href="#performance-investigation" title="Link to this heading">¶</a></h1>
+<p>Multiple factors contribute to the time it takes to analyze a file with Clang Static Analyzer.
+A translation unit contains multiple entry points, each of which take multiple steps to analyze.</p>
+<section id="performance-analysis-using-ftime-trace">
+<h2><span class="section-number">3.6.1. </span>Performance analysis using <code class="docutils literal notranslate"><span class="pre">-ftime-trace</span></code><a class="headerlink" href="#performance-analysis-using-ftime-trace" title="Link to this heading">¶</a></h2>
+<p>You can add the <code class="docutils literal notranslate"><span class="pre">-ftime-trace=file.json</span></code> option to break down the analysis time into individual entry points and steps within each entry point.
+You can explore the generated JSON file in a Chromium browser using the <code class="docutils literal notranslate"><span class="pre">chrome://tracing</span></code> URL,
+or using <a class="reference external" href="https://ui.perfetto.dev">perfetto</a> or <a class="reference external" href="https://speedscope.app">speedscope</a>.
+Once you narrow down to specific analysis steps you are interested in, you can more effectively employ heavier profilers,
+such as <a class="reference external" href="https://perfwiki.github.io/main/">Perf</a> and <a class="reference external" href="https://valgrind.org/docs/manual/cl-manual.html">Callgrind</a>.</p>
+<p>Each analysis step has a time scope in the trace, corresponds to processing of an exploded node, and is designated with a <code class="docutils literal notranslate"><span class="pre">ProgramPoint</span></code>.
+If the <code class="docutils literal notranslate"><span class="pre">ProgramPoint</span></code> is associated with a location, you can see it on the scope metadata label.</p>
+<p>Here is an example of a time trace produced with</p>
+<div class="literal-block-wrapper docutils container" id="id3">
+<div class="code-block-caption"><span class="caption-text">Clang Static Analyzer invocation to generate a time trace of string.c analysis.</span><a class="headerlink" href="#id3" title="Link to this code">¶</a></div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>clang<span class="w"> </span>-cc1<span class="w"> </span>-analyze<span class="w"> </span>-verify<span class="w"> </span>clang/test/Analysis/string.c<span class="w"> </span><span class="se">\</span>
+<span class="w">      </span>-analyzer-checker<span class="o">=</span>core,unix,alpha.unix.cstring,debug.ExprInspection<span class="w"> </span><span class="se">\</span>
+<span class="w">      </span>-ftime-trace<span class="o">=</span>trace.json<span class="w"> </span>-ftime-trace-granularity<span class="o">=</span><span class="m">1</span>
+</pre></div>
+</div>
+</div>
+<img alt="../../_images/speedscope.png" src="../../_images/speedscope.png" />
+<p>On the speedscope screenshot above, under the first time ruler is the bird’s-eye view of the entire trace that spans a little over 60 milliseconds.
+Under the second ruler (focused on the 18.09-18.13ms time point) you can see a narrowed-down portion.
+The second box (“HandleCode memset…”) that spans entire screen (and actually extends beyond it) corresponds to the analysis of <code class="docutils literal notranslate"><span class="pre">memset16_region_cast()</span></code> entry point that is defined in the “string.c” test file on line 1627.
+Below it, you can find multiple sub-scopes each corresponding to processing of a single exploded node.</p>
+<ul class="simple">
+<li><p>First: a <code class="docutils literal notranslate"><span class="pre">PostStmt</span></code> for some statement on line 1634. This scope has a selected subscope “CheckerManager::runCheckersForCallEvent (Pre)” that takes 5 microseconds.</p></li>
+<li><p>Four other nodes, too small to be discernible at this zoom level</p></li>
+<li><p>Last on this screenshot: another <code class="docutils literal notranslate"><span class="pre">PostStmt</span></code> for a statement on line 1635.</p></li>
+</ul>
+<p>In addition to the <code class="docutils literal notranslate"><span class="pre">-ftime-trace</span></code> option, you can use <code class="docutils literal notranslate"><span class="pre">-ftime-trace-granularity</span></code> to fine-tune the time trace.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">-ftime-trace-granularity=NN</span></code> dumps only time scopes that are longer than NN microseconds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">-ftime-trace-verbose</span></code> enables some additional dumps in the frontend related to template instantiations.
+At the moment, it has no effect on the traces from the static analyzer.</p></li>
+</ul>
+<p>Note: Both Chrome-tracing and speedscope tools might struggle with time traces above 100 MB in size.
+Luckily, in most cases the default max-steps boundary of 225 000 produces the traces of approximately that size
+for a single entry point.
+You can use <code class="docutils literal notranslate"><span class="pre">-analyze-function=get_global_options</span></code> together with <code class="docutils literal notranslate"><span class="pre">-ftime-trace</span></code> to narrow down analysis to a specific entry point.</p>
+</section>
+<section id="performance-analysis-using-perf">
+<h2><span class="section-number">3.6.2. </span>Performance analysis using <code class="docutils literal notranslate"><span class="pre">perf</span></code><a class="headerlink" href="#performance-analysis-using-perf" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://perfwiki.github.io/main/">Perf</a> is a tool for conducting sampling-based profiling.
+It’s easy to start profiling, you only have 2 prerequisites.
+Build with <code class="docutils literal notranslate"><span class="pre">-fno-omit-frame-pointer</span></code> and debug info (<code class="docutils literal notranslate"><span class="pre">-g</span></code>).
+You can use release builds, but probably the easiest is to set the <code class="docutils literal notranslate"><span class="pre">CMAKE_BUILD_TYPE=RelWithDebInfo</span></code>
+along with <code class="docutils literal notranslate"><span class="pre">CMAKE_CXX_FLAGS=&quot;-fno-omit-frame-pointer&quot;</span></code> when configuring <code class="docutils literal notranslate"><span class="pre">llvm</span></code>.
+Here is how to <a class="reference external" href="https://llvm.org/docs/CMake.html#quick-start">get started</a> if you are in trouble.</p>
+<div class="literal-block-wrapper docutils container" id="id4">
+<div class="code-block-caption"><span class="caption-text">Running the Clang Static Analyzer through <code class="docutils literal notranslate"><span class="pre">perf</span></code> to gather samples of the execution.</span><a class="headerlink" href="#id4" title="Link to this code">¶</a></div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># -F: Sampling frequency, use `-F max` for maximal frequency</span>
+<span class="c1"># -g: Enable call-graph recording for both kernel and user space</span>
+perf<span class="w"> </span>record<span class="w"> </span>-F<span class="w"> </span><span class="m">99</span><span class="w"> </span>-g<span class="w"> </span>--<span class="w">  </span>clang<span class="w"> </span>-cc1<span class="w"> </span>-analyze<span class="w"> </span>-verify<span class="w"> </span>clang/test/Analysis/string.c<span class="w"> </span><span class="se">\</span>
+<span class="w">      </span>-analyzer-checker<span class="o">=</span>core,unix,alpha.unix.cstring,debug.ExprInspection
+</pre></div>
+</div>
+</div>
+<p>Once you have the profile data, you can use it to produce a Flame graph.
+A Flame graph is a visual representation of the stack frames of the samples.
+Common stack frame prefixes are squashed together, making up a wider bar.
+The wider the bar, the more time was spent under that particular stack frame,
+giving a sense of how the overall execution time was spent.</p>
+<p>Clone the <a class="reference external" href="https://github.com/brendangregg/FlameGraph">FlameGraph</a> git repository,
+as we will use some scripts from there to convert the <code class="docutils literal notranslate"><span class="pre">perf</span></code> samples into a Flame graph.
+It’s also useful to check out Brendan Gregg’s (the author of FlameGraph)
+<a class="reference external" href="https://www.brendangregg.com/FlameGraphs/cpuflamegraphs.html">homepage</a>.</p>
+<div class="literal-block-wrapper docutils container" id="id5">
+<div class="code-block-caption"><span class="caption-text">Converting the <code class="docutils literal notranslate"><span class="pre">perf</span></code> profile into a Flamegraph, then opening it in Firefox.</span><a class="headerlink" href="#id5" title="Link to this code">¶</a></div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>perf<span class="w"> </span>script<span class="w"> </span><span class="p">|</span><span class="w"> </span>/path/to/FlameGraph/stackcollapse-perf.pl<span class="w"> </span>&gt;<span class="w"> </span>perf.folded
+/path/to/FlameGraph/flamegraph.pl<span class="w"> </span>perf.folded<span class="w">  </span>&gt;<span class="w"> </span>perf.svg
+firefox<span class="w"> </span>perf.svg
+</pre></div>
+</div>
+</div>
+<img alt="../../_images/flamegraph.png" src="../../_images/flamegraph.png" />
+</section>
+<section id="performance-analysis-using-uftrace">
+<h2><span class="section-number">3.6.3. </span>Performance analysis using <code class="docutils literal notranslate"><span class="pre">uftrace</span></code><a class="headerlink" href="#performance-analysis-using-uftrace" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://github.com/namhyung/uftrace/wiki/Tutorial#getting-started">uftrace</a> is a great tool to generate rich profile data
+that you can use to focus and drill down into the timeline of your application.
+We will use it to generate Chromium trace JSON.
+In contrast to <code class="docutils literal notranslate"><span class="pre">perf</span></code>, this approach statically instruments every function, so it should be more precise and thorough than the sampling-based approaches like <code class="docutils literal notranslate"><span class="pre">perf</span></code>.
+In contrast to using <code class="docutils literal notranslate"><span class="pre">-ftime-trace</span></code>, functions don’t need to opt-in to be profiled using <code class="docutils literal notranslate"><span class="pre">llvm::TimeTraceScope</span></code>.
+All functions are profiled due to automatic static instrumentation.</p>
+<p>There is only one prerequisite to use this tool.
+You need to build the binary you are about to instrument using <code class="docutils literal notranslate"><span class="pre">-pg</span></code> or <code class="docutils literal notranslate"><span class="pre">-finstrument-functions</span></code>.
+This will make it run substantially slower but allows rich instrumentation.
+It will also consume many gigabites of storage for a single trace unless filter flags are used during recording.</p>
+<div class="literal-block-wrapper docutils container" id="id6">
+<div class="code-block-caption"><span class="caption-text">Recording with <code class="docutils literal notranslate"><span class="pre">uftrace</span></code>, then dumping the result as a Chrome trace JSON.</span><a class="headerlink" href="#id6" title="Link to this code">¶</a></div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uftrace<span class="w"> </span>record<span class="w">  </span>clang<span class="w"> </span>-cc1<span class="w"> </span>-analyze<span class="w"> </span>-verify<span class="w"> </span>clang/test/Analysis/string.c<span class="w"> </span><span class="se">\</span>
+<span class="w">      </span>-analyzer-checker<span class="o">=</span>core,unix,alpha.unix.cstring,debug.ExprInspection
+uftrace<span class="w"> </span>dump<span class="w"> </span>--filter<span class="o">=</span><span class="s2">&quot;.*::AnalysisConsumer::HandleTranslationUnit&quot;</span><span class="w"> </span>--time-filter<span class="o">=</span><span class="m">300</span><span class="w"> </span>--chrome<span class="w"> </span>&gt;<span class="w"> </span>trace.json
+</pre></div>
+</div>
+</div>
+<img alt="../../_images/uftrace_detailed.png" src="../../_images/uftrace_detailed.png" />
+<p>In this picture, you can see the functions below the Static Analyzer’s entry point, which takes at least 300 nanoseconds to run, visualized by Chrome’s <code class="docutils literal notranslate"><span class="pre">about:tracing</span></code> page
+You can also see how deep function calls we may have due to AST visitors.</p>
+<p>Using different filters can reduce the number of functions to record.
+For the common options, refer to the <code class="docutils literal notranslate"><span class="pre">uftrace</span></code> <a class="reference external" href="https://github.com/namhyung/uftrace/blob/master/doc/uftrace-record.md#common-options">documentation</a>.</p>
+<p>Similar filters can be applied for dumping too. That way you can reuse the same (detailed)
+recording to selectively focus on some special part using a refinement of the filter flags.
+Remember, the trace JSON needs to fit into Chrome’s <code class="docutils literal notranslate"><span class="pre">about:tracing</span></code> or <a class="reference external" href="https://speedscope.app">speedscope</a>,
+thus it needs to be of a limited size.
+If you do not apply filters on recording, you will collect a large trace and every dump operation
+would need to sieve through the much larger recording which may be annoying if done repeatedly.</p>
+<p>If the trace JSON is still too large to load, have a look at the dump as plain text and look for frequent entries that refer to non-interesting parts.
+Once you have some of those, add them as <code class="docutils literal notranslate"><span class="pre">--hide</span></code> flags to the <code class="docutils literal notranslate"><span class="pre">uftrace</span> <span class="pre">dump</span></code> call.
+To see what functions appear frequently in the trace, use this command:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cat<span class="w"> </span>trace.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-Po<span class="w"> </span><span class="s1">&#39;&quot;name&quot;:&quot;(.+)&quot;&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>sort<span class="w"> </span><span class="p">|</span><span class="w"> </span>uniq<span class="w"> </span>-c<span class="w"> </span><span class="p">|</span><span class="w"> </span>sort<span class="w"> </span>-nr<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-n<span class="w"> </span><span class="m">50</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">uftrace</span></code> can also dump the report as a Flame graph using <code class="docutils literal notranslate"><span class="pre">uftrace</span> <span class="pre">dump</span> <span class="pre">--framegraph</span></code>.</p>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="RegionStore.html"><span class="section-number">3.5. </span>Region Store</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Statistics.html"><span class="section-number">3.7. </span>Analysis Statistics</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2007-2026, The Clang Team.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Implementation of Intrinsic types in f18 &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Semantics: Resolving Labels and Construct Names" href="LabelResolution.html" />
+    <link rel="prev" title="A categorization of standard (2018) and extended Fortran intrinsic procedures" href="Intrinsics.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Implementation of Intrinsic types in f18</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Intrinsics.html">A categorization of standard (2018) and extended Fortran intrinsic procedures</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LabelResolution.html">Semantics: Resolving Labels and Construct Names</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/IntrinsicTypes.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="implementation-of-intrinsic-types-in-f18">
+<h1>Implementation of <code class="docutils literal notranslate"><span class="pre">Intrinsic</span></code> types in f18<a class="headerlink" href="#implementation-of-intrinsic-types-in-f18" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#supported-types-and-kinds" id="id1">Supported TYPES and KINDS</a></p>
+<ul>
+<li><p><a class="reference internal" href="#defaults-kinds" id="id2">Defaults kinds</a></p>
+<ul>
+<li><p><a class="reference internal" href="#modifying-the-default-kind-with-default-real-8" id="id3">Modifying the default kind with default-real-8.</a></p></li>
+<li><p><a class="reference internal" href="#modifying-the-default-kind-with-default-integer-8" id="id4">Modifying the default kind with default-integer-8:</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#representation-of-logical-variables" id="id5">Representation of LOGICAL variables</a></p>
+<ul>
+<li><p><a class="reference internal" href="#representations-of-logical-variables-in-other-compilers" id="id6">Representations of LOGICAL variables in other compilers</a></p>
+<ul>
+<li><p><a class="reference internal" href="#intel-ifort-nvida-nvfortran-pgi-pgf90" id="id7">Intel ifort / NVIDA nvfortran / PGI pgf90</a></p></li>
+<li><p><a class="reference internal" href="#ibm-xlf" id="id8">IBM XLF</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+<p>Intrinsic types are integer, real, complex, character, and logical.
+All intrinsic types have a kind type parameter called KIND,
+which determines the representation method for the specified type.
+The intrinsic type character also has a length type parameter called LEN,
+which determines the length of the character string.</p>
+<p>The implementation of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> type in f18 is described
+in <a class="reference internal" href="Character.html"><span class="std std-doc">Character.md</span></a>.</p>
+<section id="supported-types-and-kinds">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Supported TYPES and KINDS</a><a class="headerlink" href="#supported-types-and-kinds" title="Link to this heading">¶</a></h2>
+<p>Here are the type and kind combinations supported in f18:</p>
+<p>INTEGER(KIND=1) 8-bit two’s-complement integer
+INTEGER(KIND=2) 16-bit two’s-complement integer
+INTEGER(KIND=4) 32-bit two’s-complement integer
+INTEGER(KIND=8) 64-bit two’s-complement integer
+INTEGER(KIND=16) 128-bit two’s-complement integer</p>
+<p>REAL(KIND=2) 16-bit IEEE 754 binary16 (5e11m)
+REAL(KIND=3) 16-bit upper half of 32-bit IEEE 754 binary32 (8e8m)
+REAL(KIND=4) 32-bit IEEE 754 binary32 (8e24m)
+REAL(KIND=8) 64-bit IEEE 754 binary64 (11e53m)
+REAL(KIND=10) 80-bit extended precision with explicit normalization bit (15e64m)
+REAL(KIND=16) 128-bit IEEE 754 binary128 (15e113m)</p>
+<p>COMPLEX(KIND=2) Two 16-bit IEEE 754 binary16
+COMPLEX(KIND=3) Two 16-bit upper half of 32-bit IEEE 754 binary32
+COMPLEX(KIND=4) Two 32-bit IEEE 754 binary32
+COMPLEX(KIND=8) Two 64-bit IEEE 754 binary64
+COMPLEX(KIND=10) Two 80-bit extended precisions values
+COMPLEX(KIND=16) Two 128-bit IEEE 754 binary128</p>
+<p>No
+<a class="reference external" href="https://en.wikipedia.org/wiki/Quadruple-precision_floating-point_format">double-double
+</a>
+quad precision type is supported.</p>
+<p>LOGICAL(KIND=1) 8-bit integer
+LOGICAL(KIND=2) 16-bit integer
+LOGICAL(KIND=4) 32-bit integer
+LOGICAL(KIND=8) 64-bit integer</p>
+<p>No 128-bit logical support.</p>
+<section id="defaults-kinds">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink">Defaults kinds</a><a class="headerlink" href="#defaults-kinds" title="Link to this heading">¶</a></h3>
+<p>INTEGER 4
+REAL 4
+COMPLEX 4
+DOUBLE PRECISION 8
+LOGICAL 4</p>
+<section id="modifying-the-default-kind-with-default-real-8">
+<h4><a class="toc-backref" href="#id3" role="doc-backlink">Modifying the default kind with default-real-8.</a><a class="headerlink" href="#modifying-the-default-kind-with-default-real-8" title="Link to this heading">¶</a></h4>
+<p>REAL 8
+DOUBLE PRECISION  8
+COMPLEX 8</p>
+</section>
+<section id="modifying-the-default-kind-with-default-integer-8">
+<h4><a class="toc-backref" href="#id4" role="doc-backlink">Modifying the default kind with default-integer-8:</a><a class="headerlink" href="#modifying-the-default-kind-with-default-integer-8" title="Link to this heading">¶</a></h4>
+<p>INTEGER 8
+LOGICAL 8</p>
+<p>Modules compiled with different default-real and default-integer kinds
+may be freely mixed.
+Module files encode the kind value for every entity.</p>
+</section>
+</section>
+</section>
+<section id="representation-of-logical-variables">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Representation of LOGICAL variables</a><a class="headerlink" href="#representation-of-logical-variables" title="Link to this heading">¶</a></h2>
+<p>The default logical is <code class="docutils literal notranslate"><span class="pre">LOGICAL(KIND=4)</span></code>.</p>
+<p>Logical literal constants with kind 1, 2, 4, and 8
+share the following characteristics:
+.TRUE. is represented as 1_kind
+.FALSE. is represented as 0_kind</p>
+<p>Tests for true is <em>integer value is not zero</em>.</p>
+<p>The implementation matches gfortran.</p>
+<p>Programs should not use integer values in LOGICAL contexts or
+use LOGICAL values to interface with other languages.</p>
+<section id="representations-of-logical-variables-in-other-compilers">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Representations of LOGICAL variables in other compilers</a><a class="headerlink" href="#representations-of-logical-variables-in-other-compilers" title="Link to this heading">¶</a></h3>
+<section id="intel-ifort-nvida-nvfortran-pgi-pgf90">
+<h4><a class="toc-backref" href="#id7" role="doc-backlink">Intel ifort / NVIDA nvfortran / PGI pgf90</a><a class="headerlink" href="#intel-ifort-nvida-nvfortran-pgi-pgf90" title="Link to this heading">¶</a></h4>
+<p>.TRUE. is represented as -1_kind
+.FALSE. is represented as 0_kind
+Any other values result in undefined behavior.</p>
+<p>Values with a low-bit set are treated as .TRUE..
+Values with a low-bit clear are treated as .FALSE..</p>
+</section>
+<section id="ibm-xlf">
+<h4><a class="toc-backref" href="#id8" role="doc-backlink">IBM XLF</a><a class="headerlink" href="#ibm-xlf" title="Link to this heading">¶</a></h4>
+<p>.TRUE. is represented as 1_kind
+.FALSE. is represented as 0_kind</p>
+<p>Values with a low-bit set are treated as .TRUE..
+Values with a low-bit clear are treated as .FALSE..</p>
+</section>
+</section>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="Intrinsics.html">A categorization of standard (2018) and extended Fortran intrinsic procedures</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="LabelResolution.html">Semantics: Resolving Labels and Construct Names</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Jan 27, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

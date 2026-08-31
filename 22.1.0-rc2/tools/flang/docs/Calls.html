@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Representation of Fortran function calls &#8212; The Flang Compiler</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/haiku.css?v=e491ac2d" />
+    <script src="_static/documentation_options.js?v=b0deac7f"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Implementation of CHARACTER types in Flang" href="Character.html" />
+    <link rel="prev" title="Bijective Internal Name Uniquing" href="BijectiveInternalNameUniquing.html" /> 
+  </head><body>
+      <div class="header" role="banner"><h1 class="heading"><a href="index.html">
+          <span>The Flang Compiler</span></a></h1>
+        <h2 class="heading"><span>Representation of Fortran function calls</span></h2>
+      </div>
+      <div class="topnav" role="navigation" aria-label="top navigation">
+      
+        <p>
+        «&#160;&#160;<a href="BijectiveInternalNameUniquing.html">Bijective Internal Name Uniquing</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Character.html">Implementation of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> types in Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content" role="main">
+        
+        
+  <!--===- docs/Calls.md
+
+   Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+   See https://llvm.org/LICENSE.txt for license information.
+   SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+-->
+<section id="representation-of-fortran-function-calls">
+<h1>Representation of Fortran function calls<a class="headerlink" href="#representation-of-fortran-function-calls" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#procedure-reference-implementation-protocol" id="id1">Procedure reference implementation protocol</a></p></li>
+<li><p><a class="reference internal" href="#quick-review-of-terminology" id="id2">Quick review of terminology</a></p></li>
+<li><p><a class="reference internal" href="#interfaces" id="id3">Interfaces</a></p>
+<ul>
+<li><p><a class="reference internal" href="#implicit-interfaces" id="id4">Implicit interfaces</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#protocol-overview" id="id5">Protocol overview</a></p>
+<ul>
+<li><p><a class="reference internal" href="#before-the-call" id="id6">Before the call:</a></p></li>
+<li><p><a class="reference internal" href="#on-entry" id="id7">On entry:</a></p></li>
+<li><p><a class="reference internal" href="#on-exit" id="id8">On exit:</a></p></li>
+<li><p><a class="reference internal" href="#on-return-to-the-caller" id="id9">On return to the caller:</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#the-messy-details" id="id10">The messy details</a></p>
+<ul>
+<li><p><a class="reference internal" href="#copying-effective-argument-values-into-temporary-storage" id="id11">Copying effective argument values into temporary storage</a></p></li>
+<li><p><a class="reference internal" href="#intent-out-preparation" id="id12"><code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> preparation</a></p></li>
+<li><p><a class="reference internal" href="#arguments-and-function-results-requiring-descriptors" id="id13">Arguments and function results requiring descriptors</a></p></li>
+<li><p><a class="reference internal" href="#copying-temporary-storage-back-into-argument-designators" id="id14">Copying temporary storage back into argument designators</a></p></li>
+<li><p><a class="reference internal" href="#polymorphic-bindings" id="id15">Polymorphic bindings</a></p></li>
+<li><p><a class="reference internal" href="#host-instance-linkage" id="id16">Host instance linkage</a></p></li>
+<li><p><a class="reference internal" href="#naming" id="id17">Naming</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#summary-of-checks-to-be-enforced-in-semantics-analysis" id="id18">Summary of checks to be enforced in semantics analysis</a></p></li>
+<li><p><a class="reference internal" href="#further-topics-to-document" id="id19">Further topics to document</a></p></li>
+</ul>
+</nav>
+<section id="procedure-reference-implementation-protocol">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Procedure reference implementation protocol</a><a class="headerlink" href="#procedure-reference-implementation-protocol" title="Link to this heading">¶</a></h2>
+<p>Fortran function and subroutine references are complicated.
+This document attempts to collect the requirements imposed by the 2018
+standard (and legacy extensions) on programs and implementations, work
+through the implications of the various features, and propose both a
+runtime model and a compiler design.</p>
+<p>All section, requirement, and constraint numbers herein pertain to
+the Fortran 2018 standard.</p>
+<p>This note does not consider calls to intrinsic procedures, statement
+functions, or calls to internal runtime support library routines.</p>
+</section>
+<section id="quick-review-of-terminology">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Quick review of terminology</a><a class="headerlink" href="#quick-review-of-terminology" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>A <em>dummy argument</em> is a function or subroutine parameter.
+It is <em>associated</em> with an <em>effective argument</em> at each call
+to the procedure.</p></li>
+<li><p>The <em>shape</em> of an array is a vector containing its extent (size)
+on each dimension; the <em>rank</em> of an array is the number of its
+dimensions (i.e., the shape of its shape).
+The absolute values of the lower and upper bounds of the dimensions
+of an array are not part of its shape, just their difference (plus 1).</p></li>
+<li><p>An <em>explicit-shape</em> array has all of its bounds specified; lower
+bounds default to 1.  These can be passed by with a single address
+and their contents are contiguous.</p></li>
+<li><p>An <em>assumed-size</em> array is an explicit-shape array with <code class="docutils literal notranslate"><span class="pre">*</span></code> as its
+final dimension, which is the most-significant one in Fortran
+and whose value does not affect indexed address calculations.</p></li>
+<li><p>A <em>deferred-shape</em> array (<code class="docutils literal notranslate"><span class="pre">DIMENSION::A(:)</span></code>) is a <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> or <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>.
+<code class="docutils literal notranslate"><span class="pre">POINTER</span></code> target data might not be contiguous.</p></li>
+<li><p>An <em>assumed-shape</em> (not size!) array (<code class="docutils literal notranslate"><span class="pre">DIMENSION::A(:)</span></code>) is a dummy argument
+that is neither <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> nor <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>; its lower bounds can be set
+by the procedure that receives them (defaulting to 1), and its
+upper bounds are functions of the lower bounds and the extents of
+dimensions in the <em>shape</em> of the effective argument.</p></li>
+<li><p>An <em>assumed-length</em> <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> dummy argument
+takes its length from the effective argument.</p></li>
+<li><p>An <em>assumed-length</em> <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> <em>result</em> of an external function (C721)
+has its length determined by its eventual declaration in a calling scope.</p></li>
+<li><p>An <em>assumed-rank</em> <code class="docutils literal notranslate"><span class="pre">DIMENSION::A(..)</span></code> dummy argument array has an unknown
+number of dimensions.</p></li>
+<li><p>A <em>polymorphic</em> <code class="docutils literal notranslate"><span class="pre">CLASS(t)</span></code> dummy argument, <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>, or <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>
+has a specific derived type or some extension of that type.
+An <em>unlimited polymorphic</em> <code class="docutils literal notranslate"><span class="pre">CLASS(*)</span></code> object can have any
+intrinsic or derived type.</p></li>
+<li><p><em>Interoperable</em> <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code> procedures are written in C or callable from C.</p></li>
+</ul>
+</section>
+<section id="interfaces">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">Interfaces</a><a class="headerlink" href="#interfaces" title="Link to this heading">¶</a></h2>
+<p>Referenced procedures may or may not have declared interfaces
+available to their call sites.</p>
+<p>Procedures with some post-Fortran ‘77 features <em>require</em> an
+explicit interface to be called (15.4.2.2) or even passed (4.3.4(5)):</p>
+<ul class="simple">
+<li><p>use of argument keywords in a call</p></li>
+<li><p>procedures that are <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> or <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code></p></li>
+<li><p>procedures that are required to be <code class="docutils literal notranslate"><span class="pre">PURE</span></code> due to the context of the call
+(specification expression, <code class="docutils literal notranslate"><span class="pre">DO</span> <span class="pre">CONCURRENT</span></code>, <code class="docutils literal notranslate"><span class="pre">FORALL</span></code>)</p></li>
+<li><p>dummy arguments with these attributes: <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>, <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>,
+<code class="docutils literal notranslate"><span class="pre">VALUE</span></code>, <code class="docutils literal notranslate"><span class="pre">TARGET</span></code>, <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code>, <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code>, <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code>,
+and, as a consequence of limitations on its use, <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code>;
+<code class="docutils literal notranslate"><span class="pre">INTENT()</span></code>, however, does <em>not</em> require an explicit interface</p></li>
+<li><p>dummy arguments that are coarrays</p></li>
+<li><p>dummy arguments that are assumed-shape or assumed-rank arrays</p></li>
+<li><p>dummy arguments with parameterized derived types</p></li>
+<li><p>dummy arguments that are polymorphic</p></li>
+<li><p>function result that is an array</p></li>
+<li><p>function result that is <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> or <code class="docutils literal notranslate"><span class="pre">POINTER</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> function result whose length is neither constant
+nor assumed</p></li>
+<li><p>derived type function result with <code class="docutils literal notranslate"><span class="pre">LEN</span></code> type parameter value that is
+not constant
+(note that result derived type parameters cannot be assumed (C795))</p></li>
+</ul>
+<p>Module procedures, internal procedures, procedure pointers,
+type-bound procedures, and recursive references by a procedure to itself
+always have explicit interfaces.
+(Consequently, they cannot be assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> functions;
+conveniently, assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> functions are prohibited from
+recursion (15.6.2.1(3))).</p>
+<p>Other uses of procedures besides calls may also require explicit interfaces,
+such as procedure pointer assignment, type-bound procedure bindings, &amp;c.</p>
+<p>Note that non-parameterized monomorphic derived type arguments do
+<em>not</em> by themselves require the use of an explicit interface.
+However, dummy arguments with any derived type parameters <em>do</em>
+require an explicit interface, even if they are all <code class="docutils literal notranslate"><span class="pre">KIND</span></code> type
+parameters.</p>
+<p>15.5.2.9(2) explicitly allows an assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> function
+to be passed as an actual argument to an explicit-length dummy;
+this has implications for calls to character-valued dummy functions
+and function pointers.
+(In the scopes that reference <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> functions, they must have
+visible definitions with explicit result lengths.)</p>
+<section id="implicit-interfaces">
+<h3><a class="toc-backref" href="#id4" role="doc-backlink">Implicit interfaces</a><a class="headerlink" href="#implicit-interfaces" title="Link to this heading">¶</a></h3>
+<p>In the absence of any characteristic or context that <em>requires</em> an
+explicit interface (see above), an external function or subroutine (R503)
+or <code class="docutils literal notranslate"><span class="pre">ENTRY</span></code> (R1541) can be called directly or indirectly via its implicit interface.
+Each of the arguments can be passed as a simple address, including
+dummy procedures.
+Procedures that <em>can</em> be called via an implicit interface can
+undergo more thorough checking
+by semantics when an explicit interface for them exists, but they must be
+compiled as if all calls to them were through the implicit interface.
+This note will mention special handling for procedures that are exposed
+to the possibility of being called with an implicit interface as <em>F77ish</em> procedures
+below; this is of course not standard terminology.</p>
+<p>Internal and module subprograms that are ever passed as arguments &amp;/or
+assigned as targets of procedure pointers may be F77ish.</p>
+<p>Every F77ish procedure can and must be distinguished at compilation time.
+Such procedures should respect the external naming conventions (when external)
+and any legacy ABI used for Fortran ‘77 programs on the target architecture,
+so that portable libraries can be compiled
+and used by distinct implementations (and their versions)
+of Fortran.</p>
+<p>Note that F77ish functions still have known result types, possibly by means
+of implicit typing of their names.
+They can also be <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> assumed-length character functions.</p>
+<p>In other words: these F77sh procedures that do not require the use of an explicit
+interface and that can possibly be referenced, directly or indirectly,
+with implicit interfaces are limited to argument lists that comprise
+only the addresses of effective arguments and the length of a <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> function result
+(when there is one), and they can return only scalar values with constant
+type parameter values.
+None of their arguments or results need be (or can be) implemented
+with descriptors,
+and any internal procedures passed to them as arguments must be
+simple addresses of non-internal subprograms or trampolines for
+internal procedures.</p>
+<p>Note that the <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> attribute does not, by itself,
+require the use of explicit interface; neither does the use of a dummy
+procedure (implicit or explicit in their interfaces).
+So the analysis of calls to F77ish procedures must allow for the
+invisible use of <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>.</p>
+</section>
+</section>
+<section id="protocol-overview">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Protocol overview</a><a class="headerlink" href="#protocol-overview" title="Link to this heading">¶</a></h2>
+<p>Here is a summary script of all of the actions that may need to be taken
+by the calling procedure and its referenced procedure to effect
+the call, entry, exit, and return steps of the procedure reference
+protocol.
+The order of these steps is not particularly strict, and we have
+some design alternatives that are explored further below.</p>
+<section id="before-the-call">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Before the call:</a><a class="headerlink" href="#before-the-call" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Compute &amp;/or copy into temporary storage the values of
+some effective argument expressions and designators (see below).</p></li>
+<li><p>Create and populate descriptors for arguments that use them
+(see below).</p></li>
+<li><p>Possibly allocate function result storage,
+when its size can be known by all callers; function results that are
+neither <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> nor <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> must have explicit shapes (C816).</p></li>
+<li><p>Create and populate a descriptor for the function result, if it
+needs one (deferred-shape/-length <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, any <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>,
+derived type with non-constant length parameters, &amp;c.).</p></li>
+<li><p>Capture the values of host-escaping local objects in memory;
+package them into single address (for calls to internal procedures &amp;
+for calls that pass internal procedures as arguments).</p></li>
+<li><p>Resolve the target procedure’s polymorphic binding, if any.</p></li>
+<li><p>Marshal effective argument addresses (or values for <code class="docutils literal notranslate"><span class="pre">%VAL()</span></code> and some
+discretionary <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> arguments) into registers.</p></li>
+<li><p>Marshal <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> argument lengths in additional value arguments for
+<code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> effective arguments not passed via descriptors.
+These lengths must be 64-bit integers.</p></li>
+<li><p>Marshal an extra argument for the length of a <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> function
+result if the function is F77ish.</p></li>
+<li><p>Marshal an extra argument for the function result’s descriptor,
+if it needs one.</p></li>
+<li><p>Set the “host instance” (static link) register when calling an internal
+procedure from its host or another internal procedure, a procedure pointer,
+or dummy procedure (when it has a descriptor).</p></li>
+<li><p>Jump.</p></li>
+</ol>
+</section>
+<section id="on-entry">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">On entry:</a><a class="headerlink" href="#on-entry" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>For subprograms with alternate <code class="docutils literal notranslate"><span class="pre">ENTRY</span></code> points: shuffle <code class="docutils literal notranslate"><span class="pre">ENTRY</span></code> dummy arguments
+set a compiler-generated variable to identify the alternate entry point,
+and jump to the common entry point for common processing and a <code class="docutils literal notranslate"><span class="pre">switch()</span></code>
+to the statement after the <code class="docutils literal notranslate"><span class="pre">ENTRY</span></code>.</p></li>
+<li><p>Capture <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> argument &amp;/or assumed-length result length values.</p></li>
+<li><p>Complete <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> copying if this step will not always be done
+by the caller (as I think it should be).</p></li>
+<li><p>Finalize &amp;/or re-initialize <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> non-pointer
+effective arguments (see below).</p></li>
+<li><p>For interoperable procedures called from C: compact discontiguous
+dummy argument values when necessary (<code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code> &amp;/or
+explicit-shape/assumed-size arrays of assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code>).</p></li>
+<li><p>Optionally compact assumed-shape arguments for contiguity on one
+or more leading dimensions to improve SIMD vectorization, if not
+<code class="docutils literal notranslate"><span class="pre">TARGET</span></code> and not already sufficiently contiguous.
+(PGI does this in the caller, whether the callee needs it or not.)</p></li>
+<li><p>Complete allocation of function result storage, if that has
+not been done by the caller.</p></li>
+<li><p>Initialize components of derived type local variables,
+including the function result.</p></li>
+</ol>
+<p>Execute the callee, populating the function result or selecting
+the subroutine’s alternate return.</p>
+</section>
+<section id="on-exit">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">On exit:</a><a class="headerlink" href="#on-exit" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Clean up local scope (finalization, deallocation)</p></li>
+<li><p>Deallocate <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> argument temporaries.
+(But don’t finalize them; see 7.5.6.3(3)).</p></li>
+<li><p>Replace any assumed-shape argument data that were compacted on
+entry for contiguity when the data were possibly
+modified across the call (never when <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> or <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>).</p></li>
+<li><p>Identify alternate <code class="docutils literal notranslate"><span class="pre">RETURN</span></code> to caller.</p></li>
+<li><p>Marshal results.</p></li>
+<li><p>Jump</p></li>
+</ol>
+</section>
+<section id="on-return-to-the-caller">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">On return to the caller:</a><a class="headerlink" href="#on-return-to-the-caller" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Save the result registers, if any.</p></li>
+<li><p>Copy effective argument array designator data that was copied into
+a temporary back into its original storage (see below).</p></li>
+<li><p>Complete deallocation of effective argument temporaries (not <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>).</p></li>
+<li><p>Reload definable host-escaping local objects from memory, if they
+were saved to memory by the host before the call.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GO</span> <span class="pre">TO</span></code> alternate return, if any.</p></li>
+<li><p>Use the function result in an expression.</p></li>
+<li><p>Eventually, finalize &amp;/or deallocate the function result.</p></li>
+</ol>
+<p>(I’ve omitted some obvious steps, like preserving/restoring callee-saved
+registers on entry/exit, dealing with caller-saved registers before/after
+calls, and architecture-dependent ABI requirements.)</p>
+</section>
+</section>
+<section id="the-messy-details">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">The messy details</a><a class="headerlink" href="#the-messy-details" title="Link to this heading">¶</a></h2>
+<section id="copying-effective-argument-values-into-temporary-storage">
+<h3><a class="toc-backref" href="#id11" role="doc-backlink">Copying effective argument values into temporary storage</a><a class="headerlink" href="#copying-effective-argument-values-into-temporary-storage" title="Link to this heading">¶</a></h3>
+<p>There are several conditions that require the compiler to generate
+code that allocates and populates temporary storage for an actual
+argument.</p>
+<p>First, effective arguments that are expressions, not designators, obviously
+need to be computed and captured into memory in order to be passed
+by reference.
+This includes parenthesized designators like <code class="docutils literal notranslate"><span class="pre">(X)</span></code>, which are
+expressions in Fortran, as an important special case.
+(This case also technically includes unparenthesized constants,
+but those are better implemented by passing addresses in read-only
+memory.)
+The dummy argument cannot be known to have <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">INTENT(IN</span> <span class="pre">OUT)</span></code>.</p>
+<p>Small scalar or elemental <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> arguments may be passed in registers,
+as should arguments wrapped in the legacy VMS <code class="docutils literal notranslate"><span class="pre">%VAL()</span></code> notation.
+Multiple elemental <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> arguments might be packed into SIMD registers.</p>
+<p>Effective arguments that are designators, not expressions, must also
+be copied into temporaries in the following situations.</p>
+<ol class="arabic simple">
+<li><p>Coindexed objects need to be copied into the local image.
+This can get very involved if they contain <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>
+components, which also need to be copied, along with their
+<code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> components, and may be best implemented with a runtime
+library routine working off a description of the type.</p></li>
+<li><p>Effective arguments associated with dummies with the <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>
+attribute need to be copied; this can be done on either
+side of the call, but there are optimization opportunities
+available when the caller’s side bears the responsibility.</p></li>
+<li><p>In non-elemental calls, the values of array sections with
+vector-valued subscripts need to be gathered into temporaries.
+These effective arguments are not definable, and they are not allowed to
+be associated with non-<code class="docutils literal notranslate"><span class="pre">VALUE</span></code> dummy arguments with the attributes
+<code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>, <code class="docutils literal notranslate"><span class="pre">INTENT(IN</span> <span class="pre">OUT)</span></code>, <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code>, or <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code>
+(15.5.2.4(21)); <code class="docutils literal notranslate"><span class="pre">INTENT()</span></code> can’t always be checked.</p></li>
+<li><p>Non-simply-contiguous (9.5.4) arrays being passed to non-<code class="docutils literal notranslate"><span class="pre">POINTER</span></code>
+dummy arguments that must be contiguous (due to a <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code>
+attribute, or not being assumed-shape or assumed-rank; this
+is always the case for F77ish procedures).
+This should be a runtime decision, so that effective arguments
+that turn out to be contiguous can be passed cheaply.
+This rule does not apply to coarray dummies, whose effective arguments
+are required to be simply contiguous when this rule would otherwise
+force the use of a temporary (15.5.2.8); neither does it apply
+to <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> and <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> effective arguments, which are
+disallowed when copies would be necessary (C1538 - C1540).
+<em>Only temporaries created by this contiguity requirement are
+candidates for being copied back to the original variable after
+the call</em> (see below).</p></li>
+</ol>
+<p>Fortran requires (18.3.6(5)) that calls to interoperable procedures
+with dummy argument arrays with contiguity requirements
+handle the compaction of discontiguous data <em>in the Fortran callee</em>,
+at least when called from C.
+And discontiguous data must be compacted on the <em>caller’s</em> side
+when passed from Fortran to C (18.3.6(6)).</p>
+<p>We could perform all argument compaction (discretionary or
+required) in the callee, but there are many cases where the
+compiler knows that the effective argument data are contiguous
+when compiling the caller (a temporary is needed for other reasons,
+or the effective argument is simply contiguous) and a run-time test for
+discontiguity in the callee can be avoided by using a caller-compaction
+convention when we have the freedom to choose.</p>
+<p>While we are unlikely to want to <em>needlessly</em> use a temporary for
+an effective argument that does not require one for any of these
+reasons above, we are specifically disallowed from doing so
+by the standard in cases where pointers to the original target
+data are required to be valid across the call (15.5.2.4(9-10)).
+In particular, compaction of assumed-shape arrays for discretionary
+contiguity on the leading dimension to ease SIMD vectorization
+cannot be done safely for <code class="docutils literal notranslate"><span class="pre">TARGET</span></code> dummies without <code class="docutils literal notranslate"><span class="pre">VALUE</span></code>.</p>
+<p>Effective arguments associated with known <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> dummies that
+require allocation of a temporary – and this can only be for reasons of
+contiguity – don’t have to populate it, but they do have to perform
+minimal initialization of any <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> components so that
+the runtime doesn’t crash when the callee finalizes and deallocates
+them.
+<code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> coarrays are prohibited from being affected by <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>
+(see C846).
+Note that calls to implicit interfaces must conservatively allow
+for the use of <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> by the callee.</p>
+<p>Except for <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> and known <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy arguments, the original
+contents of local designators that have been compacted into temporaries
+could optionally have their <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> components invalidated
+across the call as an aid to debugging.</p>
+<p>Except for <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> and known <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy arguments, the contents of
+the temporary storage will be copied back into the effective argument
+designator after control returns from the procedure, and it may be necessary
+to preserve addresses (or the values of subscripts and cosubscripts
+needed to recalculate them) of the effective argument designator, or its
+elements, in additional temporary storage if they can’t be safely or
+quickly recomputed after the call.</p>
+</section>
+<section id="intent-out-preparation">
+<h3><a class="toc-backref" href="#id12" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> preparation</a><a class="headerlink" href="#intent-out-preparation" title="Link to this heading">¶</a></h3>
+<p>Effective arguments that are associated with <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>
+dummy arguments are required to be definable.
+This cannot always be checked, as the use of <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>
+does not by itself mandate the use of an explicit interface.</p>
+<p><code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> arguments are finalized (as if) on entry to the called
+procedure.  In particular, in calls to elemental procedures,
+the elements of an array are finalized by a scalar or elemental
+<code class="docutils literal notranslate"><span class="pre">FINAL</span></code> procedure (7.5.6.3(7)).</p>
+<p>Derived type components that are <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> are finalized
+and deallocated; they are prohibited from being coarrays.
+Components with initializers are (re)initialized.</p>
+<p>The preparation of effective arguments for <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> could be
+done on either side of the call.  If the preparation is
+done by the caller, there is an optimization opportunity
+in situations where unmodified incoming <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> dummy
+arguments whose types lack <code class="docutils literal notranslate"><span class="pre">FINAL</span></code> procedures are being passed
+onward as outgoing <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> arguments.</p>
+</section>
+<section id="arguments-and-function-results-requiring-descriptors">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Arguments and function results requiring descriptors</a><a class="headerlink" href="#arguments-and-function-results-requiring-descriptors" title="Link to this heading">¶</a></h3>
+<p>Dummy arguments are represented with the addresses of new descriptors
+when they have any of the following characteristics:</p>
+<ol class="arabic simple">
+<li><p>assumed-shape array (<code class="docutils literal notranslate"><span class="pre">DIMENSION::A(:)</span></code>)</p></li>
+<li><p>assumed-rank array (<code class="docutils literal notranslate"><span class="pre">DIMENSION::A(..)</span></code>)</p></li>
+<li><p>parameterized derived type with assumed <code class="docutils literal notranslate"><span class="pre">LEN</span></code> parameters</p></li>
+<li><p>polymorphic (<code class="docutils literal notranslate"><span class="pre">CLASS(T)</span></code>, <code class="docutils literal notranslate"><span class="pre">CLASS(*)</span></code>)</p></li>
+<li><p>assumed-type (<code class="docutils literal notranslate"><span class="pre">TYPE(*)</span></code>)</p></li>
+<li><p>coarray dummy argument</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span> <span class="pre">POINTER</span></code> argument (15.5.2.7, C.10.4)</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> and other <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> arguments can be passed by simple
+address.</p>
+<p>Non-F77ish procedures use descriptors to represent two further
+kinds of dummy arguments:</p>
+<ol class="arabic simple">
+<li><p>assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code></p></li>
+<li><p>dummy procedures</p></li>
+</ol>
+<p>F77ish procedures use other means to convey character length and host instance
+links (respectively) for these arguments.</p>
+<p>Function results are described by the caller &amp; callee in
+a caller-supplied descriptor when they have any of the following
+characteristics, some which necessitate an explicit interface:</p>
+<ol class="arabic simple">
+<li><p>deferred-shape array (so <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> or <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>)</p></li>
+<li><p>derived type with any non-constant <code class="docutils literal notranslate"><span class="pre">LEN</span></code> parameter
+(C795 prohibit assumed lengths)</p></li>
+<li><p>procedure pointer result (when the interface must be explicit)</p></li>
+</ol>
+<p>Storage for a function call’s result is allocated by the caller when
+possible: the result is neither <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> nor <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>,
+the shape is scalar or explicit, and the type has <code class="docutils literal notranslate"><span class="pre">LEN</span></code> parameters
+that are constant expressions.
+In other words, the result doesn’t require the use of a descriptor
+but can’t be returned in registers.
+This allows a function result to be written directly into a local
+variable or temporary when it is safe to treat the variable as if
+it were an additional <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> argument.
+(Storage for <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> results, assumed or explicit, is always
+allocated by the caller, and the length is always passed so that
+an assumed-length external function will work when eventually
+called from a scope that declares the length that it will use
+(15.5.2.9 (2)).)</p>
+<p>Note that the lower bounds of the dimensions of non-<code class="docutils literal notranslate"><span class="pre">POINTER</span></code>
+non-<code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy argument arrays are determined by the
+callee, not the caller.
+(A Fortran pitfall: declaring <code class="docutils literal notranslate"><span class="pre">A(0:9)</span></code>, passing it to a dummy
+array <code class="docutils literal notranslate"><span class="pre">D(:)</span></code>, and assuming that <code class="docutils literal notranslate"><span class="pre">LBOUND(D,1)</span></code> will be zero
+in the callee.)
+If the declaration of an assumed-shape dummy argument array
+contains an explicit lower bound expression (R819), its value
+needs to be computed by the callee;
+it may be captured and saved in the incoming descriptor
+as long as we assume that argument descriptors can be modified
+by callees.
+Callers should fill in all of the fields of outgoing
+non-<code class="docutils literal notranslate"><span class="pre">POINTER</span></code> non-<code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> argument
+descriptors with the assumption that the callee will use 1 for
+lower bound values, and callees can rely on them being 1 if
+not modified.</p>
+</section>
+<section id="copying-temporary-storage-back-into-argument-designators">
+<h3><a class="toc-backref" href="#id14" role="doc-backlink">Copying temporary storage back into argument designators</a><a class="headerlink" href="#copying-temporary-storage-back-into-argument-designators" title="Link to this heading">¶</a></h3>
+<p>Except for <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> and known <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy arguments and array sections
+with vector-valued subscripts (15.5.2.4(21)), temporary storage into
+which effective argument data were compacted for contiguity before the call
+must be redistributed back to its original storage by the caller after
+the return.</p>
+<p>In conjunction with saved cosubscript values, a standard descriptor
+would suffice to represent a pointer to the original storage into which the
+temporary data should be redistributed;
+the descriptor need not be fully populated with type information.</p>
+<p>Note that coindexed objects with <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> ultimate components
+are required to be associated only with dummy arguments with the
+<code class="docutils literal notranslate"><span class="pre">VALUE</span></code> &amp;/or <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> attributes (15.6.2.4(6)), so there is no
+requirement that the local image somehow reallocate remote storage
+when copying the data back.</p>
+</section>
+<section id="polymorphic-bindings">
+<h3><a class="toc-backref" href="#id15" role="doc-backlink">Polymorphic bindings</a><a class="headerlink" href="#polymorphic-bindings" title="Link to this heading">¶</a></h3>
+<p>Calls to the type-bound procedures of monomorphic types are
+resolved at compilation time, as are calls to <code class="docutils literal notranslate"><span class="pre">NON_OVERRIDABLE</span></code>
+type-bound procedures.
+The resolution of calls to overridable type-bound procedures of
+polymorphic types must be completed at execution (generic resolution
+of type-bound procedure bindings from effective argument types, kinds,
+and ranks is always a compilation-time task (15.5.6, C.10.6)).</p>
+<p>Each derived type that declares or inherits any overridable
+type-bound procedure bindings must correspond to a static constant
+table of code addresses (or, more likely, a static constant type
+description containing or pointing to such a table, along with
+information used by the runtime support library for initialization,
+copying, finalization, and I/O of type instances).  Each overridable
+type-bound procedure in the type corresponds to an index into this table.</p>
+</section>
+<section id="host-instance-linkage">
+<h3><a class="toc-backref" href="#id16" role="doc-backlink">Host instance linkage</a><a class="headerlink" href="#host-instance-linkage" title="Link to this heading">¶</a></h3>
+<p>Calls to dummy procedures and procedure pointers that resolve to
+internal procedures need to pass an additional “host instance” argument that
+addresses a block of storage in the stack frame of their
+host subprogram that was active at the time they were passed as an
+effective argument or associated with a procedure pointer.
+This is similar to a static link in implementations of programming
+languages with nested subprograms, although Fortran only allows
+one level of nesting.
+The 64-bit x86 and little-endian OpenPower ABIs reserve registers
+for this purpose (<code class="docutils literal notranslate"><span class="pre">%r10</span></code> &amp; <code class="docutils literal notranslate"><span class="pre">R11</span></code>); 64-bit ARM has a reserved register
+that can be used (<code class="docutils literal notranslate"><span class="pre">x18</span></code>).</p>
+<p>The host subprogram objects that are visible to any of their internal
+subprograms need to be resident in memory across any calls to them
+(direct or not).  Any host subprogram object that might be defined
+during a call to an internal subprogram needs to be reloaded after
+a call or reside permanently in memory.
+A simple conservative analysis of the internal subprograms can
+identify all of these escaping objects and their definable subset.</p>
+<p>The address of the host subprogram storage used to hold the escaping
+objects needs to be saved alongside the code address(es) that
+represent a procedure pointer.
+It also needs to be conveyed alongside the text address for a
+dummy procedure.</p>
+<p>For F77ish procedures, we cannot use a “procedure pointer descriptor”
+to pass a procedure argument – they expect to receive a single
+address argument.
+We will need to package the host instance link in a trampoline
+that loads its address into the designated register.</p>
+<p>GNU Fortran and Intel Fortran construct trampolines by writing
+a sequence of machine instructions to a block of storage in the
+host’s stack frame, which requires the stack to be executable,
+which seems inadvisable for security reasons;
+XLF manages trampolines in its runtime support library, which adds some overhead
+to their construction and a reclamation obligation;
+NAG Fortran manages a static fixed-sized stack of trampolines
+per call site, imposing a hidden limit on recursion and foregoing
+reentrancy;
+PGI passes host instance links in descriptors in additional arguments
+that are not always successfully forwarded across implicit interfaces,
+sometimes leading to crashes when they turn out to be needed.</p>
+<p>Flang will manage a pool of trampolines in its runtime support library
+that can be used to pass internal procedures as effective arguments
+to F77ish procedures, so that
+a bare code address can serve to represent the effective argument.
+But targets that can only be called with an explicit interface
+have the option of using a “fat pointer” (or additional argument)
+to represent a dummy procedure closure so as
+to avoid the overhead of constructing and reclaiming a trampoline.
+Procedure descriptors can also support multiple code addresses.</p>
+</section>
+<section id="naming">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Naming</a><a class="headerlink" href="#naming" title="Link to this heading">¶</a></h3>
+<p>External subroutines and functions (R503) and <code class="docutils literal notranslate"><span class="pre">ENTRY</span></code> points (R1541)
+with <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code> (R808) have linker-visible names that are either explicitly
+specified in the program or determined by straightforward rules.
+The names of other F77ish external procedures should respect the conventions
+of the target architecture for legacy Fortran ‘77 programs; this is typically
+something like <code class="docutils literal notranslate"><span class="pre">foo_</span></code>.</p>
+<p>In other cases, however, we have fewer constraints on external naming,
+as well as some additional requirements and goals.</p>
+<p>Module procedures need to be distinguished by the name of their module
+and (when they have one) the submodule where their interface was
+defined.
+Note that submodule names are distinct in their modules, not hierarchical,
+so at most two levels of qualification are needed.</p>
+<p>Pure <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> functions (15.8) must use distinct names for any alternate
+entry points used for packed SIMD arguments of various widths if we support
+calls to these functions in SIMD parallel contexts.
+There are already conventions for these names in <code class="docutils literal notranslate"><span class="pre">libpgmath</span></code>.</p>
+<p>The names of non-F77ish external procedures
+should be distinguished as such so that incorrect attempts to call or pass
+them with an implicit interface will fail to resolve at link time.
+Fortran 2018 explicitly enables us to do this with a correction to Fortran
+2003 in 4.3.4(5).</p>
+<p>Last, there must be reasonably permanent naming conventions used
+by Flang’s runtime library for those unrestricted specific intrinsic
+functions (table 16.2 in 16.8) and extensions that can be passed as
+arguments.</p>
+<p>In these cases where external naming is at the discretion
+of the implementation, we should use names that are not in the C language
+user namespace, begin with something that identifies
+the current incompatible version of Flang, the module, the submodule, and
+elemental SIMD width, and are followed by the external name.
+The parts of the external name can be separated by some character that
+is acceptable for use in LLVM IR and assembly language but not in user
+Fortran or C code, or by switching case
+(so long as there’s a way to cope with extension names that don’t begin
+with letters).</p>
+<p>In particular, the period (<code class="docutils literal notranslate"><span class="pre">.</span></code>) seems safe to use as a separator character,
+so a <code class="docutils literal notranslate"><span class="pre">Fa.</span></code> prefix can serve to isolate these discretionary names from
+other uses and to identify the earliest link-compatible version.
+For examples: <code class="docutils literal notranslate"><span class="pre">Fa.mod.foo</span></code>, <code class="docutils literal notranslate"><span class="pre">Fa.mod.submod.foo</span></code>, and (for an external
+subprogram that requires an explicit interface) <code class="docutils literal notranslate"><span class="pre">Fa.foo</span></code>.
+When the ABI changes in the future in an incompatible way, the
+initial prefix becomes <code class="docutils literal notranslate"><span class="pre">Fb.</span></code>, <code class="docutils literal notranslate"><span class="pre">Fc.</span></code>, &amp;c.</p>
+</section>
+</section>
+<section id="summary-of-checks-to-be-enforced-in-semantics-analysis">
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">Summary of checks to be enforced in semantics analysis</a><a class="headerlink" href="#summary-of-checks-to-be-enforced-in-semantics-analysis" title="Link to this heading">¶</a></h2>
+<p>8.5.10 <code class="docutils literal notranslate"><span class="pre">INTENT</span></code> attributes</p>
+<ul class="simple">
+<li><p>(C846) An <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> argument shall not be associated with an
+object that is or has an allocatable coarray.</p></li>
+<li><p>(C847) An <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> argument shall not have <code class="docutils literal notranslate"><span class="pre">LOCK_TYPE</span></code> or <code class="docutils literal notranslate"><span class="pre">EVENT_TYPE</span></code>.</p></li>
+</ul>
+<p>8.5.18 <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> attribute</p>
+<ul class="simple">
+<li><p>(C863) The argument cannot be assumed-size, a coarray, or have a coarray
+ultimate component.</p></li>
+<li><p>(C864) The argument cannot be <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>, <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>,
+<code class="docutils literal notranslate"><span class="pre">INTENT(IN</span> <span class="pre">OUT)</span></code>, or <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code>.</p></li>
+<li><p>(C865) If the procedure is <code class="docutils literal notranslate"><span class="pre">BIND(C)</span></code>, the argument cannot be <code class="docutils literal notranslate"><span class="pre">OPTIONAL</span></code>.</p></li>
+</ul>
+<p>15.5.1 procedure references:</p>
+<ul class="simple">
+<li><p>(C1533) can’t pass non-intrinsic <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> as argument</p></li>
+<li><p>(C1536) alternate return labels must be in the inclusive scope</p></li>
+<li><p>(C1537) coindexed argument cannot have a <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> ultimate component</p></li>
+</ul>
+<p>15.5.2.4 requirements for non-<code class="docutils literal notranslate"><span class="pre">POINTER</span></code> non-<code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummies:</p>
+<ul class="simple">
+<li><p>(2) dummy must be monomorphic for coindexed polymorphic actual</p></li>
+<li><p>(2) dummy must be polymorphic for assumed-size polymorphic actual</p></li>
+<li><p>(2) dummy cannot be <code class="docutils literal notranslate"><span class="pre">TYPE(*)</span></code> if effective is PDT or has TBPs or <code class="docutils literal notranslate"><span class="pre">FINAL</span></code></p></li>
+<li><p>(4) character length of effective cannot be less than dummy</p></li>
+<li><p>(6) coindexed effective with <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> ultimate component requires
+<code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> &amp;/or <code class="docutils literal notranslate"><span class="pre">VALUE</span></code> dummy</p></li>
+<li><p>(13) a coindexed scalar effective requires a scalar dummy</p></li>
+<li><p>(14) a non-conindexed scalar effective usually requires a scalar dummy,
+but there are some exceptions that allow elements of storage sequences
+to be passed and treated like explicit-shape or assumed-size arrays
+(see 15.5.2.11)</p></li>
+<li><p>(16) array rank agreement</p></li>
+<li><p>(20) <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> &amp; <code class="docutils literal notranslate"><span class="pre">INTENT(IN</span> <span class="pre">OUT)</span></code> dummies require definable actuals</p></li>
+<li><p>(21) array sections with vector subscripts can’t be passed to definable dummies
+(<code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code>, <code class="docutils literal notranslate"><span class="pre">INTENT(IN</span> <span class="pre">OUT)</span></code>, <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code>, <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code>)</p></li>
+<li><p>(22) <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> attributes must match when dummy has a coarray ultimate component</p></li>
+<li><p>(C1538 - C1540) checks for <code class="docutils literal notranslate"><span class="pre">ASYNCHRONOUS</span></code> and <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code></p></li>
+</ul>
+<p>15.5.2.5 requirements for <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> &amp; <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> arguments when both
+the dummy and effective arguments have the same attributes:</p>
+<ul class="simple">
+<li><p>(2) both or neither can be polymorphic</p></li>
+<li><p>(2) both are unlimited polymorphic or both have the same declared type</p></li>
+<li><p>(3) rank compatibility</p></li>
+<li><p>(4) effective argument must have deferred the same type parameters as the dummy</p></li>
+</ul>
+<p>15.5.2.6 <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> dummy arguments:</p>
+<ul class="simple">
+<li><p>(2) effective must be <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code></p></li>
+<li><p>(3) corank must match</p></li>
+<li><p>(4) coindexed effective requires <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> dummy</p></li>
+<li><p>(7) <code class="docutils literal notranslate"><span class="pre">INTENT(OUT)</span></code> &amp; <code class="docutils literal notranslate"><span class="pre">INTENT(IN</span> <span class="pre">OUT)</span></code> dummies require definable actuals</p></li>
+</ul>
+<p>15.5.2.7 <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> dummy arguments:</p>
+<ul class="simple">
+<li><p>(C1541) <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code> dummy requires simply contiguous actual</p></li>
+<li><p>(C1542) effective argument cannot be coindexed unless procedure is intrinsic</p></li>
+<li><p>(2) effective argument must be <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> unless dummy is <code class="docutils literal notranslate"><span class="pre">INTENT(IN)</span></code> and
+effective could be the right-hand side of a pointer assignment statement</p></li>
+</ul>
+<p>15.5.2.8 corray dummy arguments:</p>
+<ul class="simple">
+<li><p>(1) effective argument must be coarray</p></li>
+<li><p>(1) <code class="docutils literal notranslate"><span class="pre">VOLATILE</span></code> attributes must match</p></li>
+<li><p>(2) explicitly or implicitly contiguous dummy array requires a simply contiguous actual</p></li>
+</ul>
+<p>15.5.2.9 dummy procedures:</p>
+<ul class="simple">
+<li><p>(1) explicit dummy procedure interface must have same characteristics as actual</p></li>
+<li><p>(5) dummy procedure <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> requirements on effective arguments</p></li>
+</ul>
+<p>15.6.2.1 procedure definitions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">NON_RECURSIVE</span></code> procedures cannot recurse.</p></li>
+<li><p>Assumed-length <code class="docutils literal notranslate"><span class="pre">CHARACTER(*)</span></code> functions cannot be declared as <code class="docutils literal notranslate"><span class="pre">RECURSIVE</span></code>, array-valued,
+<code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code>, or `PURE’ (C723), and cannot be called recursively (15.6.2.1(3)).</p></li>
+<li><p>(C823) A function result cannot be a coarray or contain a coarray ultimate component.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">PURE</span></code> requirements (15.7): C1583 - C1599.
+These also apply to <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> procedures that are not <code class="docutils literal notranslate"><span class="pre">IMPURE</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> requirements (15.8.1): C15100-C15103,
+and C1533 (can’t pass as effective argument unless intrinsic)</p>
+<p>For interoperable procedures and interfaces (18.3.6):</p>
+<ul class="simple">
+<li><p>C1552 - C1559</p></li>
+<li><p>function result is scalar and of interoperable type (C1553, 18.3.1-3)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">VALUE</span></code> arguments are scalar and of interoperable type</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">POINTER</span></code> dummies cannot be <code class="docutils literal notranslate"><span class="pre">CONTIGUOUS</span></code> (18.3.6 paragraph 2(5))</p></li>
+<li><p>assumed-type dummies cannot be <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code>, <code class="docutils literal notranslate"><span class="pre">POINTER</span></code>, assumed-shape, or assumed-rank (18.3.6 paragraph 2 (5))</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> dummies that are <code class="docutils literal notranslate"><span class="pre">ALLOCATABLE</span></code> or <code class="docutils literal notranslate"><span class="pre">POINTER</span></code> must be deferred-length</p></li>
+</ul>
+</section>
+<section id="further-topics-to-document">
+<h2><a class="toc-backref" href="#id19" role="doc-backlink">Further topics to document</a><a class="headerlink" href="#further-topics-to-document" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Alternate return specifiers</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">%VAL()</span></code>, <code class="docutils literal notranslate"><span class="pre">%REF()</span></code>, and <code class="docutils literal notranslate"><span class="pre">%DESCR()</span></code> legacy VMS interoperability extensions</p></li>
+<li><p>Unrestricted specific intrinsic functions as effective arguments</p></li>
+<li><p>SIMD variants of <code class="docutils literal notranslate"><span class="pre">ELEMENTAL</span></code> procedures (&amp; unrestricted specific intrinsics)</p></li>
+<li><p>Elemental subroutine calls with array arguments</p></li>
+</ul>
+</section>
+</section>
+
+
+      </div>
+      <div class="bottomnav" role="navigation" aria-label="bottom navigation">
+      
+        <p>
+        «&#160;&#160;<a href="BijectiveInternalNameUniquing.html">Bijective Internal Name Uniquing</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="Character.html">Implementation of <code class="docutils literal notranslate"><span class="pre">CHARACTER</span></code> types in Flang</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2017-2026, The Flang Team.
+      Last updated on Jan 27, 2026.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
