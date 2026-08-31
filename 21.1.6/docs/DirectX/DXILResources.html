@@ -1,0 +1,909 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>DXIL Resource Handling &#8212; LLVM 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="../_static/llvm-theme.css?v=96924833" />
+    <script src="../_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="../_static/doctools.js?v=888ff710"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="A guide to Dockerfiles for building LLVM" href="../Docker.html" />
+    <link rel="prev" title="Specification of DXIL Operations using TableGen Representation" href="DXILOpTableGenDesign.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="../index.html">
+    <img src="../_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../Docker.html" title="A guide to Dockerfiles for building LLVM"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="DXILOpTableGenDesign.html" title="Specification of DXIL Operations using TableGen Representation"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../UserGuides.html" >User Guides</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="../DirectXUsage.html" accesskey="U">User Guide for the DirectX Target</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">DXIL Resource Handling</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/DirectX/DXILResources.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="dxil-resource-handling">
+<h1>DXIL Resource Handling<a class="headerlink" href="#dxil-resource-handling" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id17">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#resource-type-information-and-properties" id="id18">Resource Type Information and Properties</a></p></li>
+<li><p><a class="reference internal" href="#types-of-resource" id="id19">Types of Resource</a></p>
+<ul>
+<li><p><a class="reference internal" href="#buffers" id="id20">Buffers</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#resource-operations" id="id21">Resource Operations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#resource-handles" id="id22">Resource Handles</a></p></li>
+<li><p><a class="reference internal" href="#accessing-resources-as-memory" id="id23">Accessing Resources as Memory</a></p></li>
+<li><p><a class="reference internal" href="#loads-samples-and-gathers" id="id24">Loads, Samples, and Gathers</a></p></li>
+<li><p><a class="reference internal" href="#stores" id="id25">Stores</a></p></li>
+<li><p><a class="reference internal" href="#constant-buffer-loads" id="id26">Constant Buffer Loads</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<div class="toctree-wrapper compound">
+</div>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id17" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Resources in DXIL are represented via <code class="docutils literal notranslate"><span class="pre">TargetExtType</span></code> in LLVM IR and
+eventually lowered by the DirectX backend into metadata in DXIL.</p>
+<p>In DXC and DXIL, static resources are represented as lists of SRVs (Shader
+Resource Views), UAVs (Uniform Access Views), CBVs (Constant Bffer Views), and
+Samplers. This metadata consists of a “resource record ID” which uniquely
+identifies a resource and type information. As of shader model 6.6, there are
+also dynamic resources, which forgo the metadata and are described via
+<code class="docutils literal notranslate"><span class="pre">annotateHandle</span></code> operations in the instruction stream instead.</p>
+<p>In LLVM we attempt to unify some of the alternative representations that are
+present in DXC, with the aim of making handling of resources in the middle end
+of the compiler simpler and more consistent.</p>
+</section>
+<section id="resource-type-information-and-properties">
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">Resource Type Information and Properties</a><a class="headerlink" href="#resource-type-information-and-properties" title="Link to this heading">¶</a></h2>
+<p>There are a number of properties associated with a resource in DXIL.</p>
+<dl>
+<dt><cite>Resource ID</cite></dt><dd><p>An arbitrary ID that must be unique per resource type (SRV, UAV, etc).</p>
+<p>In LLVM we don’t bother representing this, instead opting to generate it at
+DXIL lowering time.</p>
+</dd>
+<dt><cite>Binding information</cite></dt><dd><p>Information about where the resource comes from. This is either (a) a
+register space, lower bound in that space, and size of the binding, or (b)
+an index into a dynamic resource heap.</p>
+<p>In LLVM we represent binding information in the arguments of the
+<a class="reference internal" href="#dxil-resources-handles"><span class="std std-ref">handle creation intrinsics</span></a>. When generating
+DXIL we transform these calls to metadata, <code class="docutils literal notranslate"><span class="pre">dx.op.createHandle</span></code>,
+<code class="docutils literal notranslate"><span class="pre">dx.op.createHandleFromBinding</span></code>, <code class="docutils literal notranslate"><span class="pre">dx.op.createHandleFromHeap</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">dx.op.createHandleForLib</span></code> as needed.</p>
+</dd>
+<dt><cite>Type information</cite></dt><dd><p>The type of data that’s accessible via the resource. For buffers and
+textures this can be a simple type like <code class="docutils literal notranslate"><span class="pre">float</span></code> or <code class="docutils literal notranslate"><span class="pre">float4</span></code>, a struct,
+or raw bytes. For constant buffers this is just a size. For samplers this is
+the kind of sampler.</p>
+<p>In LLVM we embed this information as a parameter on the <code class="docutils literal notranslate"><span class="pre">target()</span></code> type of
+the resource. See <a class="reference internal" href="#dxil-resources-types-of-resource"><span class="std std-ref">Types of Resource</span></a>.</p>
+</dd>
+<dt><cite>Resource kind information</cite></dt><dd><p>The kind of resource. In HLSL we have things like <code class="docutils literal notranslate"><span class="pre">ByteAddressBuffer</span></code>,
+<code class="docutils literal notranslate"><span class="pre">RWTexture2D</span></code>, and <code class="docutils literal notranslate"><span class="pre">RasterizerOrderedStructuredBuffer</span></code>. These map to a
+set of DXIL kinds like <code class="docutils literal notranslate"><span class="pre">RawBuffer</span></code> and <code class="docutils literal notranslate"><span class="pre">Texture2D</span></code> with fields for
+certain properties such as <code class="docutils literal notranslate"><span class="pre">IsUAV</span></code> and <code class="docutils literal notranslate"><span class="pre">IsROV</span></code>.</p>
+<p>In LLVM we represent this in the <code class="docutils literal notranslate"><span class="pre">target()</span></code> type. We omit information
+that’s deriveable from the type information, but we do have fields to encode
+<code class="docutils literal notranslate"><span class="pre">IsWriteable</span></code>, <code class="docutils literal notranslate"><span class="pre">IsROV</span></code>, and <code class="docutils literal notranslate"><span class="pre">SampleCount</span></code> when needed.</p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>TODO: There are two fields in the DXIL metadata that are not
+represented as part of the target type: <code class="docutils literal notranslate"><span class="pre">IsGloballyCoherent</span></code> and
+<code class="docutils literal notranslate"><span class="pre">HasCounter</span></code>.</p>
+<p>Since these are derived from analysis, storing them on the type would mean
+we need to change the type during the compiler pipeline. That just isn’t
+practical. It isn’t entirely clear to me that we need to serialize this info
+into the IR during the compiler pipeline anyway - we can probably get away
+with an analysis pass that can calculate the information when we need it.</p>
+<p>If analysis is insufficient we’ll need something akin to <code class="docutils literal notranslate"><span class="pre">annotateHandle</span></code>
+(but limited to these two properties) or to encode these in the handle
+creation.</p>
+</div>
+</section>
+<section id="types-of-resource">
+<span id="dxil-resources-types-of-resource"></span><h2><a class="toc-backref" href="#id19" role="doc-backlink">Types of Resource</a><a class="headerlink" href="#types-of-resource" title="Link to this heading">¶</a></h2>
+<p>We define a set of <code class="docutils literal notranslate"><span class="pre">TargetExtTypes</span></code> that is similar to the HLSL
+representations for the various resources, albeit with a few things
+parameterized. This is different than DXIL, as simplifying the types to
+something like “dx.srv” and “dx.uav” types would mean the operations on these
+types would have to be overly generic.</p>
+<section id="buffers">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">Buffers</a><a class="headerlink" href="#buffers" title="Link to this heading">¶</a></h3>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">ElementType</span><span class="p">,</span><span class="w"> </span><span class="err">IsWriteable</span><span class="p">,</span><span class="w"> </span><span class="err">IsROV</span><span class="p">,</span><span class="w"> </span><span class="err">IsSigned</span><span class="p">)</span>
+<span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">ElementType</span><span class="p">,</span><span class="w"> </span><span class="err">IsWriteable</span><span class="p">,</span><span class="w"> </span><span class="err">IsROV</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>We need two separate buffer types to account for the differences between the
+16-byte <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#bufferload">bufferLoad</a> / <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#bufferstore">bufferStore</a> operations that work on DXIL’s
+TypedBuffers and the <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#rawbufferload">rawBufferLoad</a> / <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#rawbufferstore">rawBufferStore</a> operations that are
+used for DXIL’s RawBuffers and StructuredBuffers. We call the latter
+“RawBuffer” to match the naming of the operations, but it can represent both
+the Raw and Structured variants.</p>
+<p>HLSL’s Buffer and RWBuffer are represented as a TypedBuffer with an element
+type that is a scalar integer or floating point type, or a vector of at most 4
+such types. HLSL’s ByteAddressBuffer is a RawBuffer with an <cite>i8</cite> element type.
+HLSL’s StructuredBuffers are RawBuffer with a struct, vector, or scalar type.</p>
+<p>One unfortunate necessity here is that TypedBuffer needs an extra parameter to
+differentiate signed vs unsigned ints. The is because in LLVM IR int types
+don’t have a sign, so to keep this information we need a side channel.</p>
+<p>These types are generally used by BufferLoad and BufferStore operations, as
+well as atomics.</p>
+<p>There are a few fields to describe variants of all of these types:</p>
+<table class="docutils align-default" id="id6">
+<caption><span class="caption-number">Table 105 </span><span class="caption-text">Buffer Fields</span><a class="headerlink" href="#id6" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ElementType</p></td>
+<td><p>Type for a single element, such as <code class="docutils literal notranslate"><span class="pre">i8</span></code>, <code class="docutils literal notranslate"><span class="pre">v4f32</span></code>, or a structure
+type.</p></td>
+</tr>
+<tr class="row-odd"><td><p>IsWriteable</p></td>
+<td><p>Whether or not the field is writeable. This distinguishes SRVs (not
+writeable) and UAVs (writeable).</p></td>
+</tr>
+<tr class="row-even"><td><p>IsROV</p></td>
+<td><p>Whether the UAV is a rasterizer ordered view. Always <code class="docutils literal notranslate"><span class="pre">0</span></code> for SRVs.</p></td>
+</tr>
+<tr class="row-odd"><td><p>IsSigned</p></td>
+<td><p>Whether an int element type is signed (“dx.TypedBuffer” only)</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="resource-operations">
+<h2><a class="toc-backref" href="#id21" role="doc-backlink">Resource Operations</a><a class="headerlink" href="#resource-operations" title="Link to this heading">¶</a></h2>
+<section id="resource-handles">
+<span id="dxil-resources-handles"></span><h3><a class="toc-backref" href="#id22" role="doc-backlink">Resource Handles</a><a class="headerlink" href="#resource-handles" title="Link to this heading">¶</a></h3>
+<p>We provide a few different ways to instantiate resources in the IR via the
+<code class="docutils literal notranslate"><span class="pre">llvm.dx.handle.*</span></code> intrinsics. These intrinsics are overloaded on return
+type, returning an appropriate handle for the resource, and represent binding
+information in the arguments to the intrinsic.</p>
+<p>The three operations we need are <code class="docutils literal notranslate"><span class="pre">llvm.dx.resource.handlefrombinding</span></code>,
+<code class="docutils literal notranslate"><span class="pre">llvm.dx.handle.fromHeap</span></code>, and <code class="docutils literal notranslate"><span class="pre">llvm.dx.handle.fromPointer</span></code>. These are
+rougly equivalent to the DXIL operations <code class="docutils literal notranslate"><span class="pre">dx.op.createHandleFromBinding</span></code>,
+<code class="docutils literal notranslate"><span class="pre">dx.op.createHandleFromHeap</span></code>, and <code class="docutils literal notranslate"><span class="pre">dx.op.createHandleForLib</span></code>, but they fold
+the subsequent <code class="docutils literal notranslate"><span class="pre">dx.op.annotateHandle</span></code> operation in. Note that we don’t have
+an analogue for <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#resource-handles">dx.op.createHandle</a>, since <code class="docutils literal notranslate"><span class="pre">dx.op.createHandleFromBinding</span></code>
+subsumes it.</p>
+<p>We diverge from DXIL and index from the beginning of the binding rather than
+indexing from the beginning of the binding space. This matches the semantics
+more clearly and avoids a non-obvious invariant in what constitutes valid
+arguments.</p>
+<table class="docutils align-default" id="id7">
+<caption><span class="caption-number">Table 106 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.handlefrombinding</span></code></span><a class="headerlink" href="#id7" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A <code class="docutils literal notranslate"><span class="pre">target()</span></code> type</p></td>
+<td><p>A handle which can be operated on</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%reg_space</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Register space ID in the root signature for this resource.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%lower_bound</span></code></p></td>
+<td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Lower bound of the binding in its register space.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%range_size</span></code></p></td>
+<td><p>3</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Range size of the binding.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index from the beginning of the binding.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%non-uniform</span></code></p></td>
+<td><p>5</p></td>
+<td><p>i1</p></td>
+<td><p>Must be <code class="docutils literal notranslate"><span class="pre">true</span></code> if the resource index may be non-uniform.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>TODO: Can we drop the uniformity bit? I suspect we can derive it from
+uniformity analysis…</p>
+</div>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; RWBuffer&lt;float4&gt; Buf : register(u5, space3)</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">     </span><span class="vg">@llvm.dx.resource.handlefrombinding.tdx.TypedBuffer_f32_1_0</span><span class="p">(</span>
+<span class="w">         </span><span class="kt">i32</span><span class="w"> </span><span class="m">3</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">5</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+
+<span class="c">; RWBuffer&lt;int&gt; Buf : register(u7, space2)</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">)</span>
+<span class="w">     </span><span class="vg">@llvm.dx.resource.handlefrombinding.tdx.TypedBuffer_i32_1_0t</span><span class="p">(</span>
+<span class="w">         </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">7</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+
+<span class="c">; Buffer&lt;uint4&gt; Buf[24] : register(t3, space5)</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">     </span><span class="vg">@llvm.dx.resource.handlefrombinding.tdx.TypedBuffer_i32_0_0t</span><span class="p">(</span>
+<span class="w">         </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">7</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">24</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+
+<span class="c">; struct S { float4 a; uint4 b; };</span>
+<span class="c">; StructuredBuffer&lt;S&gt; Buf : register(t2, space4)</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;},</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.handlefrombinding.tdx.RawBuffer_sl_v4f32v4i32s_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+
+<span class="c">; ByteAddressBuffer Buf : register(t8, space1)</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.handlefrombinding.tdx.RawBuffer_i8_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">8</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+
+<span class="c">; RWBuffer&lt;float4&gt; Global[3] : register(u6, space5)</span>
+<span class="c">; RWBuffer&lt;float4&gt; Buf = Global[2];</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.handlefrombinding.tdx.TypedBuffer_f32_1_0</span><span class="p">(</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">5</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">6</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">3</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+</pre></div>
+</div>
+<table class="docutils align-default" id="id8">
+<caption><span class="caption-number">Table 107 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.handle.fromHeap</span></code></span><a class="headerlink" href="#id8" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A <code class="docutils literal notranslate"><span class="pre">target()</span></code> type</p></td>
+<td><p>A handle which can be operated on</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index of the resource to access.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%non-uniform</span></code></p></td>
+<td><p>1</p></td>
+<td><p>i1</p></td>
+<td><p>Must be <code class="docutils literal notranslate"><span class="pre">true</span></code> if the resource index may be non-uniform.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; RWStructuredBuffer&lt;float4&gt; Buf = ResourceDescriptorHeap[2];</span>
+<span class="k">declare</span>
+<span class="w">  </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">  </span><span class="vg">@llvm.dx.handle.fromHeap.tdx.RawBuffer_v4f32_1_0</span><span class="p">(</span>
+<span class="w">      </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="nv">%non_uniform</span><span class="p">)</span>
+<span class="c">; ...</span>
+<span class="nv">%buf</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="err">f</span><span class="m">32</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">            </span><span class="vg">@llvm.dx.handle.fromHeap.tdx.RawBuffer_v4f32_1_0</span><span class="p">(</span>
+<span class="w">                </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="w"> </span><span class="k">false</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="accessing-resources-as-memory">
+<h3><a class="toc-backref" href="#id23" role="doc-backlink">Accessing Resources as Memory</a><a class="headerlink" href="#accessing-resources-as-memory" title="Link to this heading">¶</a></h3>
+<p><em>relevant types: Buffers and Textures</em></p>
+<p>Loading and storing from resources is generally represented in LLVM using
+operations on memory that is only accessible via a handle object. Given a
+handle, <cite>llvm.dx.resource.getpointer</cite> gives a pointer that can be used to read
+and (depending on type) write to the resource.</p>
+<p>Accesses using <cite>llvm.dx.resource.getpointer</cite> are replaced with direct load and
+store operations in the <cite>DXILResourceAccess</cite> pass. These direct loads and
+stores are described later in this document.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Currently the pointers returned by <cite>dx.resource.getpointer</cite> are in
+the default address space, but that will likely change in the future.</p>
+</div>
+<table class="docutils align-default" id="id9">
+<caption><span class="caption-number">Table 108 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.getpointer</span></code></span><a class="headerlink" href="#id9" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>Pointer</p></td>
+<td><p>A pointer to an object in the buffer</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.TypedBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to access</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%ptr</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="kt">ptr</span><span class="w"> </span><span class="vg">@llvm.dx.resource.getpointer.p0.tdx.TypedBuffer_v4f32_0_0_0t</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="loads-samples-and-gathers">
+<h3><a class="toc-backref" href="#id24" role="doc-backlink">Loads, Samples, and Gathers</a><a class="headerlink" href="#loads-samples-and-gathers" title="Link to this heading">¶</a></h3>
+<p><em>relevant types: Buffers and Textures</em></p>
+<p>All load, sample, and gather operations in DXIL return a <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#resource-operation-return-types">ResRet</a> type. These
+types are structs containing 4 elements of some basic type, and a 5th element
+that is used by the <a class="reference external" href="https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/checkaccessfullymapped">CheckAccessFullyMapped</a> operation. Some of these
+operations, like <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#rawbufferload">RawBufferLoad</a> include a mask and/or alignment that tell us
+some information about how to interpret those four values.</p>
+<p>In the LLVM IR representations of these operations we instead return scalars or
+vectors, but we keep the requirement that we only return up to 4 elements of a
+basic type. This avoids some unnecessary casting and structure manipulation in
+the intermediate format while also keeping lowering to DXIL straightforward.</p>
+<p>LLVM intrinsics that map to operations returning <cite>ResRet</cite> return an anonymous
+struct with element-0 being the scalar or vector type, and element-1 being the
+<code class="docutils literal notranslate"><span class="pre">i1</span></code> result of a <code class="docutils literal notranslate"><span class="pre">CheckAccessFullyMapped</span></code> call. We don’t have a separate
+call to <code class="docutils literal notranslate"><span class="pre">CheckAccessFullyMapped</span></code> at all, since that’s the only operation that
+can possibly be done on this value. In practice this may mean we insert a DXIL
+operation for the check when this was missing in the HLSL source, but this
+actually matches DXC’s behaviour in practice.</p>
+<p>For TypedBuffer and Texture, we map directly from the contained type of the
+resource to the return value of the intrinsic. Since these resources are
+constrained to contain only scalars and vectors of up to 4 elements, the
+lowering to DXIL ops is generally straightforward. The one exception we have
+here is that <cite>double</cite> types in the elements are special - these are allowed in
+the LLVM intrinsics, but are lowered to pairs of <cite>i32</cite> followed by
+<code class="docutils literal notranslate"><span class="pre">MakeDouble</span></code> operations for DXIL.</p>
+<table class="docutils align-default" id="id10">
+<caption><span class="caption-number">Table 109 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.load.typedbuffer</span></code></span><a class="headerlink" href="#id10" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A structure of the contained type and the check bit</p></td>
+<td><p>The data loaded from the buffer and the check bit</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.TypedBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to load from</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.typedbuffer.v4f32.tdx.TypedBuffer_v4f32_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.typedbuffer.f32.tdx.TypedBuffer_f32_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.typedbuffer.v4i32.tdx.TypedBuffer_v4i32_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">half</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.typedbuffer.v4f16.tdx.TypedBuffer_v4f16_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">half</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">2</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">double</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.typedbuffer.v2f64.tdx.TypedBuffer_v2f64_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">2</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">double</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>For RawBuffer, an HLSL load operation may return an arbitrarily sized result,
+but we still constrain the LLVM intrinsic to return only up to 4 elements of a
+basic type. This means that larger loads are represented as a series of loads,
+which matches DXIL. Unlike in the <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#rawbufferload">RawBufferLoad</a> operation, we do not need
+arguments for the mask/type size and alignment, since we can calculate these
+from the return type of the load during lowering.</p>
+<table class="docutils align-default" id="id11">
+<caption><span class="caption-number">Table 110 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.load.rawbuffer</span></code></span><a class="headerlink" href="#id11" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A structure of a scalar or vector and the check bit</p></td>
+<td><p>The data loaded from the buffer and the check bit</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.RawBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to load from</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%offset</span></code></p></td>
+<td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Offset into the structure at the given index</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; float</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.f32.tdx.RawBuffer_f32_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.f32.tdx.RawBuffer_i8_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%byte_offset</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+
+<span class="c">; float4</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.v4f32.tdx.RawBuffer_v4f32_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.v4f32.tdx.RawBuffer_i8_0_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%byte_offset</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+
+<span class="c">; struct S0 { float4 f; int4 i; };</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.v4f32.tdx.RawBuffer_sl_v4f32v4i32s_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;},</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.v4i32.tdx.RawBuffer_sl_v4f32v4i32s_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;},</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">1</span><span class="p">)</span>
+
+<span class="c">; struct Q { float4 f; int3 i; }</span>
+<span class="c">; struct R { int z; S x; }</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.i32</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;}},</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">            </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.i32</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;}},</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">            </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">4</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.i32</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;}},</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">            </span><span class="nv">%buffer</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">20</span><span class="p">)</span>
+
+<span class="c">; byteaddressbuf.Load&lt;int64_t4&gt;</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i64</span><span class="p">&gt;,</span><span class="w"> </span><span class="kt">i1</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.rawbuffer.v4i64.tdx.RawBuffer_i8_0_0t</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%byte_offset</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="stores">
+<h3><a class="toc-backref" href="#id25" role="doc-backlink">Stores</a><a class="headerlink" href="#stores" title="Link to this heading">¶</a></h3>
+<p><em>relevant types: Textures and Buffer</em></p>
+<p>The <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#texturestore">TextureStore</a>, <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#bufferstore">BufferStore</a>, and <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#rawbufferstore">RawBufferStore</a> DXIL operations
+write four components to a texture or a buffer. These include a mask argument
+that is used when fewer than 4 components are written, but notably this only
+takes on the contiguous x, xy, xyz, and xyzw values.</p>
+<p>We define the LLVM store intrinsics to accept vectors when storing multiple
+components rather than using <cite>undef</cite> and a mask, but otherwise match the DXIL
+ops fairly closely.</p>
+<p>For TypedBuffer, we only need one coordinate, and we must always write a vector
+since partial writes aren’t possible. Similarly to the load operations
+described above, we handle 64-bit types specially and only handle 2-element
+vectors rather than 4.</p>
+<p>Examples:</p>
+<table class="docutils align-default" id="id12">
+<caption><span class="caption-number">Table 111 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.store.typedbuffer</span></code></span><a class="headerlink" href="#id12" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">void</span></code></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.TypedBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to store into</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%data</span></code></p></td>
+<td><p>2</p></td>
+<td><p>A 4- or 2-element vector of the type of the buffer</p></td>
+<td><p>The data to store</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.typedbuffer.tdx.Buffer_v4f32_1_0_0t</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">f</span><span class="m">32</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buf</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="err">f</span><span class="m">32</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.typedbuffer.tdx.Buffer_v4f16_1_0_0t</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">f</span><span class="m">16</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buf</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="err">f</span><span class="m">16</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.typedbuffer.tdx.Buffer_v2f64_1_0_0t</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.TypedBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">f</span><span class="m">64</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buf</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">2</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="err">f</span><span class="m">64</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>For RawBuffer, we need two indices and we accept scalars and vectors of 4 or
+fewer elements. Note that we do allow vectors of 4 64-bit elements here.</p>
+<p>Examples:</p>
+<table class="docutils align-default" id="id13">
+<caption><span class="caption-number">Table 112 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.store.rawbuffer</span></code></span><a class="headerlink" href="#id13" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">void</span></code></p></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.RawBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to store into</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%offset</span></code></p></td>
+<td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Byte offset into structured buffer elements</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%data</span></code></p></td>
+<td><p>3</p></td>
+<td><p>Scalar or vector</p></td>
+<td><p>The data to store</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="c">; float</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.tdx.RawBuffer_f32_1_0_0t.f32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.tdx.RawBuffer_i8_1_0_0t.f32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+
+<span class="c">; float4</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.tdx.RawBuffer_v4f32_1_0_0t.v4f32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.tdx.RawBuffer_i8_1_0_0t.v4f32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+
+<span class="c">; struct S0 { float4 f; int4 i; }</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.v4f32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data0</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.v4i32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">16</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">i32</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data1</span><span class="p">)</span>
+
+<span class="c">; struct Q { float4 f; int3 i; }</span>
+<span class="c">; struct R { int z; S x; }</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.i32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">half</span><span class="p">&gt;}},</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">        </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%data0</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.v4f32</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">half</span><span class="p">&gt;}},</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">        </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data1</span><span class="p">)</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.v3f16</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="p">{&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">float</span><span class="p">&gt;,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">half</span><span class="p">&gt;}},</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span>
+<span class="w">        </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">20</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">3</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">half</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data2</span><span class="p">)</span>
+
+<span class="c">; byteaddressbuf.Store&lt;int64_t4&gt;</span>
+<span class="k">call</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@llvm.dx.resource.store.rawbuffer.tdx.RawBuffer_i8_1_0_0t.v4f64</span><span class="p">(</span>
+<span class="w">    </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.RawBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">)</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">    </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="p">&lt;</span><span class="m">4</span><span class="w"> </span><span class="k">x</span><span class="w"> </span><span class="kt">double</span><span class="p">&gt;</span><span class="w"> </span><span class="nv">%data</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="constant-buffer-loads">
+<h3><a class="toc-backref" href="#id26" role="doc-backlink">Constant Buffer Loads</a><a class="headerlink" href="#constant-buffer-loads" title="Link to this heading">¶</a></h3>
+<p><em>relevant types: CBuffers</em></p>
+<p>The <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#cbufferLoadLegacy">CBufferLoadLegacy</a> operation, which despite the name is the only
+supported way to load from a cbuffer in any DXIL version, loads a single “row”
+of a cbuffer, which is exactly 16 bytes. The return value of the operation is
+represented by a <a class="reference external" href="https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/DXIL.rst#cbufferloadlegacy">CBufRet</a> type, which has variants for 2 64-bit values, 4
+32-bit values, and 8 16-bit values.</p>
+<p>We represent these in LLVM IR with 3 separate operations, which return a
+2-element, 4-element, or 8-element struct respectively.</p>
+<table class="docutils align-default" id="id14">
+<caption><span class="caption-number">Table 113 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.load.cbufferrow.4</span></code></span><a class="headerlink" href="#id14" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A struct of 4 32-bit values</p></td>
+<td><p>A single row of a cbuffer, interpreted as 4 32-bit values</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.CBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to load from</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.cbufferrow.4</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.CBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.Layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">float</span><span class="p">},</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">))</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.cbufferrow.4</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.CBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.Layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i32</span><span class="p">},</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">))</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+</pre></div>
+</div>
+<table class="docutils align-default" id="id15">
+<caption><span class="caption-number">Table 114 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.load.cbufferrow.2</span></code></span><a class="headerlink" href="#id15" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A struct of 2 64-bit values</p></td>
+<td><p>A single row of a cbuffer, interpreted as 2 64-bit values</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.CBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to load from</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">double</span><span class="p">,</span><span class="w"> </span><span class="kt">double</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.cbufferrow.2</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.CBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.Layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">double</span><span class="p">},</span><span class="w"> </span><span class="m">8</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">))</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.cbufferrow.2</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.CBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.Layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i64</span><span class="p">},</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">))</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+</pre></div>
+</div>
+<table class="docutils align-default" id="id16">
+<caption><span class="caption-number">Table 115 </span><span class="caption-text"><code class="docutils literal notranslate"><span class="pre">&#64;llvm.dx.resource.load.cbufferrow.8</span></code></span><a class="headerlink" href="#id16" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Argument</p></th>
+<th class="head"></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Return value</p></td>
+<td></td>
+<td><p>A struct of 8 16-bit values</p></td>
+<td><p>A single row of a cbuffer, interpreted as 8 16-bit values</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">%buffer</span></code></p></td>
+<td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">target(dx.CBuffer,</span> <span class="pre">...)</span></code></p></td>
+<td><p>The buffer to load from</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">%index</span></code></p></td>
+<td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">i32</span></code></p></td>
+<td><p>Index into the buffer</p></td>
+</tr>
+</tbody>
+</table>
+<p>Examples:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">,</span><span class="w"> </span><span class="kt">half</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.cbufferrow.8</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.CBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.Layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">half</span><span class="p">},</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">))</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+<span class="nv">%ret</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">call</span><span class="w"> </span><span class="p">{</span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span><span class="w"> </span><span class="kt">i16</span><span class="p">}</span>
+<span class="w">    </span><span class="vg">@llvm.dx.resource.load.cbufferrow.8</span><span class="p">(</span>
+<span class="w">        </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.CBuffer&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">target</span><span class="p">(</span><span class="s">&quot;dx.Layout&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="kt">i16</span><span class="p">},</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="m">0</span><span class="p">))</span><span class="w"> </span><span class="nv">%buffer</span><span class="p">,</span>
+<span class="w">        </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%index</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../Docker.html" title="A guide to Dockerfiles for building LLVM"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="DXILOpTableGenDesign.html" title="Specification of DXIL Operations using TableGen Representation"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="../index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="../UserGuides.html" >User Guides</a> &#187;</li>
+          <li class="nav-item nav-item-2"><a href="../DirectXUsage.html" >User Guide for the DirectX Target</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">DXIL Resource Handling</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-11-20.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

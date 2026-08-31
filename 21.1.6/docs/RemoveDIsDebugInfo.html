@@ -1,0 +1,576 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Debug info migration: From intrinsics to records &#8212; LLVM 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="User Guide for RISC-V Target" href="RISCVUsage.html" />
+    <link rel="prev" title="Remarks" href="Remarks.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="RISCVUsage.html" title="User Guide for RISC-V Target"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="Remarks.html" title="Remarks"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debug info migration: From intrinsics to records</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/RemoveDIsDebugInfo.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="debug-info-migration-from-intrinsics-to-records">
+<h1>Debug info migration: From intrinsics to records<a class="headerlink" href="#debug-info-migration-from-intrinsics-to-records" title="Link to this heading">¶</a></h1>
+<p>We’re planning on removing debug info intrinsics from LLVM, as they’re slow, unwieldy and can confuse optimisation passes if they’re not expecting them. Instead of having a sequence of instructions that looks like this:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>    %add = add i32 %foo, %bar
+    call void @llvm.dbg.value(metadata %add, ...
+    %sub = sub i32 %add, %tosub
+    call void @llvm.dbg.value(metadata %sub, ...
+    call void @a_normal_function()
+</pre></div>
+</div>
+<p>with <code class="docutils literal notranslate"><span class="pre">dbg.value</span></code> intrinsics representing debug info records, it would instead be printed as:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>    %add = add i32 %foo, %bar
+      #dbg_value(%add, ...
+    %sub = sub i32 %add, %tosub
+      #dbg_value(%sub, ...
+    call void @a_normal_function()
+</pre></div>
+</div>
+<p>The debug records are not instructions, do not appear in the instruction list, and won’t appear in your optimisation passes unless you go digging for them deliberately.</p>
+</section>
+<section id="great-what-do-i-need-to-do">
+<h1>Great, what do I need to do!<a class="headerlink" href="#great-what-do-i-need-to-do" title="Link to this heading">¶</a></h1>
+<p>We’ve largely completed the migration. The remaining rough edge is that going forwards, instructions must be inserted into basic blocks using iterators rather than instruction pointers. In almost all circumstances you can just call <code class="docutils literal notranslate"><span class="pre">getIterator</span></code> on an instruction pointer – however, if you call a function that returns the start of a basic block, such as:</p>
+<ol class="arabic simple">
+<li><p>BasicBlock::begin</p></li>
+<li><p>BasicBlock::getFirstNonPHIIt</p></li>
+<li><p>BasicBlock::getFirstInsertionPt</p></li>
+</ol>
+<p>Then you must past that iterator into the insertion function without modification (the iterator carries a debug-info bit). That’s all! Read on for a more detailed explanation.</p>
+<section id="api-changes">
+<h2>API Changes<a class="headerlink" href="#api-changes" title="Link to this heading">¶</a></h2>
+<p>There are two significant changes to be aware of. Firstly, we’re adding a single bit of debug relevant data to the <code class="docutils literal notranslate"><span class="pre">BasicBlock::iterator</span></code> class (it’s so that we can determine whether ranges intend on including debug info at the beginning of a block or not). That means when writing passes that insert LLVM IR instructions, you need to identify positions with <code class="docutils literal notranslate"><span class="pre">BasicBlock::iterator</span></code> rather than just a bare <code class="docutils literal notranslate"><span class="pre">Instruction</span> <span class="pre">*</span></code>. Most of the time this means that after identifying where you intend on inserting something, you must also call <code class="docutils literal notranslate"><span class="pre">getIterator</span></code> on the instruction position – however when inserting at the start of a block you <em>must</em> use <code class="docutils literal notranslate"><span class="pre">getFirstInsertionPt</span></code>, <code class="docutils literal notranslate"><span class="pre">getFirstNonPHIIt</span></code> or <code class="docutils literal notranslate"><span class="pre">begin</span></code> and use that iterator to insert, rather than just fetching a pointer to the first instruction.</p>
+<p>The second matter is that if you transfer sequences of instructions from one place to another manually, i.e. repeatedly using <code class="docutils literal notranslate"><span class="pre">moveBefore</span></code> where you might have used <code class="docutils literal notranslate"><span class="pre">splice</span></code>, then you should instead use the method <code class="docutils literal notranslate"><span class="pre">moveBeforePreserving</span></code>. <code class="docutils literal notranslate"><span class="pre">moveBeforePreserving</span></code> will transfer debug info records with the instruction they’re attached to. This is something that happens automatically today – if you use <code class="docutils literal notranslate"><span class="pre">moveBefore</span></code> on every element of an instruction sequence, then debug intrinsics will be moved in the normal course of your code, but we lose this behaviour with non-instruction debug info.</p>
+<p>For a more in-depth overview of how to update existing code to support debug records, see <a class="reference internal" href="#how-to-update-existing-code">the guide below</a>.</p>
+</section>
+<section id="textual-ir-changes">
+<h2>Textual IR Changes<a class="headerlink" href="#textual-ir-changes" title="Link to this heading">¶</a></h2>
+<p>As we change from using debug intrinsics to debug records, any tools that depend on parsing IR produced by LLVM will need to handle the new format. For the most part, the difference between the printed form of a debug intrinsic call and a debug record is trivial:</p>
+<ol class="arabic simple">
+<li><p>An extra 2 spaces of indentation are added.</p></li>
+<li><p>The text <code class="docutils literal notranslate"><span class="pre">(tail|notail|musttail)?</span> <span class="pre">call</span> <span class="pre">void</span> <span class="pre">&#64;llvm.dbg.&lt;type&gt;</span></code> is replaced with <code class="docutils literal notranslate"><span class="pre">#dbg_&lt;type&gt;</span></code>.</p></li>
+<li><p>The leading <code class="docutils literal notranslate"><span class="pre">metadata</span> </code> is removed from each argument to the intrinsic.</p></li>
+<li><p>The DILocation changes from being an instruction attachment with the format <code class="docutils literal notranslate"><span class="pre">!dbg</span> <span class="pre">!&lt;Num&gt;</span></code>, to being an ordinary argument, i.e. <code class="docutils literal notranslate"><span class="pre">!&lt;Num&gt;</span></code>, that is passed as the final argument to the debug record.</p></li>
+</ol>
+<p>Following these rules, we have this example of a debug intrinsic and the equivalent debug record:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>; Debug Intrinsic:
+  call void @llvm.dbg.value(metadata i32 %add, metadata !10, metadata !DIExpression()), !dbg !20
+; Debug Record:
+    #dbg_value(i32 %add, !10, !DIExpression(), !20)
+</pre></div>
+</div>
+<section id="test-updates">
+<h3>Test updates<a class="headerlink" href="#test-updates" title="Link to this heading">¶</a></h3>
+<p>Any tests downstream of the main LLVM repo that test the IR output of LLVM may break as a result of the change to using records. Updating an individual test to expect records instead of intrinsics should be trivial, given the update rules above. Updating many tests may be burdensome however; to update the lit tests in the main repository, the following steps were used:</p>
+<ol class="arabic">
+<li><p>Collect the list of failing lit tests into a single file, <code class="docutils literal notranslate"><span class="pre">failing-tests.txt</span></code>, separated by (and ending with) newlines.</p></li>
+<li><p>Use the following line to split the failing tests into tests that use update_test_checks and tests that don’t:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ while IFS= read -r f; do grep -q &quot;Assertions have been autogenerated by&quot; &quot;$f&quot; &amp;&amp; echo &quot;$f&quot; &gt;&gt; update-checks-tests.txt || echo &quot;$f&quot; &gt;&gt; manual-tests.txt; done &lt; failing-tests.txt
+</pre></div>
+</div>
+</li>
+<li><p>For the tests that use update_test_checks, run the appropriate update_test_checks script - for the main LLVM repo, this was achieved with:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ xargs ./llvm/utils/update_test_checks.py --opt-binary ./build/bin/opt &lt; update-checks-tests.txt
+$ xargs ./llvm/utils/update_cc_test_checks.py --llvm-bin ./build/bin/ &lt; update-checks-tests.txt
+</pre></div>
+</div>
+</li>
+<li><p>The remaining tests can be manually updated, although if there is a large number of tests then the following scripts may be useful; firstly, a script used to extract the check-line prefixes from a file:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ cat ./get-checks.sh
+#!/bin/bash
+
+# Always add CHECK, since it&#39;s more effort than it&#39;s worth to filter files where
+# every RUN line uses other check prefixes.
+# Then detect every instance of &quot;check-prefix(es)=...&quot; and add the
+# comma-separated arguments as extra checks.
+for filename in &quot;$@&quot;
+do
+    echo &quot;$filename,CHECK&quot;
+    allchecks=$(grep -Eo &#39;check-prefix(es)?[ =][A-Z0-9_,-]+&#39; $filename | sed -E &#39;s/.+[= ]([A-Z0-9_,-]+).*/\1/g; s/,/\n/g&#39;)
+    for check in $allchecks; do
+        echo &quot;$filename,$check&quot;
+    done
+done
+</pre></div>
+</div>
+<p>Then a second script to perform the work of actually updating the check-lines in each of the failing tests, with a series of simple substitution patterns:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ cat ./substitute-checks.sh
+#!/bin/bash
+
+file=&quot;$1&quot;
+check=&quot;$2&quot;
+
+# Any test that explicitly tests debug intrinsic output is not suitable to
+# update by this script.
+if grep -q &quot;write-experimental-debuginfo=false&quot; &quot;$file&quot;; then
+    exit 0
+fi
+
+sed -i -E -e &quot;
+/(#|;|\/\/).*$check[A-Z0-9_\-]*:/!b
+/DIGlobalVariableExpression/b
+/!llvm.dbg./bpostcall
+s/((((((no|must)?tail )?call.*)?void )?@)?llvm.)?dbg\.([a-z]+)/#dbg_\7/
+:postcall
+/declare #dbg_/d
+s/metadata //g
+s/metadata\{/{/g
+s/DIExpression\(([^)]*)\)\)(,( !dbg)?)?/DIExpression(\1),/
+/#dbg_/!b
+s/((\))?(,) )?!dbg (![0-9]+)/\3\4\2/
+s/((\))?(, ))?!dbg/\3/
+&quot; &quot;$file&quot;
+</pre></div>
+</div>
+<p>Both of these scripts combined can be used on the list in <code class="docutils literal notranslate"><span class="pre">manual-tests.txt</span></code> as follows:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ cat manual-tests.txt | xargs ./get-checks.sh | sort | uniq | awk -F &#39;,&#39; &#39;{ system(&quot;./substitute-checks.sh &quot; $1 &quot; &quot; $2) }&#39;
+</pre></div>
+</div>
+<p>These scripts dealt successfully with the vast majority of checks in <code class="docutils literal notranslate"><span class="pre">clang/test</span></code> and <code class="docutils literal notranslate"><span class="pre">llvm/test</span></code>.</p>
+</li>
+<li><p>Verify the resulting tests pass, and detect any failing tests:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>$ xargs ./build/bin/llvm-lit -q &lt; failing-tests.txt
+********************
+Failed Tests (5):
+LLVM :: DebugInfo/Generic/dbg-value-lower-linenos.ll
+LLVM :: Transforms/HotColdSplit/transfer-debug-info.ll
+LLVM :: Transforms/ObjCARC/basic.ll
+LLVM :: Transforms/ObjCARC/ensure-that-exception-unwind-path-is-visited.ll
+LLVM :: Transforms/SafeStack/X86/debug-loc2.ll
+
+
+Total Discovered Tests: 295
+Failed: 5 (1.69%)
+</pre></div>
+</div>
+</li>
+<li><p>Some tests may have failed - the update scripts are simplistic and preserve no context across lines, and so there are cases that they will not handle; the remaining cases must be manually updated (or handled by further scripts).</p></li>
+</ol>
+</section>
+</section>
+</section>
+<section id="c-api-changes">
+<h1>C-API changes<a class="headerlink" href="#c-api-changes" title="Link to this heading">¶</a></h1>
+<p>Some new functions that have been added are temporary and will be deprecated in the future. The intention is that they’ll help downstream projects adapt during the transition period.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Deleted</span> <span class="n">functions</span>
+<span class="o">-----------------</span>
+<span class="n">LLVMDIBuilderInsertDeclareBefore</span>   <span class="c1"># Insert a debug record (new debug info format) instead of a debug intrinsic (old debug info format).</span>
+<span class="n">LLVMDIBuilderInsertDeclareAtEnd</span>    <span class="c1"># Same as above.</span>
+<span class="n">LLVMDIBuilderInsertDbgValueBefore</span>  <span class="c1"># Same as above.</span>
+<span class="n">LLVMDIBuilderInsertDbgValueAtEnd</span>   <span class="c1"># Same as above.</span>
+
+<span class="n">New</span> <span class="n">functions</span> <span class="p">(</span><span class="n">to</span> <span class="n">be</span> <span class="n">deprecated</span><span class="p">)</span>
+<span class="o">--------------------------------</span>
+<span class="n">LLVMIsNewDbgInfoFormat</span>     <span class="c1"># Returns true if the module is in the new non-instruction mode.</span>
+<span class="n">LLVMSetIsNewDbgInfoFormat</span>  <span class="c1"># Convert to the requested debug info format.</span>
+
+<span class="n">New</span> <span class="n">functions</span> <span class="p">(</span><span class="n">no</span> <span class="n">plans</span> <span class="n">to</span> <span class="n">deprecate</span><span class="p">)</span>
+<span class="o">-------------------------------------</span>
+<span class="n">LLVMGetFirstDbgRecord</span>                    <span class="c1"># Obtain the first debug record attached to an instruction.</span>
+<span class="n">LLVMGetLastDbgRecord</span>                     <span class="c1"># Obtain the last debug record attached to an instruction.</span>
+<span class="n">LLVMGetNextDbgRecord</span>                     <span class="c1"># Get next debug record or NULL.</span>
+<span class="n">LLVMGetPreviousDbgRecord</span>                 <span class="c1"># Get previous debug record or NULL.</span>
+<span class="n">LLVMDIBuilderInsertDeclareRecordBefore</span>   <span class="c1"># Insert a debug record (new debug info format).</span>
+<span class="n">LLVMDIBuilderInsertDeclareRecordAtEnd</span>    <span class="c1"># Same as above. See info below.</span>
+<span class="n">LLVMDIBuilderInsertDbgValueRecordBefore</span>  <span class="c1"># Same as above. See info below.</span>
+<span class="n">LLVMDIBuilderInsertDbgValueRecordAtEnd</span>   <span class="c1"># Same as above. See info below.</span>
+
+<span class="n">LLVMPositionBuilderBeforeDbgRecords</span>          <span class="c1"># See info below.</span>
+<span class="n">LLVMPositionBuilderBeforeInstrAndDbgRecords</span>  <span class="c1"># See info below.</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">LLVMDIBuilderInsertDeclareRecordBefore</span></code>, <code class="docutils literal notranslate"><span class="pre">LLVMDIBuilderInsertDeclareRecordAtEnd</span></code>, <code class="docutils literal notranslate"><span class="pre">LLVMDIBuilderInsertDbgValueRecordBefore</span></code> and <code class="docutils literal notranslate"><span class="pre">LLVMDIBuilderInsertDbgValueRecordAtEnd</span></code> are replacing the deleted <code class="docutils literal notranslate"><span class="pre">LLVMDIBuilderInsertDeclareBefore-style</span></code> functions.</p>
+<p><code class="docutils literal notranslate"><span class="pre">LLVMPositionBuilderBeforeDbgRecords</span></code> and <code class="docutils literal notranslate"><span class="pre">LLVMPositionBuilderBeforeInstrAndDbgRecords</span></code> behave the same as <code class="docutils literal notranslate"><span class="pre">LLVMPositionBuilder</span></code> and <code class="docutils literal notranslate"><span class="pre">LLVMPositionBuilderBefore</span></code> except the insertion position is set before the debug records that precede the target instruction. Note that this doesn’t mean that debug intrinsics before the chosen instruction are skipped, only debug records (which unlike debug records are not themselves instructions).</p>
+<p>If you don’t know which function to call then follow this rule:
+If you are trying to insert at the start of a block, or purposfully skip debug intrinsics to determine the insertion point for any other reason, then call the new functions.</p>
+<p><code class="docutils literal notranslate"><span class="pre">LLVMPositionBuilder</span></code> and <code class="docutils literal notranslate"><span class="pre">LLVMPositionBuilderBefore</span></code> are unchanged. They insert before the indicated instruction but after any attached debug records.</p>
+<p><code class="docutils literal notranslate"><span class="pre">LLVMGetFirstDbgRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">LLVMGetLastDbgRecord</span></code>, <code class="docutils literal notranslate"><span class="pre">LLVMGetNextDbgRecord</span></code> and <code class="docutils literal notranslate"><span class="pre">LLVMGetPreviousDbgRecord</span></code> can be used for iterating over debug records attached to instructions (provided as <code class="docutils literal notranslate"><span class="pre">LLVMValueRef</span></code>).</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="n">LLVMDbgRecordRef</span><span class="w"> </span><span class="n">DbgRec</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">DbgRec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LLVMGetFirstDbgRecord</span><span class="p">(</span><span class="n">Inst</span><span class="p">);</span><span class="w"> </span><span class="n">DbgRec</span><span class="p">;</span>
+<span class="w">     </span><span class="n">DbgRec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LLVMGetNextDbgRecord</span><span class="p">(</span><span class="n">DbgRec</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// do something with DbgRec</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="n">LLVMDbgRecordRef</span><span class="w"> </span><span class="n">DbgRec</span><span class="p">;</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">DbgRec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LLVMGetLastDbgRecord</span><span class="p">(</span><span class="n">Inst</span><span class="p">);</span><span class="w"> </span><span class="n">DbgRec</span><span class="p">;</span>
+<span class="w">     </span><span class="n">DbgRec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">LLVMGetPreviousDbgRecord</span><span class="p">(</span><span class="n">DbgRec</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="c1">// do something with DbgRec</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="the-new-debug-record-model">
+<h1>The new “Debug Record” model<a class="headerlink" href="#the-new-debug-record-model" title="Link to this heading">¶</a></h1>
+<p>Below is a brief overview of the new representation that replaces debug intrinsics; for an instructive guide on updating old code, see <a class="reference internal" href="#how-to-update-existing-code">here</a>.</p>
+<section id="what-exactly-have-you-replaced-debug-intrinsics-with">
+<h2>What exactly have you replaced debug intrinsics with?<a class="headerlink" href="#what-exactly-have-you-replaced-debug-intrinsics-with" title="Link to this heading">¶</a></h2>
+<p>We’re using a dedicated C++ class called <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> to store debug info, with a one-to-one relationship between each instance of a debug intrinsic and each <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> object in any LLVM IR program; these <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code>s are represented in the IR as non-instruction debug records, as described in the [Source Level Debugging](project:SourceLevelDebugging.rst#Debug Records) document. This class has a set of subclasses that store exactly the same information as is stored in debugging intrinsics. Each one also has almost entirely the same set of methods, that behave in the same way:</p>
+<p>https://llvm.org/docs/doxygen/classllvm_1_1DbgRecord.html
+https://llvm.org/docs/doxygen/classllvm_1_1DbgVariableRecord.html
+https://llvm.org/docs/doxygen/classllvm_1_1DbgLabelRecord.html</p>
+<p>This allows you to treat a <code class="docutils literal notranslate"><span class="pre">DbgVariableRecord</span></code> as if it’s a <code class="docutils literal notranslate"><span class="pre">dbg.value</span></code>/<code class="docutils literal notranslate"><span class="pre">dbg.declare</span></code>/<code class="docutils literal notranslate"><span class="pre">dbg.assign</span></code> intrinsic most of the time, for example in generic (auto-param) lambdas, and the same for <code class="docutils literal notranslate"><span class="pre">DbgLabelRecord</span></code> and <code class="docutils literal notranslate"><span class="pre">dbg.label</span></code>s.</p>
+</section>
+<section id="how-do-these-dbgrecords-fit-into-the-instruction-stream">
+<h2>How do these <code class="docutils literal notranslate"><span class="pre">DbgRecords</span></code> fit into the instruction stream?<a class="headerlink" href="#how-do-these-dbgrecords-fit-into-the-instruction-stream" title="Link to this heading">¶</a></h2>
+<p>Like so:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>                 +---------------+          +---------------+
+----------------&gt;|  Instruction  +---------&gt;|  Instruction  |
+                 +-------+-------+          +---------------+
+                         |
+                         |
+                         |
+                         |
+                         v
+                  +-------------+
+          &lt;-------+  DbgMarker  |&lt;-------
+         /        +-------------+        \
+        /                                 \
+       /                                   \
+      v                                     ^
+ +-------------+    +-------------+   +-------------+
+ |  DbgRecord  +---&gt;|  DbgRecord  +--&gt;|  DbgRecord  |
+ +-------------+    +-------------+   +-------------+
+</pre></div>
+</div>
+<p>Each instruction has a pointer to a <code class="docutils literal notranslate"><span class="pre">DbgMarker</span></code> (which will become optional), that contains a list of <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> objects. No debugging records appear in the instruction list at all. <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code>s have a parent pointer to their owning <code class="docutils literal notranslate"><span class="pre">DbgMarker</span></code>, and each <code class="docutils literal notranslate"><span class="pre">DbgMarker</span></code> has a pointer back to it’s owning instruction.</p>
+<p>Not shown are the links from DbgRecord to other parts of the <code class="docutils literal notranslate"><span class="pre">Value</span></code>/<code class="docutils literal notranslate"><span class="pre">Metadata</span></code> hierachy: <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> subclasses have tracking pointers to the DIMetadata that they use, and <code class="docutils literal notranslate"><span class="pre">DbgVariableRecord</span></code> has references to <code class="docutils literal notranslate"><span class="pre">Value</span></code>s that are stored in a <code class="docutils literal notranslate"><span class="pre">DebugValueUser</span></code> base class. This refers to a <code class="docutils literal notranslate"><span class="pre">ValueAsMetadata</span></code> object referring to <code class="docutils literal notranslate"><span class="pre">Value</span></code>s, via the <code class="docutils literal notranslate"><span class="pre">TrackingMetadata</span></code> facility.</p>
+<p>The various kinds of debug intrinsic (value, declare, assign, label) are all stored in <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> subclasses, with a “RecordKind” field distinguishing <code class="docutils literal notranslate"><span class="pre">DbgLabelRecord</span></code>s from <code class="docutils literal notranslate"><span class="pre">DbgVariableRecord</span></code>s, and a <code class="docutils literal notranslate"><span class="pre">LocationType</span></code> field in the <code class="docutils literal notranslate"><span class="pre">DbgVariableRecord</span></code> class further disambiguating the various debug variable intrinsics it can represent.</p>
+</section>
+</section>
+<section id="how-to-update-existing-code">
+<h1>How to update existing code<a class="headerlink" href="#how-to-update-existing-code" title="Link to this heading">¶</a></h1>
+<p>Any existing code that interacts with debug intrinsics in some way will need to be updated to interact with debug records in the same way. A few quick rules to keep in mind when updating code:</p>
+<ul>
+<li><p>Debug records will not be seen when iterating over instructions; to find the debug records that appear immediately before an instruction, you’ll need to iterate over <code class="docutils literal notranslate"><span class="pre">Instruction::getDbgRecordRange()</span></code>.</p></li>
+<li><p>Debug records have interfaces that are identical to those of debug intrinsics, meaning that any code that operates on debug intrinsics can be trivially applied to debug records as well. The exceptions for this are <code class="docutils literal notranslate"><span class="pre">Instruction</span></code> or <code class="docutils literal notranslate"><span class="pre">CallInst</span></code> methods that don’t logically apply to debug records, and <code class="docutils literal notranslate"><span class="pre">isa</span></code>/<code class="docutils literal notranslate"><span class="pre">cast</span></code>/<code class="docutils literal notranslate"><span class="pre">dyn_cast</span></code> methods, are replaced by methods on the <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> class itself.</p></li>
+<li><p>Debug records cannot appear in a module that also contains debug intrinsics; the two are mutually exclusive. As debug records are the future format, handling records correctly should be prioritized in new code.</p></li>
+<li><p>Until support for intrinsics is no longer present, a valid hotfix for code that only handles debug intrinsics and is non-trivial to update is to convert the module to the intrinsic format using <code class="docutils literal notranslate"><span class="pre">Module::setIsNewDbgInfoFormat</span></code>, and convert it back afterwards.</p>
+<ul class="simple">
+<li><p>This can also be performed within a lexical scope for a module or an individual function using the class <code class="docutils literal notranslate"><span class="pre">ScopedDbgInfoFormatSetter</span></code>:</p></li>
+</ul>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">void</span> <span class="n">handleModule</span><span class="p">(</span><span class="n">Module</span> <span class="o">&amp;</span><span class="n">M</span><span class="p">)</span> <span class="p">{</span>
+  <span class="p">{</span>
+    <span class="n">ScopedDbgInfoFormatSetter</span> <span class="n">FormatSetter</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">false</span><span class="p">);</span>
+    <span class="n">handleModuleWithDebugIntrinsics</span><span class="p">(</span><span class="n">M</span><span class="p">);</span>
+  <span class="p">}</span>
+  <span class="o">//</span> <span class="n">Module</span> <span class="n">returns</span> <span class="n">to</span> <span class="n">previous</span> <span class="n">debug</span> <span class="n">info</span> <span class="nb">format</span> <span class="n">after</span> <span class="n">exiting</span> <span class="n">the</span> <span class="n">above</span> <span class="n">block</span><span class="o">.</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</li>
+</ul>
+<p>Below is a rough guide on how existing code that currently supports debug intrinsics can be updated to support debug records.</p>
+<section id="creating-debug-records">
+<h2>Creating debug records<a class="headerlink" href="#creating-debug-records" title="Link to this heading">¶</a></h2>
+<p>Debug records will automatically be created by the <code class="docutils literal notranslate"><span class="pre">DIBuilder</span></code> class when the new format is enabled. As with instructions, it is also possible to call <code class="docutils literal notranslate"><span class="pre">DbgRecord::clone</span></code> to create an unattached copy of an existing record.</p>
+</section>
+<section id="skipping-debug-records-ignoring-debug-uses-of-values-stably-counting-instructions-etc">
+<h2>Skipping debug records, ignoring debug-uses of <code class="docutils literal notranslate"><span class="pre">Values</span></code>, stably counting instructions, etc.<a class="headerlink" href="#skipping-debug-records-ignoring-debug-uses-of-values-stably-counting-instructions-etc" title="Link to this heading">¶</a></h2>
+<p>This will all happen transparently without needing to think about it!</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="p">(</span><span class="n">Instruction</span> <span class="o">&amp;</span><span class="n">I</span> <span class="p">:</span> <span class="n">BB</span><span class="p">)</span> <span class="p">{</span>
+  <span class="o">//</span> <span class="n">Old</span><span class="p">:</span> <span class="n">Skips</span> <span class="n">debug</span> <span class="n">intrinsics</span>
+  <span class="k">if</span> <span class="p">(</span><span class="n">isa</span><span class="o">&lt;</span><span class="n">DbgInfoIntrinsic</span><span class="o">&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">I</span><span class="p">))</span>
+    <span class="k">continue</span><span class="p">;</span>
+  <span class="o">//</span> <span class="n">New</span><span class="p">:</span> <span class="n">No</span> <span class="n">extra</span> <span class="n">code</span> <span class="n">needed</span><span class="p">,</span> <span class="n">debug</span> <span class="n">records</span> <span class="n">are</span> <span class="n">skipped</span> <span class="n">by</span> <span class="n">default</span><span class="o">.</span>
+  <span class="o">...</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="finding-debug-records">
+<h2>Finding debug records<a class="headerlink" href="#finding-debug-records" title="Link to this heading">¶</a></h2>
+<p>Utilities such as <code class="docutils literal notranslate"><span class="pre">findDbgUsers</span></code> and the like now have an optional argument that will return the set of <code class="docutils literal notranslate"><span class="pre">DbgVariableRecord</span></code> records that refer to a <code class="docutils literal notranslate"><span class="pre">Value</span></code>. You should be able to treat them the same as intrinsics.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">//</span> <span class="n">Old</span><span class="p">:</span>
+  <span class="n">SmallVector</span><span class="o">&lt;</span><span class="n">DbgVariableIntrinsic</span> <span class="o">*&gt;</span> <span class="n">DbgUsers</span><span class="p">;</span>
+  <span class="n">findDbgUsers</span><span class="p">(</span><span class="n">DbgUsers</span><span class="p">,</span> <span class="n">V</span><span class="p">);</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">auto</span> <span class="o">*</span><span class="n">DVI</span> <span class="p">:</span> <span class="n">DbgUsers</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">DVI</span><span class="o">-&gt;</span><span class="n">getParent</span><span class="p">()</span> <span class="o">!=</span> <span class="n">BB</span><span class="p">)</span>
+      <span class="n">DVI</span><span class="o">-&gt;</span><span class="n">replaceVariableLocationOp</span><span class="p">(</span><span class="n">V</span><span class="p">,</span> <span class="n">New</span><span class="p">);</span>
+  <span class="p">}</span>
+<span class="o">//</span> <span class="n">New</span><span class="p">:</span>
+  <span class="n">SmallVector</span><span class="o">&lt;</span><span class="n">DbgVariableIntrinsic</span> <span class="o">*&gt;</span> <span class="n">DbgUsers</span><span class="p">;</span>
+  <span class="n">SmallVector</span><span class="o">&lt;</span><span class="n">DbgVariableRecord</span> <span class="o">*&gt;</span> <span class="n">DVRUsers</span><span class="p">;</span>
+  <span class="n">findDbgUsers</span><span class="p">(</span><span class="n">DbgUsers</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">DVRUsers</span><span class="p">);</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">auto</span> <span class="o">*</span><span class="n">DVI</span> <span class="p">:</span> <span class="n">DbgUsers</span><span class="p">)</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">DVI</span><span class="o">-&gt;</span><span class="n">getParent</span><span class="p">()</span> <span class="o">!=</span> <span class="n">BB</span><span class="p">)</span>
+      <span class="n">DVI</span><span class="o">-&gt;</span><span class="n">replaceVariableLocationOp</span><span class="p">(</span><span class="n">V</span><span class="p">,</span> <span class="n">New</span><span class="p">);</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">auto</span> <span class="o">*</span><span class="n">DVR</span> <span class="p">:</span> <span class="n">DVRUsers</span><span class="p">)</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">DVR</span><span class="o">-&gt;</span><span class="n">getParent</span><span class="p">()</span> <span class="o">!=</span> <span class="n">BB</span><span class="p">)</span>
+      <span class="n">DVR</span><span class="o">-&gt;</span><span class="n">replaceVariableLocationOp</span><span class="p">(</span><span class="n">V</span><span class="p">,</span> <span class="n">New</span><span class="p">);</span>
+</pre></div>
+</div>
+</section>
+<section id="examining-debug-records-at-positions">
+<h2>Examining debug records at positions<a class="headerlink" href="#examining-debug-records-at-positions" title="Link to this heading">¶</a></h2>
+<p>Call <code class="docutils literal notranslate"><span class="pre">Instruction::getDbgRecordRange()</span></code> to get the range of <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> objects that are attached to an instruction.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>for (Instruction &amp;I : BB) {
+  // Old: Uses a data member of a debug intrinsic, and then skips to the next
+  // instruction.
+  if (DbgInfoIntrinsic *DII = dyn_cast&lt;DbgInfoIntrinsic&gt;(&amp;I)) {
+    recordDebugLocation(DII-&gt;getDebugLoc());
+    continue;
+  }
+  // New: Iterates over the debug records that appear before `I`, and treats
+  // them identically to the intrinsic block above.
+  // NB: This should always appear at the top of the for-loop, so that we
+  // process the debug records preceding `I` before `I` itself.
+  for (DbgRecord &amp;DR = I.getDbgRecordRange()) {
+    recordDebugLocation(DR.getDebugLoc());
+  }
+  processInstruction(I);
+}
+</pre></div>
+</div>
+<p>This can also be passed through the function <code class="docutils literal notranslate"><span class="pre">filterDbgVars</span></code> to specifically
+iterate over DbgVariableRecords, which are more commonly used.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>for (Instruction &amp;I : BB) {
+  // Old: If `I` is a DbgVariableIntrinsic we record the variable, and apply
+  // extra logic if it is an `llvm.dbg.declare`.
+  if (DbgVariableIntrinsic *DVI = dyn_cast&lt;DbgVariableIntrinsic&gt;(&amp;I)) {
+    recordVariable(DVI-&gt;getVariable());
+    if (DbgDeclareInst *DDI = dyn_cast&lt;DbgDeclareInst&gt;(DVI))
+      recordDeclareAddress(DDI-&gt;getAddress());
+    continue;
+  }
+  // New: `filterDbgVars` is used to iterate over only DbgVariableRecords.
+  for (DbgVariableRecord &amp;DVR = filterDbgVars(I.getDbgRecordRange())) {
+    recordVariable(DVR.getVariable());
+    // Debug variable records are not cast to subclasses; simply call the
+    // appropriate `isDbgX()` check, and use the methods as normal.
+    if (DVR.isDbgDeclare())
+      recordDeclareAddress(DVR.getAddress());
+  }
+  // ...
+}
+</pre></div>
+</div>
+</section>
+<section id="processing-individual-debug-records">
+<h2>Processing individual debug records<a class="headerlink" href="#processing-individual-debug-records" title="Link to this heading">¶</a></h2>
+<p>In most cases, any code that operates on debug intrinsics can be extracted to a template function or auto lambda (if it is not already in one) that can be applied to both debug intrinsics and debug records - though keep in mind the main exception that <code class="docutils literal notranslate"><span class="pre">isa</span></code>/<code class="docutils literal notranslate"><span class="pre">cast</span></code>/<code class="docutils literal notranslate"><span class="pre">dyn_cast</span></code> do not apply to <code class="docutils literal notranslate"><span class="pre">DbgVariableRecord</span></code> types.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>// Old: Function that operates on debug variable intrinsics in a BasicBlock, and
+// collects llvm.dbg.declares.
+void processDbgInfoInBlock(BasicBlock &amp;BB,
+                           SmallVectorImpl&lt;DbgDeclareInst*&gt; &amp;DeclareIntrinsics) {
+  for (Instruction &amp;I : BB) {
+    if (DbgVariableIntrinsic *DVI = dyn_cast&lt;DbgVariableIntrinsic&gt;(&amp;I)) {
+      processVariableValue(DebugVariable(DVI), DVI-&gt;getValue());
+      if (DbgDeclareInst *DDI = dyn_cast&lt;DbgDeclareInst&gt;(DVI))
+        Declares.push_back(DDI);
+      else if (!isa&lt;Constant&gt;(DVI-&gt;getValue()))
+        DVI-&gt;setKillLocation();
+    }
+  }
+}
+
+// New: Template function is used to deduplicate handling of intrinsics and
+// records.
+// An overloaded function is also used to handle isa/cast/dyn_cast operations
+// for intrinsics and records, since those functions cannot be directly applied
+// to DbgRecords.
+DbgDeclareInst *DynCastToDeclare(DbgVariableIntrinsic *DVI) {
+  return dyn_cast&lt;DbgDeclareInst&gt;(DVI);
+}
+DbgVariableRecord *DynCastToDeclare(DbgVariableRecord *DVR) {
+  return DVR-&gt;isDbgDeclare() ? DVR : nullptr;
+}
+
+template&lt;typename DbgVarTy, DbgDeclTy&gt;
+void processDbgVariable(DbgVarTy *DbgVar,
+                       SmallVectorImpl&lt;DbgDeclTy*&gt; &amp;Declares) {
+    processVariableValue(DebugVariable(DbgVar), DbgVar-&gt;getValue());
+    if (DbgDeclTy *DbgDeclare = DynCastToDeclare(DbgVar))
+      Declares.push_back(DbgDeclare);
+    else if (!isa&lt;Constant&gt;(DbgVar-&gt;getValue()))
+      DbgVar-&gt;setKillLocation();
+};
+
+void processDbgInfoInBlock(BasicBlock &amp;BB,
+                           SmallVectorImpl&lt;DbgDeclareInst*&gt; &amp;DeclareIntrinsics,
+                           SmallVectorImpl&lt;DbgVariableRecord*&gt; &amp;DeclareRecords) {
+  for (Instruction &amp;I : BB) {
+    if (DbgVariableIntrinsic *DVI = dyn_cast&lt;DbgVariableIntrinsic&gt;(&amp;I))
+      processDbgVariable(DVI, DeclareIntrinsics);
+    for (DbgVariableRecord *DVR : filterDbgVars(I.getDbgRecordRange()))
+      processDbgVariable(DVR, DeclareRecords);
+  }
+}
+</pre></div>
+</div>
+</section>
+<section id="moving-and-deleting-debug-records">
+<h2>Moving and deleting debug records<a class="headerlink" href="#moving-and-deleting-debug-records" title="Link to this heading">¶</a></h2>
+<p>You can use <code class="docutils literal notranslate"><span class="pre">DbgRecord::removeFromParent</span></code> to unlink a <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> from it’s marker, and then <code class="docutils literal notranslate"><span class="pre">BasicBlock::insertDbgRecordBefore</span></code> or <code class="docutils literal notranslate"><span class="pre">BasicBlock::insertDbgRecordAfter</span></code> to re-insert the <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> somewhere else. You cannot insert a <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code> at an arbitary point in a list of <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code>s (if you’re doing this with <code class="docutils literal notranslate"><span class="pre">llvm.dbg.value</span></code>s then it’s unlikely to be correct).</p>
+<p>Erase <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code>s by calling <code class="docutils literal notranslate"><span class="pre">eraseFromParent</span></code>.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">//</span> <span class="n">Old</span><span class="p">:</span> <span class="n">Move</span> <span class="n">a</span> <span class="n">debug</span> <span class="n">intrinsic</span> <span class="n">to</span> <span class="n">the</span> <span class="n">start</span> <span class="n">of</span> <span class="n">the</span> <span class="n">block</span><span class="p">,</span> <span class="ow">and</span> <span class="n">delete</span> <span class="nb">all</span> <span class="n">other</span> <span class="n">intrinsics</span> <span class="k">for</span> <span class="n">the</span> <span class="n">same</span> <span class="n">variable</span> <span class="ow">in</span> <span class="n">the</span> <span class="n">block</span><span class="o">.</span>
+<span class="n">void</span> <span class="n">moveDbgIntrinsicToStart</span><span class="p">(</span><span class="n">DbgVariableIntrinsic</span> <span class="o">*</span><span class="n">DVI</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">BasicBlock</span> <span class="o">*</span><span class="n">ParentBB</span> <span class="o">=</span> <span class="n">DVI</span><span class="o">-&gt;</span><span class="n">getParent</span><span class="p">();</span>
+  <span class="n">DVI</span><span class="o">-&gt;</span><span class="n">removeFromParent</span><span class="p">();</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">Instruction</span> <span class="o">&amp;</span><span class="n">I</span> <span class="p">:</span> <span class="n">ParentBB</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">auto</span> <span class="o">*</span><span class="n">BlockDVI</span> <span class="o">=</span> <span class="n">dyn_cast</span><span class="o">&lt;</span><span class="n">DbgVariableIntrinsic</span><span class="o">&gt;</span><span class="p">(</span><span class="o">&amp;</span><span class="n">I</span><span class="p">))</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">BlockDVI</span><span class="o">-&gt;</span><span class="n">getVariable</span><span class="p">()</span> <span class="o">==</span> <span class="n">DVI</span><span class="o">-&gt;</span><span class="n">getVariable</span><span class="p">())</span>
+        <span class="n">BlockDVI</span><span class="o">-&gt;</span><span class="n">eraseFromParent</span><span class="p">();</span>
+  <span class="p">}</span>
+  <span class="n">DVI</span><span class="o">-&gt;</span><span class="n">insertBefore</span><span class="p">(</span><span class="n">ParentBB</span><span class="o">-&gt;</span><span class="n">getFirstInsertionPt</span><span class="p">());</span>
+<span class="p">}</span>
+
+<span class="o">//</span> <span class="n">New</span><span class="p">:</span> <span class="n">Perform</span> <span class="n">the</span> <span class="n">same</span> <span class="n">operation</span><span class="p">,</span> <span class="n">but</span> <span class="k">for</span> <span class="n">a</span> <span class="n">debug</span> <span class="n">record</span><span class="o">.</span>
+<span class="n">void</span> <span class="n">moveDbgRecordToStart</span><span class="p">(</span><span class="n">DbgVariableRecord</span> <span class="o">*</span><span class="n">DVR</span><span class="p">)</span> <span class="p">{</span>
+  <span class="n">BasicBlock</span> <span class="o">*</span><span class="n">ParentBB</span> <span class="o">=</span> <span class="n">DVR</span><span class="o">-&gt;</span><span class="n">getParent</span><span class="p">();</span>
+  <span class="n">DVR</span><span class="o">-&gt;</span><span class="n">removeFromParent</span><span class="p">();</span>
+  <span class="k">for</span> <span class="p">(</span><span class="n">Instruction</span> <span class="o">&amp;</span><span class="n">I</span> <span class="p">:</span> <span class="n">ParentBB</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">auto</span> <span class="o">&amp;</span><span class="n">BlockDVR</span> <span class="p">:</span> <span class="n">filterDbgVars</span><span class="p">(</span><span class="n">I</span><span class="o">.</span><span class="n">getDbgRecordRange</span><span class="p">()))</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">BlockDVR</span><span class="o">-&gt;</span><span class="n">getVariable</span><span class="p">()</span> <span class="o">==</span> <span class="n">DVR</span><span class="o">-&gt;</span><span class="n">getVariable</span><span class="p">())</span>
+        <span class="n">BlockDVR</span><span class="o">-&gt;</span><span class="n">eraseFromParent</span><span class="p">();</span>
+  <span class="p">}</span>
+  <span class="n">DVR</span><span class="o">-&gt;</span><span class="n">insertBefore</span><span class="p">(</span><span class="n">ParentBB</span><span class="o">-&gt;</span><span class="n">getFirstInsertionPt</span><span class="p">());</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="what-about-dangling-debug-records">
+<h2>What about dangling debug records?<a class="headerlink" href="#what-about-dangling-debug-records" title="Link to this heading">¶</a></h2>
+<p>If you have a block like so:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>    foo:
+      %bar = add i32 %baz...
+      dbg.value(metadata i32 %bar,...
+      br label %xyzzy
+</pre></div>
+</div>
+<p>your optimisation pass may wish to erase the terminator and then do something to the block. This is easy to do when debug info is kept in instructions, but with <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code>s there is no trailing instruction to attach the variable information to in the block above, once the terminator is erased. For such degenerate blocks, <code class="docutils literal notranslate"><span class="pre">DbgRecord</span></code>s are stored temporarily in a map in <code class="docutils literal notranslate"><span class="pre">LLVMContext</span></code>, and are re-inserted when a terminator is reinserted to the block or other instruction inserted at <code class="docutils literal notranslate"><span class="pre">end()</span></code>.</p>
+<p>This can technically lead to trouble in the vanishingly rare scenario where an optimisation pass erases a terminator and then decides to erase the whole block. (We recommend not doing that).</p>
+</section>
+<section id="anything-else">
+<h2>Anything else?<a class="headerlink" href="#anything-else" title="Link to this heading">¶</a></h2>
+<p>The above guide does not comprehensively cover every pattern that could apply to debug intrinsics; as mentioned at the <a class="reference internal" href="#how-to-update-existing-code">start of the guide</a>, you can temporarily convert the target module from debug records to intrinsics as a stopgap measure. Most operations that can be performed on debug intrinsics have exact equivalents for debug records, but if you encounter any exceptions, reading the class docs (linked <a class="reference internal" href="#what-exactly-have-you-replaced-debug-intrinsics-with">here</a>) may give some insight, there may be examples in the existing codebase, and you can always ask for help on the <a class="reference external" href="https://discourse.llvm.org/tag/debuginfo">forums</a>.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="RISCVUsage.html" title="User Guide for RISC-V Target"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="Remarks.html" title="Remarks"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Debug info migration: From intrinsics to records</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-11-20.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>

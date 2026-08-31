@@ -1,0 +1,693 @@
+
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>How to Update Debug Info: A Guide for LLVM Pass Authors &#8212; LLVM 21.1.6 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=649a27d8" />
+    <link rel="stylesheet" type="text/css" href="_static/llvm-theme.css?v=96924833" />
+    <script src="_static/documentation_options.js?v=aabb52c0"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="InstCombine contributor guide" href="InstCombineContributorGuide.html" />
+    <link rel="prev" title="How to cross-compile Clang/LLVM using Clang/LLVM" href="HowToCrossCompileLLVM.html" />
+<style type="text/css">
+  table.right { float: right; margin-left: 20px; }
+  table.right td { border: 1px solid #ccc; }
+</style>
+
+  </head><body>
+<div class="logo">
+  <a href="index.html">
+    <img src="_static/logo.png"
+         alt="LLVM Logo" width="250" height="88"/></a>
+</div>
+
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="InstCombineContributorGuide.html" title="InstCombine contributor guide"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="HowToCrossCompileLLVM.html" title="How to cross-compile Clang/LLVM using Clang/LLVM"
+             accesskey="P">previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" accesskey="U">User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">How to Update Debug Info: A Guide for LLVM Pass Authors</a></li> 
+      </ul>
+    </div>
+
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+
+<h3>Documentation</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/GettingStartedTutorials.html">Getting Started/Tutorials</a></li>
+    <li><a href="https://llvm.org/docs/UserGuides.html">User Guides</a></li>
+    <li><a href="https://llvm.org/docs/Reference.html">Reference</a></li>
+</ul>
+
+<h3>Getting Involved</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/Contributing.html">Contributing to LLVM</a></li>
+    <li><a href="https://llvm.org/docs/HowToSubmitABug.html">Submitting Bug Reports</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#mailing-lists">Mailing Lists</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#discord">Discord</a></li>
+    <li><a href="https://llvm.org/docs/GettingInvolved.html#meetups-and-social-events">Meetups and Social Events</a></li>
+</ul>
+
+<h3>Additional Links</h3>
+
+<ul class="want-points">
+    <li><a href="https://llvm.org/docs/FAQ.html">FAQ</a></li>
+    <li><a href="https://llvm.org/docs/Lexicon.html">Glossary</a></li>
+    <li><a href="https://llvm.org/pubs">Publications</a></li>
+    <li><a href="https://github.com/llvm/llvm-project/">Github Repository</a></li>
+</ul>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/HowToUpdateDebugInfo.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+        </div>
+      </div>
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="how-to-update-debug-info-a-guide-for-llvm-pass-authors">
+<h1>How to Update Debug Info: A Guide for LLVM Pass Authors<a class="headerlink" href="#how-to-update-debug-info-a-guide-for-llvm-pass-authors" title="Link to this heading">¶</a></h1>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id1">Introduction</a></p></li>
+<li><p><a class="reference internal" href="#rules-for-updating-debug-locations" id="id2">Rules for updating debug locations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#when-to-preserve-an-instruction-location" id="id3">When to preserve an instruction location</a></p></li>
+<li><p><a class="reference internal" href="#when-to-merge-instruction-locations" id="id4">When to merge instruction locations</a></p></li>
+<li><p><a class="reference internal" href="#when-to-drop-an-instruction-location" id="id5">When to drop an instruction location</a></p></li>
+<li><p><a class="reference internal" href="#when-to-remap-a-debug-location" id="id6">When to remap a debug location</a></p></li>
+<li><p><a class="reference internal" href="#setting-locations-for-new-instructions" id="id7">Setting locations for new instructions</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#rules-for-updating-debug-values" id="id8">Rules for updating debug values</a></p>
+<ul>
+<li><p><a class="reference internal" href="#deleting-an-ir-level-instruction" id="id9">Deleting an IR-level Instruction</a></p></li>
+<li><p><a class="reference internal" href="#deleting-a-mir-level-machineinstr" id="id10">Deleting a MIR-level MachineInstr</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#rules-for-updating-diassignid-attachments" id="id11">Rules for updating <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> Attachments</a></p></li>
+<li><p><a class="reference internal" href="#how-to-automatically-convert-tests-into-debug-info-tests" id="id12">How to automatically convert tests into debug info tests</a></p>
+<ul>
+<li><p><a class="reference internal" href="#mutation-testing-for-ir-level-transformations" id="id13">Mutation testing for IR-level transformations</a></p>
+<ul>
+<li><p><a class="reference internal" href="#the-debugify-utility-pass" id="id14">The <code class="docutils literal notranslate"><span class="pre">debugify</span></code> utility pass</a></p></li>
+<li><p><a class="reference internal" href="#using-debugify" id="id15">Using <code class="docutils literal notranslate"><span class="pre">debugify</span></code></a></p></li>
+<li><p><a class="reference internal" href="#debugify-in-regression-tests" id="id16"><code class="docutils literal notranslate"><span class="pre">debugify</span></code> in regression tests</a></p></li>
+<li><p><a class="reference internal" href="#using-coverage-tracking-to-remove-false-positives" id="id17">Using Coverage Tracking to remove false positives</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#test-original-debug-info-preservation-in-optimizations" id="id18">Test original debug info preservation in optimizations</a></p></li>
+<li><p><a class="reference internal" href="#mutation-testing-for-mir-level-transformations" id="id19">Mutation testing for MIR-level transformations</a></p></li>
+<li><p><a class="reference internal" href="#using-lostdebuglocobserver" id="id20">Using LostDebugLocObserver</a></p></li>
+</ul>
+</li>
+</ul>
+</nav>
+<section id="introduction">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Introduction</a><a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>Certain kinds of code transformations can inadvertently result in a loss of
+debug info, or worse, make debug info misrepresent the state of a program. Debug
+info availability is also essential for SamplePGO.</p>
+<p>This document specifies how to correctly update debug info in various kinds of
+code transformations, and offers suggestions for how to create targeted debug
+info tests for arbitrary transformations.</p>
+<p>For more on the philosophy behind LLVM debugging information, see
+<a class="reference internal" href="SourceLevelDebugging.html"><span class="doc">Source Level Debugging with LLVM</span></a>.</p>
+</section>
+<section id="rules-for-updating-debug-locations">
+<h2><a class="toc-backref" href="#id2" role="doc-backlink">Rules for updating debug locations</a><a class="headerlink" href="#rules-for-updating-debug-locations" title="Link to this heading">¶</a></h2>
+<section id="when-to-preserve-an-instruction-location">
+<span id="whentopreservelocation"></span><h3><a class="toc-backref" href="#id3" role="doc-backlink">When to preserve an instruction location</a><a class="headerlink" href="#when-to-preserve-an-instruction-location" title="Link to this heading">¶</a></h3>
+<p>A transformation should preserve the debug location of an instruction if the
+instruction either remains in its basic block, or if its basic block is folded
+into a predecessor that branches unconditionally. The APIs to use are
+<code class="docutils literal notranslate"><span class="pre">IRBuilder</span></code>, or <code class="docutils literal notranslate"><span class="pre">Instruction::setDebugLoc</span></code>.</p>
+<p>The purpose of this rule is to ensure that common block-local optimizations
+preserve the ability to set breakpoints on source locations corresponding to
+the instructions they touch. Debugging, crash logs, and SamplePGO accuracy
+would be severely impacted if that ability were lost.</p>
+<p>Examples of transformations that should follow this rule include:</p>
+<ul class="simple">
+<li><p>Instruction scheduling. Block-local instruction reordering should not drop
+source locations, even though this may lead to jumpy single-stepping
+behavior.</p></li>
+<li><p>Simple jump threading. For example, if block <code class="docutils literal notranslate"><span class="pre">B1</span></code> unconditionally jumps to
+<code class="docutils literal notranslate"><span class="pre">B2</span></code>, <em>and</em> is its unique predecessor, instructions from <code class="docutils literal notranslate"><span class="pre">B2</span></code> can be
+hoisted into <code class="docutils literal notranslate"><span class="pre">B1</span></code>. Source locations from <code class="docutils literal notranslate"><span class="pre">B2</span></code> should be preserved.</p></li>
+<li><p>Peephole optimizations that replace or expand an instruction, like <code class="docutils literal notranslate"><span class="pre">(add</span> <span class="pre">X</span>
+<span class="pre">X)</span> <span class="pre">=&gt;</span> <span class="pre">(shl</span> <span class="pre">X</span> <span class="pre">1)</span></code>. The location of the <code class="docutils literal notranslate"><span class="pre">shl</span></code> instruction should be the same
+as the location of the <code class="docutils literal notranslate"><span class="pre">add</span></code> instruction.</p></li>
+<li><p>Tail duplication. For example, if blocks <code class="docutils literal notranslate"><span class="pre">B1</span></code> and <code class="docutils literal notranslate"><span class="pre">B2</span></code> both
+unconditionally branch to <code class="docutils literal notranslate"><span class="pre">B3</span></code> and <code class="docutils literal notranslate"><span class="pre">B3</span></code> can be folded into its
+predecessors, source locations from <code class="docutils literal notranslate"><span class="pre">B3</span></code> should be preserved.</p></li>
+</ul>
+<p>Examples of transformations for which this rule <em>does not</em> apply include:</p>
+<ul class="simple">
+<li><p>LICM. E.g., if an instruction is moved from the loop body to the preheader,
+the rule for <a class="reference internal" href="#whentodroplocation"><span class="std std-ref">dropping locations</span></a> applies.</p></li>
+</ul>
+<p>In addition to the rule above, a transformation should also preserve the debug
+location of an instruction that is moved between basic blocks, if the
+destination block already contains an instruction with an identical debug
+location.</p>
+<p>Examples of transformations that should follow this rule include:</p>
+<ul class="simple">
+<li><p>Moving instructions between basic blocks. For example, if instruction <code class="docutils literal notranslate"><span class="pre">I1</span></code>
+in <code class="docutils literal notranslate"><span class="pre">BB1</span></code> is moved before <code class="docutils literal notranslate"><span class="pre">I2</span></code> in <code class="docutils literal notranslate"><span class="pre">BB2</span></code>, the source location of <code class="docutils literal notranslate"><span class="pre">I1</span></code>
+can be preserved if it has the same source location as <code class="docutils literal notranslate"><span class="pre">I2</span></code>.</p></li>
+</ul>
+</section>
+<section id="when-to-merge-instruction-locations">
+<span id="whentomergelocation"></span><h3><a class="toc-backref" href="#id4" role="doc-backlink">When to merge instruction locations</a><a class="headerlink" href="#when-to-merge-instruction-locations" title="Link to this heading">¶</a></h3>
+<p>A transformation should merge instruction locations if it replaces multiple
+instructions with one or more new instructions, <em>and</em> the new instruction(s)
+produce the output of more than one of the original instructions. The API to use
+is <code class="docutils literal notranslate"><span class="pre">Instruction::applyMergedLocation</span></code>. For each new instruction I, its new
+location should be a merge of the locations of all instructions whose output is
+produced by I. Typically, this includes any instruction being RAUWed by a new
+instruction, and excludes any instruction that only produces an intermediate
+value used by the RAUWed instruction.</p>
+<p>The purpose of this rule is to ensure that a) the single merged instruction
+has a location with an accurate scope attached, and b) to prevent misleading
+single-stepping (or breakpoint) behavior. Often, merged instructions are memory
+accesses which can trap: having an accurate scope attached greatly assists in
+crash triage by identifying the (possibly inlined) function where the bad
+memory access occurred.</p>
+<p>To maintain distinct source locations for SamplePGO, it is often beneficial to
+retain an arbitrary but deterministic location instead of discarding line and
+column information as part of merging. In particular, loss of location
+information for calls inhibit optimizations such as indirect call promotion.
+This behavior can be optionally enabled until support for accurately
+representing merged instructions in the line table is implemented.</p>
+<p>Examples of transformations that should follow this rule include:</p>
+<ul class="simple">
+<li><p>Hoisting identical instructions from all successors of a conditional branch
+or sinking those from all paths to a postdominating block. For example,
+merging identical loads/stores which occur on both sides of a CFG diamond
+(see the <code class="docutils literal notranslate"><span class="pre">MergedLoadStoreMotion</span></code> pass). For each group of identical
+instructions being hoisted/sunk, the merge of all their locations should be
+applied to the merged instruction.</p></li>
+<li><p>Merging identical loop-invariant stores (see the LICM utility
+<code class="docutils literal notranslate"><span class="pre">llvm::promoteLoopAccessesToScalars</span></code>).</p></li>
+<li><p>Scalar instructions being combined into a vector instruction, like
+<code class="docutils literal notranslate"><span class="pre">(add</span> <span class="pre">A1,</span> <span class="pre">B1),</span> <span class="pre">(add</span> <span class="pre">A2,</span> <span class="pre">B2)</span> <span class="pre">=&gt;</span> <span class="pre">(add</span> <span class="pre">(A1,</span> <span class="pre">A2),</span> <span class="pre">(B1,</span> <span class="pre">B2))</span></code>. As the new vector
+<code class="docutils literal notranslate"><span class="pre">add</span></code> computes the result of both original <code class="docutils literal notranslate"><span class="pre">add</span></code> instructions
+simultaneously, it should use a merge of the two locations. Similarly, if
+prior optimizations have already produced vectors <code class="docutils literal notranslate"><span class="pre">(A1,</span> <span class="pre">A2)</span></code> and
+<code class="docutils literal notranslate"><span class="pre">(B2,</span> <span class="pre">B1)</span></code>, then we might create a <code class="docutils literal notranslate"><span class="pre">(shufflevector</span> <span class="pre">(1,</span> <span class="pre">0),</span> <span class="pre">(B2,</span> <span class="pre">B1))</span></code>
+instruction to produce <code class="docutils literal notranslate"><span class="pre">(B1,</span> <span class="pre">B2)</span></code> for the vector <code class="docutils literal notranslate"><span class="pre">add</span></code>; in this case we’ve
+created two instructions to replace the original <code class="docutils literal notranslate"><span class="pre">adds</span></code>, so both new
+instructions should use the merged location.</p></li>
+</ul>
+<p>Examples of transformations for which this rule <em>does not</em> apply include:</p>
+<ul class="simple">
+<li><p>Block-local peepholes which delete redundant instructions, like
+<code class="docutils literal notranslate"><span class="pre">(sext</span> <span class="pre">(zext</span> <span class="pre">i8</span> <span class="pre">%x</span> <span class="pre">to</span> <span class="pre">i16)</span> <span class="pre">to</span> <span class="pre">i32)</span> <span class="pre">=&gt;</span> <span class="pre">(zext</span> <span class="pre">i8</span> <span class="pre">%x</span> <span class="pre">to</span> <span class="pre">i32)</span></code>. The inner
+<code class="docutils literal notranslate"><span class="pre">zext</span></code> is modified but remains in its block, so the rule for
+<a class="reference internal" href="#whentopreservelocation"><span class="std std-ref">preserving locations</span></a> should apply.</p></li>
+<li><p>Peephole optimizations which combine multiple instructions together, like
+<code class="docutils literal notranslate"><span class="pre">(add</span> <span class="pre">(mul</span> <span class="pre">A</span> <span class="pre">B)</span> <span class="pre">C)</span> <span class="pre">=&gt;</span> <span class="pre">llvm.fma.f32(A,</span> <span class="pre">B,</span> <span class="pre">C)</span></code>. Note that the result of the
+<code class="docutils literal notranslate"><span class="pre">mul</span></code> no longer appears in the program, while the result of the <code class="docutils literal notranslate"><span class="pre">add</span></code> is
+now produced by the <code class="docutils literal notranslate"><span class="pre">fma</span></code>, so the <code class="docutils literal notranslate"><span class="pre">add</span></code>’s location should be used.</p></li>
+<li><p>Converting an if-then-else CFG diamond into a <code class="docutils literal notranslate"><span class="pre">select</span></code>. Preserving the
+debug locations of speculated instructions can make it seem like a condition
+is true when it’s not (or vice versa), which leads to a confusing
+single-stepping experience. The rule for
+<a class="reference internal" href="#whentodroplocation"><span class="std std-ref">dropping locations</span></a> should apply here.</p></li>
+<li><p>Hoisting/sinking that would make a location reachable when it previously
+wasn’t. Consider hoisting two identical instructions with the same location
+from first two cases of a switch that has three cases. Merging their
+locations would make the location from the first two cases reachable when the
+third case is taken. The rule for
+<a class="reference internal" href="#whentodroplocation"><span class="std std-ref">dropping locations</span></a> applies.</p></li>
+</ul>
+</section>
+<section id="when-to-drop-an-instruction-location">
+<span id="whentodroplocation"></span><h3><a class="toc-backref" href="#id5" role="doc-backlink">When to drop an instruction location</a><a class="headerlink" href="#when-to-drop-an-instruction-location" title="Link to this heading">¶</a></h3>
+<p>A transformation should drop debug locations if the rules for
+<a class="reference internal" href="#whentopreservelocation"><span class="std std-ref">preserving</span></a> and
+<a class="reference internal" href="#whentomergelocation"><span class="std std-ref">merging</span></a> debug locations do not apply. The API to
+use is <code class="docutils literal notranslate"><span class="pre">Instruction::dropLocation()</span></code>.</p>
+<p>The purpose of this rule is to prevent erratic or misleading single-stepping
+behavior in situations in which an instruction has no clear, unambiguous
+relationship to a source location.</p>
+<p>To handle an instruction without a location, the DWARF generator
+defaults to allowing the last-set location after a label to cascade forward, or
+to setting a line 0 location with viable scope information if no previous
+location is available.</p>
+<p>See the discussion in the section about
+<a class="reference internal" href="#whentomergelocation"><span class="std std-ref">merging locations</span></a> for examples of when the rule for
+dropping locations applies.</p>
+</section>
+<section id="when-to-remap-a-debug-location">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">When to remap a debug location</a><a class="headerlink" href="#when-to-remap-a-debug-location" title="Link to this heading">¶</a></h3>
+<p>When code paths are duplicated, during passes such as loop unrolling or jump
+threading, <cite>DILocation</cite> attachments need to be remapped using <cite>mapAtomInstance</cite>
+and <cite>RemapSourceAtom</cite>. This is to support the Key Instructions debug info feature.
+See <a class="reference internal" href="KeyInstructionsDebugInfo.html"><span class="doc">Key Instructions debug info in LLVM and Clang</span></a> for information.</p>
+</section>
+<section id="setting-locations-for-new-instructions">
+<span id="newinstlocations"></span><h3><a class="toc-backref" href="#id7" role="doc-backlink">Setting locations for new instructions</a><a class="headerlink" href="#setting-locations-for-new-instructions" title="Link to this heading">¶</a></h3>
+<p>Whenever a new instruction is created and there is no suitable location for that
+instruction, that instruction should be annotated accordingly. There are a set
+of special <code class="docutils literal notranslate"><span class="pre">DebugLoc</span></code> values that can be set on an instruction to annotate the
+reason that it does not have a valid location. These are as follows:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">DebugLoc::getCompilerGenerated()</span></code>: This indicates that the instruction is a
+compiler-generated instruction, i.e. it is not associated with any user source
+code.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DebugLoc::getDropped()</span></code>: This indicates that the instruction has
+intentionally had its source location removed, according to the rules for
+<a class="reference internal" href="#whentodroplocation"><span class="std std-ref">dropping locations</span></a>; this is set automatically by
+<code class="docutils literal notranslate"><span class="pre">Instruction::dropLocation()</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DebugLoc::getUnknown()</span></code>: This indicates that the instruction does not have
+a known or currently knowable source location, e.g. that it is infeasible to
+determine the correct source location, or that the source location is
+ambiguous in a way that LLVM cannot currently represent.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DebugLoc::getTemporary()</span></code>: This is used for instructions that we don’t
+expect to be emitted (e.g. <code class="docutils literal notranslate"><span class="pre">UnreachableInst</span></code>), and so should not need a
+valid location; if we ever try to emit a temporary location into an object/asm
+file, this indicates that something has gone wrong.</p></li>
+</ul>
+<p>Where applicable, these should be used instead of leaving an instruction without
+an assigned location or explicitly setting the location as <code class="docutils literal notranslate"><span class="pre">DebugLoc()</span></code>.
+Ordinarily these special locations are identical to an absent location, but LLVM
+built with coverage-tracking
+(<code class="docutils literal notranslate"><span class="pre">-DLLVM_ENABLE_DEBUGLOC_COVERAGE_TRACKING=&quot;COVERAGE&quot;</span></code>) will keep track of
+these special locations in order to detect unintentionally-missing locations;
+for this reason, the most important rule is to <em>not</em> apply any of these if it
+isn’t clear which, if any, is appropriate - an absent location can be detected
+and fixed, while an incorrectly annotated instruction is much harder to detect.
+On the other hand, if any of these clearly apply, then they should be used to
+prevent false positives from being flagged up.</p>
+</section>
+</section>
+<section id="rules-for-updating-debug-values">
+<h2><a class="toc-backref" href="#id8" role="doc-backlink">Rules for updating debug values</a><a class="headerlink" href="#rules-for-updating-debug-values" title="Link to this heading">¶</a></h2>
+<section id="deleting-an-ir-level-instruction">
+<h3><a class="toc-backref" href="#id9" role="doc-backlink">Deleting an IR-level Instruction</a><a class="headerlink" href="#deleting-an-ir-level-instruction" title="Link to this heading">¶</a></h3>
+<p>When an <code class="docutils literal notranslate"><span class="pre">Instruction</span></code> is deleted, its debug uses change to <code class="docutils literal notranslate"><span class="pre">undef</span></code>. This is
+a loss of debug info: the value of one or more source variables becomes
+unavailable, starting with the <code class="docutils literal notranslate"><span class="pre">#dbg_value(undef,</span> <span class="pre">...)</span></code>. When there is no
+way to reconstitute the value of the lost instruction, this is the best
+possible outcome. However, it’s often possible to do better:</p>
+<ul class="simple">
+<li><p>If the dying instruction can be RAUW’d, do so. The
+<code class="docutils literal notranslate"><span class="pre">Value::replaceAllUsesWith</span></code> API transparently updates debug uses of the
+dying instruction to point to the replacement value.</p></li>
+<li><p>If the dying instruction cannot be RAUW’d, call <code class="docutils literal notranslate"><span class="pre">llvm::salvageDebugInfo</span></code> on
+it. This makes a best-effort attempt to rewrite debug uses of the dying
+instruction by describing its effect as a <code class="docutils literal notranslate"><span class="pre">DIExpression</span></code>.</p></li>
+<li><p>If one of the <strong>operands</strong> of a dying instruction would become trivially
+dead, use <code class="docutils literal notranslate"><span class="pre">llvm::replaceAllDbgUsesWith</span></code> to rewrite the debug uses of that
+operand. Consider the following example function:</p></li>
+</ul>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="vg">@foo</span><span class="p">(</span><span class="kt">i16</span><span class="w"> </span><span class="nv">%a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">sext</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="nv">%a</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i32</span>
+<span class="w">  </span><span class="nv">%c</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%b</span><span class="p">,</span><span class="w"> </span><span class="m">15</span>
+<span class="w">    </span><span class="err">#dbg_value</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="nv">%c</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+<span class="w">  </span><span class="nv">%d</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">trunc</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="nv">%c</span><span class="w"> </span><span class="k">to</span><span class="w"> </span><span class="kt">i16</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="nv">%d</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Now, here’s what happens after the unnecessary truncation instruction <code class="docutils literal notranslate"><span class="pre">%d</span></code> is
+replaced with a simplified instruction:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="vg">@foo</span><span class="p">(</span><span class="kt">i16</span><span class="w"> </span><span class="nv">%a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="err">#dbg_value</span><span class="p">(</span><span class="kt">i32</span><span class="w"> </span><span class="k">undef</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+<span class="w">  </span><span class="nv">%simplified</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="nv">%a</span><span class="p">,</span><span class="w"> </span><span class="m">15</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="nv">%simplified</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Note that after deleting <code class="docutils literal notranslate"><span class="pre">%d</span></code>, all uses of its operand <code class="docutils literal notranslate"><span class="pre">%c</span></code> become
+trivially dead. The debug use which used to point to <code class="docutils literal notranslate"><span class="pre">%c</span></code> is now <code class="docutils literal notranslate"><span class="pre">undef</span></code>,
+and debug info is needlessly lost.</p>
+<p>To solve this problem, do:</p>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="n">llvm</span><span class="o">::</span><span class="n">replaceAllDbgUsesWith</span><span class="p">(</span><span class="o">%</span><span class="n">c</span><span class="p">,</span><span class="w"> </span><span class="n">theSimplifiedAndInstruction</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+</pre></div>
+</div>
+<p>This results in better debug info because the debug use of <code class="docutils literal notranslate"><span class="pre">%c</span></code> is preserved:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="vg">@foo</span><span class="p">(</span><span class="kt">i16</span><span class="w"> </span><span class="nv">%a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nv">%simplified</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="nv">%a</span><span class="p">,</span><span class="w"> </span><span class="m">15</span>
+<span class="w">    </span><span class="err">#dbg_value</span><span class="p">(</span><span class="kt">i16</span><span class="w"> </span><span class="nv">%simplified</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="kt">i16</span><span class="w"> </span><span class="nv">%simplified</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>You may have noticed that <code class="docutils literal notranslate"><span class="pre">%simplified</span></code> is narrower than <code class="docutils literal notranslate"><span class="pre">%c</span></code>: this is not
+a problem, because <code class="docutils literal notranslate"><span class="pre">llvm::replaceAllDbgUsesWith</span></code> takes care of inserting the
+necessary conversion operations into the DIExpressions of updated debug uses.</p>
+</section>
+<section id="deleting-a-mir-level-machineinstr">
+<h3><a class="toc-backref" href="#id10" role="doc-backlink">Deleting a MIR-level MachineInstr</a><a class="headerlink" href="#deleting-a-mir-level-machineinstr" title="Link to this heading">¶</a></h3>
+<p>TODO</p>
+</section>
+</section>
+<section id="rules-for-updating-diassignid-attachments">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Rules for updating <code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> Attachments</a><a class="headerlink" href="#rules-for-updating-diassignid-attachments" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">DIAssignID</span></code> metadata attachments are used by Assignment Tracking, which is
+currently an experimental debug mode.</p>
+<p>See <a class="reference internal" href="AssignmentTracking.html"><span class="doc">Debug Info Assignment Tracking</span></a> for how to update them and for more info on
+Assignment Tracking.</p>
+</section>
+<section id="how-to-automatically-convert-tests-into-debug-info-tests">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">How to automatically convert tests into debug info tests</a><a class="headerlink" href="#how-to-automatically-convert-tests-into-debug-info-tests" title="Link to this heading">¶</a></h2>
+<section id="mutation-testing-for-ir-level-transformations">
+<span id="irdebugify"></span><h3><a class="toc-backref" href="#id13" role="doc-backlink">Mutation testing for IR-level transformations</a><a class="headerlink" href="#mutation-testing-for-ir-level-transformations" title="Link to this heading">¶</a></h3>
+<p>An IR test case for a transformation can, in many cases, be automatically
+mutated to test debug info handling within that transformation. This is a
+simple way to test for proper debug info handling.</p>
+<section id="the-debugify-utility-pass">
+<h4><a class="toc-backref" href="#id14" role="doc-backlink">The <code class="docutils literal notranslate"><span class="pre">debugify</span></code> utility pass</a><a class="headerlink" href="#the-debugify-utility-pass" title="Link to this heading">¶</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">debugify</span></code> testing utility is just a pair of passes: <code class="docutils literal notranslate"><span class="pre">debugify</span></code> and
+<code class="docutils literal notranslate"><span class="pre">check-debugify</span></code>.</p>
+<p>The first applies synthetic debug information to every instruction of the
+module, and the second checks that this DI is still available after an
+optimization has occurred, reporting any errors/warnings while doing so.</p>
+<p>The instructions are assigned sequentially increasing line locations, and are
+immediately used by debug value records everywhere possible.</p>
+<p>For example, here is a module before:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@f</span><span class="p">(</span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv">%x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="nl">entry:</span>
+<span class="w">  </span><span class="nv">%x.addr</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">alloca</span><span class="w"> </span><span class="kt">i32</span><span class="p">*,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">8</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv">%x</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">**</span><span class="w"> </span><span class="nv">%x.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">8</span>
+<span class="w">  </span><span class="nv nv-Anonymous">%0</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">*,</span><span class="w"> </span><span class="kt">i32</span><span class="p">**</span><span class="w"> </span><span class="nv">%x.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">8</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">10</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>and after running <code class="docutils literal notranslate"><span class="pre">opt</span> <span class="pre">-debugify</span></code>:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="k">define</span><span class="w"> </span><span class="k">void</span><span class="w"> </span><span class="vg">@f</span><span class="p">(</span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv">%x</span><span class="p">)</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="w"> </span><span class="p">{</span>
+<span class="nl">entry:</span>
+<span class="w">  </span><span class="nv">%x.addr</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">alloca</span><span class="w"> </span><span class="kt">i32</span><span class="p">*,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">8</span><span class="p">,</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!12</span>
+<span class="w">    </span><span class="err">#dbg_value</span><span class="p">(</span><span class="kt">i32</span><span class="p">**</span><span class="w"> </span><span class="nv">%x.addr</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!9</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="nv nv-Anonymous">!12</span><span class="p">)</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv">%x</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">**</span><span class="w"> </span><span class="nv">%x.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">8</span><span class="p">,</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!13</span>
+<span class="w">  </span><span class="nv nv-Anonymous">%0</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">load</span><span class="w"> </span><span class="kt">i32</span><span class="p">*,</span><span class="w"> </span><span class="kt">i32</span><span class="p">**</span><span class="w"> </span><span class="nv">%x.addr</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">8</span><span class="p">,</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!14</span>
+<span class="w">    </span><span class="err">#dbg_value</span><span class="p">(</span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="nv nv-Anonymous">!14</span><span class="p">)</span>
+<span class="w">  </span><span class="k">store</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">10</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="p">*</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="k">align</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!15</span>
+<span class="w">  </span><span class="k">ret</span><span class="w"> </span><span class="k">void</span><span class="p">,</span><span class="w"> </span><span class="nv">!dbg</span><span class="w"> </span><span class="nv nv-Anonymous">!16</span>
+<span class="p">}</span>
+
+<span class="nv">!llvm.dbg.cu</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="nv nv-Anonymous">!0</span><span class="p">}</span>
+<span class="nv">!llvm.debugify</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="nv nv-Anonymous">!3</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!4</span><span class="p">}</span>
+<span class="nv">!llvm.module.flags</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="nv nv-Anonymous">!5</span><span class="p">}</span>
+
+<span class="nv nv-Anonymous">!0</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">distinct</span><span class="w"> </span><span class="nv">!DICompileUnit</span><span class="p">(</span><span class="nl">language:</span><span class="w"> </span><span class="err">DW_LANG_C</span><span class="p">,</span><span class="w"> </span><span class="nl">file:</span><span class="w"> </span><span class="nv nv-Anonymous">!1</span><span class="p">,</span><span class="w"> </span><span class="nl">producer:</span><span class="w"> </span><span class="s">&quot;debugify&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">isOptimized:</span><span class="w"> </span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="nl">runtimeVersion:</span><span class="w"> </span><span class="m">0</span><span class="p">,</span><span class="w"> </span><span class="nl">emissionKind:</span><span class="w"> </span><span class="err">FullDebug</span><span class="p">,</span><span class="w"> </span><span class="nl">enums:</span><span class="w"> </span><span class="nv nv-Anonymous">!2</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!1</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DIFile</span><span class="p">(</span><span class="nl">filename:</span><span class="w"> </span><span class="s">&quot;debugify-sample.ll&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">directory:</span><span class="w"> </span><span class="s">&quot;/&quot;</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!2</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{}</span>
+<span class="nv nv-Anonymous">!3</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="kt">i32</span><span class="w"> </span><span class="m">5</span><span class="p">}</span>
+<span class="nv nv-Anonymous">!4</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">}</span>
+<span class="nv nv-Anonymous">!5</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="nv">!&quot;Debug Info Version&quot;</span><span class="p">,</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">3</span><span class="p">}</span>
+<span class="nv nv-Anonymous">!6</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">distinct</span><span class="w"> </span><span class="nv">!DISubprogram</span><span class="p">(</span><span class="nl">name:</span><span class="w"> </span><span class="s">&quot;f&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">linkageName:</span><span class="w"> </span><span class="s">&quot;f&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="k">null</span><span class="p">,</span><span class="w"> </span><span class="nl">file:</span><span class="w"> </span><span class="nv nv-Anonymous">!1</span><span class="p">,</span><span class="w"> </span><span class="nl">line:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">type:</span><span class="w"> </span><span class="nv nv-Anonymous">!7</span><span class="p">,</span><span class="w"> </span><span class="nl">isLocal:</span><span class="w"> </span><span class="k">false</span><span class="p">,</span><span class="w"> </span><span class="nl">isDefinition:</span><span class="w"> </span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="nl">scopeLine:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">isOptimized:</span><span class="w"> </span><span class="k">true</span><span class="p">,</span><span class="w"> </span><span class="nl">unit:</span><span class="w"> </span><span class="nv nv-Anonymous">!0</span><span class="p">,</span><span class="w"> </span><span class="nl">retainedNodes:</span><span class="w"> </span><span class="nv nv-Anonymous">!8</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!7</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DISubroutineType</span><span class="p">(</span><span class="nl">types:</span><span class="w"> </span><span class="nv nv-Anonymous">!2</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!8</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">!{</span><span class="nv nv-Anonymous">!9</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="p">}</span>
+<span class="nv nv-Anonymous">!9</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocalVariable</span><span class="p">(</span><span class="nl">name:</span><span class="w"> </span><span class="s">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">,</span><span class="w"> </span><span class="nl">file:</span><span class="w"> </span><span class="nv nv-Anonymous">!1</span><span class="p">,</span><span class="w"> </span><span class="nl">line:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">type:</span><span class="w"> </span><span class="nv nv-Anonymous">!10</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!10</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DIBasicType</span><span class="p">(</span><span class="nl">name:</span><span class="w"> </span><span class="s">&quot;ty64&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">size:</span><span class="w"> </span><span class="m">64</span><span class="p">,</span><span class="w"> </span><span class="nl">encoding:</span><span class="w"> </span><span class="err">DW_ATE_unsigned</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!11</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocalVariable</span><span class="p">(</span><span class="nl">name:</span><span class="w"> </span><span class="s">&quot;2&quot;</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">,</span><span class="w"> </span><span class="nl">file:</span><span class="w"> </span><span class="nv nv-Anonymous">!1</span><span class="p">,</span><span class="w"> </span><span class="nl">line:</span><span class="w"> </span><span class="m">3</span><span class="p">,</span><span class="w"> </span><span class="nl">type:</span><span class="w"> </span><span class="nv nv-Anonymous">!10</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!12</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!13</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!14</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">3</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!15</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="nv nv-Anonymous">!16</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">5</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="using-debugify">
+<h4><a class="toc-backref" href="#id15" role="doc-backlink">Using <code class="docutils literal notranslate"><span class="pre">debugify</span></code></a><a class="headerlink" href="#using-debugify" title="Link to this heading">¶</a></h4>
+<p>A simple way to use <code class="docutils literal notranslate"><span class="pre">debugify</span></code> is as follows:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-debugify<span class="w"> </span>-pass-to-test<span class="w"> </span>-check-debugify<span class="w"> </span>sample.ll
+</pre></div>
+</div>
+<p>This will inject synthetic DI to <code class="docutils literal notranslate"><span class="pre">sample.ll</span></code> run the <code class="docutils literal notranslate"><span class="pre">pass-to-test</span></code> and
+then check for missing DI. The <code class="docutils literal notranslate"><span class="pre">-check-debugify</span></code> step can of course be
+omitted in favor of more customizable FileCheck directives.</p>
+<p>Some other ways to run debugify are available:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Same as the above example.</span>
+$<span class="w"> </span>opt<span class="w"> </span>-enable-debugify<span class="w"> </span>-pass-to-test<span class="w"> </span>sample.ll
+
+<span class="c1"># Suppresses verbose debugify output.</span>
+$<span class="w"> </span>opt<span class="w"> </span>-enable-debugify<span class="w"> </span>-debugify-quiet<span class="w"> </span>-pass-to-test<span class="w"> </span>sample.ll
+
+<span class="c1"># Prepend -debugify before and append -check-debugify -strip after</span>
+<span class="c1"># each pass on the pipeline (similar to -verify-each).</span>
+$<span class="w"> </span>opt<span class="w"> </span>-debugify-each<span class="w"> </span>-O2<span class="w"> </span>sample.ll
+</pre></div>
+</div>
+<p>In order for <code class="docutils literal notranslate"><span class="pre">check-debugify</span></code> to work, the DI must be coming from
+<code class="docutils literal notranslate"><span class="pre">debugify</span></code>. Thus, modules with existing DI will be skipped.</p>
+<p><code class="docutils literal notranslate"><span class="pre">debugify</span></code> can be used to test a backend, e.g:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-debugify<span class="w"> </span>&lt;<span class="w"> </span>sample.ll<span class="w"> </span><span class="p">|</span><span class="w"> </span>llc<span class="w"> </span>-o<span class="w"> </span>-
+</pre></div>
+</div>
+<p>There is also a MIR-level debugify pass that can be run before each backend
+pass, see:
+<a class="reference internal" href="#mirdebugify"><span class="std std-ref">Mutation testing for MIR-level transformations</span></a>.</p>
+</section>
+<section id="debugify-in-regression-tests">
+<h4><a class="toc-backref" href="#id16" role="doc-backlink"><code class="docutils literal notranslate"><span class="pre">debugify</span></code> in regression tests</a><a class="headerlink" href="#debugify-in-regression-tests" title="Link to this heading">¶</a></h4>
+<p>The output of the <code class="docutils literal notranslate"><span class="pre">debugify</span></code> pass must be stable enough to use in regression
+tests. Changes to this pass are not allowed to break existing tests.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Regression tests must be robust. Avoid hardcoding line/variable numbers in
+check lines. In cases where this can’t be avoided (say, if a test wouldn’t
+be precise enough), moving the test to its own file is preferred.</p>
+</div>
+</section>
+<section id="using-coverage-tracking-to-remove-false-positives">
+<h4><a class="toc-backref" href="#id17" role="doc-backlink">Using Coverage Tracking to remove false positives</a><a class="headerlink" href="#using-coverage-tracking-to-remove-false-positives" title="Link to this heading">¶</a></h4>
+<p>As described <a class="reference internal" href="#whentodroplocation"><span class="std std-ref">above</span></a>, there are valid reasons for
+instructions to not have source locations. Therefore, when detecting dropped or
+not-generated source locations, it may be preferable to avoid detecting cases
+where the missing source location is intentional. For this, you can use the
+“coverage tracking” feature in LLVM to prevent these from appearing in the
+<code class="docutils literal notranslate"><span class="pre">debugify</span></code> output. This is enabled in a build of LLVM by setting the CMake
+flag <code class="docutils literal notranslate"><span class="pre">-DLLVM_ENABLE_DEBUGLOC_COVERAGE_TRACKING=COVERAGE</span></code>. When this has been
+set, LLVM will enable runtime tracking of
+<a class="reference internal" href="#newinstlocations"><span class="std std-ref">DebugLoc annotations</span></a>, allowing <code class="docutils literal notranslate"><span class="pre">debugify</span></code> to ignore
+instructions that have an explicitly recorded reason given for not having a
+source location.</p>
+<p>For triaging source location bugs detected with <code class="docutils literal notranslate"><span class="pre">debugify</span></code>, you may find it
+helpful to instead set the CMake flag to enable “origin tracking”,
+<code class="docutils literal notranslate"><span class="pre">-DLLVM_ENABLE_DEBUGLOC_COVERAGE_TRACKING=COVERAGE_AND_ORIGIN</span></code>. This flag adds
+more detail to <code class="docutils literal notranslate"><span class="pre">debugify</span></code>’s output, by including one or more stacktraces with
+every missing source location, capturing the point at which the empty source
+location was created, and every point at which it was copied to an instruction,
+making it trivial in most cases to find the origin of the underlying bug. If
+using origin tracking, it is recommended to also build LLVM with debug info
+enabled, so that the stacktrace can be accurately symbolized.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The coverage tracking feature has been designed primarily for use with the
+<a class="reference internal" href="#originaldi"><span class="std std-ref">original debug info preservation</span></a> mode of <code class="docutils literal notranslate"><span class="pre">debugify</span></code>, and
+so may not be reliable in other settings. When using this mode, the
+stacktraces produced by the <code class="docutils literal notranslate"><span class="pre">COVERAGE_AND_ORIGIN</span></code> setting will be printed
+in an easy-to-read format as part of the reports generated by the
+<code class="docutils literal notranslate"><span class="pre">llvm-original-di-preservation.py</span></code> script.</p>
+</div>
+</section>
+</section>
+<section id="test-original-debug-info-preservation-in-optimizations">
+<span id="originaldi"></span><h3><a class="toc-backref" href="#id18" role="doc-backlink">Test original debug info preservation in optimizations</a><a class="headerlink" href="#test-original-debug-info-preservation-in-optimizations" title="Link to this heading">¶</a></h3>
+<p>In addition to automatically generating debug info, the checks provided by
+the <code class="docutils literal notranslate"><span class="pre">debugify</span></code> utility pass can also be used to test the preservation of
+pre-existing debug info metadata. It could be run as follows:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run the pass by checking original Debug Info preservation.</span>
+$<span class="w"> </span>opt<span class="w"> </span>-verify-debuginfo-preserve<span class="w"> </span>-pass-to-test<span class="w"> </span>sample.ll
+
+<span class="c1"># Check the preservation of original Debug Info after each pass.</span>
+$<span class="w"> </span>opt<span class="w"> </span>-verify-each-debuginfo-preserve<span class="w"> </span>-O2<span class="w"> </span>sample.ll
+</pre></div>
+</div>
+<p>Limit number of observed functions to speed up the analysis:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Test up to 100 functions (per compile unit) per pass.</span>
+$<span class="w"> </span>opt<span class="w"> </span>-verify-each-debuginfo-preserve<span class="w"> </span>-O2<span class="w"> </span>-debugify-func-limit<span class="o">=</span><span class="m">100</span><span class="w"> </span>sample.ll
+</pre></div>
+</div>
+<p>Please do note that running <code class="docutils literal notranslate"><span class="pre">-verify-each-debuginfo-preserve</span></code> on big projects
+could be heavily time consuming. Therefore, we suggest using
+<code class="docutils literal notranslate"><span class="pre">-debugify-func-limit</span></code> with a suitable limit number to prevent extremely long
+builds.</p>
+<p>Furthermore, there is a way to export the issues that have been found into
+a JSON file as follows:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>opt<span class="w"> </span>-verify-debuginfo-preserve<span class="w"> </span>-verify-di-preserve-export<span class="o">=</span>sample.json<span class="w"> </span>-pass-to-test<span class="w"> </span>sample.ll
+</pre></div>
+</div>
+<p>and then use the <code class="docutils literal notranslate"><span class="pre">llvm/utils/llvm-original-di-preservation.py</span></code> script
+to generate an HTML page with the issues reported in a more human readable form
+as follows:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>llvm-original-di-preservation.py<span class="w"> </span>sample.json<span class="w"> </span>sample.html
+</pre></div>
+</div>
+<p>Testing of original debug info preservation can be invoked from front-end level
+as follows:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Test each pass.</span>
+$<span class="w"> </span>clang<span class="w"> </span>-Xclang<span class="w"> </span>-fverify-debuginfo-preserve<span class="w"> </span>-g<span class="w"> </span>-O2<span class="w"> </span>sample.c
+
+<span class="c1"># Test each pass and export the issues report into the JSON file.</span>
+$<span class="w"> </span>clang<span class="w"> </span>-Xclang<span class="w"> </span>-fverify-debuginfo-preserve<span class="w"> </span>-Xclang<span class="w"> </span>-fverify-debuginfo-preserve-export<span class="o">=</span>sample.json<span class="w"> </span>-g<span class="w"> </span>-O2<span class="w"> </span>sample.c
+</pre></div>
+</div>
+<p>Please do note that there are some known false positives, for source locations
+and debug record checking, so that will be addressed as a future work.</p>
+</section>
+<section id="mutation-testing-for-mir-level-transformations">
+<span id="mirdebugify"></span><h3><a class="toc-backref" href="#id19" role="doc-backlink">Mutation testing for MIR-level transformations</a><a class="headerlink" href="#mutation-testing-for-mir-level-transformations" title="Link to this heading">¶</a></h3>
+<p>A variant of the <code class="docutils literal notranslate"><span class="pre">debugify</span></code> utility described in
+<a class="reference internal" href="#irdebugify"><span class="std std-ref">Mutation testing for IR-level transformations</span></a> can be used
+for MIR-level transformations as well: much like the IR-level pass,
+<code class="docutils literal notranslate"><span class="pre">mir-debugify</span></code> inserts sequentially increasing line locations to each
+<code class="docutils literal notranslate"><span class="pre">MachineInstr</span></code> in a <code class="docutils literal notranslate"><span class="pre">Module</span></code>. And the MIR-level <code class="docutils literal notranslate"><span class="pre">mir-check-debugify</span></code> is
+similar to IR-level <code class="docutils literal notranslate"><span class="pre">check-debugify</span></code> pass.</p>
+<p>For example, here is a snippet before:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nl">name:</span><span class="w">            </span><span class="err">test</span>
+<span class="nl">body:</span><span class="w">             </span><span class="err">|</span>
+<span class="w">  </span><span class="err">bb</span><span class="p">.</span><span class="m">1</span><span class="w"> </span><span class="p">(</span><span class="nv">%ir-block.0</span><span class="p">)</span><span class="err">:</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%0</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">IMPLICIT_DEF</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%1</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">IMPLICIT_DEF</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%2</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">G_CONSTANT</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%3</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">G_ADD</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%2</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%4</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">G_SUB</span><span class="w"> </span><span class="nv nv-Anonymous">%3</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%1</span>
+</pre></div>
+</div>
+<p>and after running <code class="docutils literal notranslate"><span class="pre">llc</span> <span class="pre">-run-pass=mir-debugify</span></code>:</p>
+<div class="highlight-llvm notranslate"><div class="highlight"><pre><span></span><span class="nl">name:</span><span class="w">            </span><span class="err">test</span>
+<span class="nl">body:</span><span class="w">             </span><span class="err">|</span>
+<span class="w">  </span><span class="err">bb</span><span class="p">.</span><span class="m">0</span><span class="w"> </span><span class="p">(</span><span class="nv">%ir-block.0</span><span class="p">)</span><span class="err">:</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%0</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">IMPLICIT_DEF</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv nv-Anonymous">!12</span>
+<span class="w">    </span><span class="err">DBG_VALUE</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">),</span><span class="w"> </span><span class="err">$noreg</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!9</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv nv-Anonymous">!12</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%1</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">IMPLICIT_DEF</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv nv-Anonymous">!13</span>
+<span class="w">    </span><span class="err">DBG_VALUE</span><span class="w"> </span><span class="nv nv-Anonymous">%1</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">),</span><span class="w"> </span><span class="err">$noreg</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!11</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv nv-Anonymous">!13</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%2</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">G_CONSTANT</span><span class="w"> </span><span class="kt">i32</span><span class="w"> </span><span class="m">2</span><span class="p">,</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv nv-Anonymous">!14</span>
+<span class="w">    </span><span class="err">DBG_VALUE</span><span class="w"> </span><span class="nv nv-Anonymous">%2</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">),</span><span class="w"> </span><span class="err">$noreg</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!9</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv nv-Anonymous">!14</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%3</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">G_ADD</span><span class="w"> </span><span class="nv nv-Anonymous">%0</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%2</span><span class="p">,</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="w">    </span><span class="err">DBG_VALUE</span><span class="w"> </span><span class="nv nv-Anonymous">%3</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">),</span><span class="w"> </span><span class="err">$noreg</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!9</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">4</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="w">    </span><span class="nv nv-Anonymous">%4</span><span class="err">:_</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">)</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="err">G_SUB</span><span class="w"> </span><span class="nv nv-Anonymous">%3</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">%1</span><span class="p">,</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">5</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+<span class="w">    </span><span class="err">DBG_VALUE</span><span class="w"> </span><span class="nv nv-Anonymous">%4</span><span class="p">(</span><span class="err">s</span><span class="m">32</span><span class="p">),</span><span class="w"> </span><span class="err">$noreg</span><span class="p">,</span><span class="w"> </span><span class="nv nv-Anonymous">!9</span><span class="p">,</span><span class="w"> </span><span class="nv">!DIExpression</span><span class="p">(),</span><span class="w"> </span><span class="err">debug-location</span><span class="w"> </span><span class="nv">!DILocation</span><span class="p">(</span><span class="nl">line:</span><span class="w"> </span><span class="m">5</span><span class="p">,</span><span class="w"> </span><span class="nl">column:</span><span class="w"> </span><span class="m">1</span><span class="p">,</span><span class="w"> </span><span class="nl">scope:</span><span class="w"> </span><span class="nv nv-Anonymous">!6</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>By default, <code class="docutils literal notranslate"><span class="pre">mir-debugify</span></code> inserts <code class="docutils literal notranslate"><span class="pre">DBG_VALUE</span></code> instructions <strong>everywhere</strong>
+it is legal to do so.  In particular, every (non-PHI) machine instruction that
+defines a register must be followed by a <code class="docutils literal notranslate"><span class="pre">DBG_VALUE</span></code> use of that def.  If
+an instruction does not define a register, but can be followed by a debug inst,
+MIRDebugify inserts a <code class="docutils literal notranslate"><span class="pre">DBG_VALUE</span></code> that references a constant.  Insertion of
+<code class="docutils literal notranslate"><span class="pre">DBG_VALUE</span></code>’s can be disabled by setting <code class="docutils literal notranslate"><span class="pre">-debugify-level=locations</span></code>.</p>
+<p>To run MIRDebugify once, simply insert <code class="docutils literal notranslate"><span class="pre">mir-debugify</span></code> into your <code class="docutils literal notranslate"><span class="pre">llc</span></code>
+invocation, like:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Before some other pass.</span>
+$<span class="w"> </span>llc<span class="w"> </span>-run-pass<span class="o">=</span>mir-debugify,other-pass<span class="w"> </span>...
+
+<span class="c1"># After some other pass.</span>
+$<span class="w"> </span>llc<span class="w"> </span>-run-pass<span class="o">=</span>other-pass,mir-debugify<span class="w"> </span>...
+</pre></div>
+</div>
+<p>To run MIRDebugify before each pass in a pipeline, use
+<code class="docutils literal notranslate"><span class="pre">-debugify-and-strip-all-safe</span></code>. This can be combined with <code class="docutils literal notranslate"><span class="pre">-start-before</span></code>
+and <code class="docutils literal notranslate"><span class="pre">-start-after</span></code>. For example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>llc<span class="w"> </span>-debugify-and-strip-all-safe<span class="w"> </span>-run-pass<span class="o">=</span>...<span class="w"> </span>&lt;other<span class="w"> </span>llc<span class="w"> </span>args&gt;
+$<span class="w"> </span>llc<span class="w"> </span>-debugify-and-strip-all-safe<span class="w"> </span>-O1<span class="w"> </span>&lt;other<span class="w"> </span>llc<span class="w"> </span>args&gt;
+</pre></div>
+</div>
+<p>If you want to check it after each pass in a pipeline, use
+<code class="docutils literal notranslate"><span class="pre">-debugify-check-and-strip-all-safe</span></code>. This can also be combined with
+<code class="docutils literal notranslate"><span class="pre">-start-before</span></code> and <code class="docutils literal notranslate"><span class="pre">-start-after</span></code>. For example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>llc<span class="w"> </span>-debugify-check-and-strip-all-safe<span class="w"> </span>-run-pass<span class="o">=</span>...<span class="w"> </span>&lt;other<span class="w"> </span>llc<span class="w"> </span>args&gt;
+$<span class="w"> </span>llc<span class="w"> </span>-debugify-check-and-strip-all-safe<span class="w"> </span>-O1<span class="w"> </span>&lt;other<span class="w"> </span>llc<span class="w"> </span>args&gt;
+</pre></div>
+</div>
+<p>To check all debug info from a test, use <code class="docutils literal notranslate"><span class="pre">mir-check-debugify</span></code>, like:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>llc<span class="w"> </span>-run-pass<span class="o">=</span>mir-debugify,other-pass,mir-check-debugify
+</pre></div>
+</div>
+<p>To strip out all debug info from a test, use <code class="docutils literal notranslate"><span class="pre">mir-strip-debug</span></code>, like:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>llc<span class="w"> </span>-run-pass<span class="o">=</span>mir-debugify,other-pass,mir-strip-debug
+</pre></div>
+</div>
+<p>It can be useful to combine <code class="docutils literal notranslate"><span class="pre">mir-debugify</span></code>, <code class="docutils literal notranslate"><span class="pre">mir-check-debugify</span></code> and/or
+<code class="docutils literal notranslate"><span class="pre">mir-strip-debug</span></code> to identify backend transformations which break in
+the presence of debug info. For example, to run the AArch64 backend tests
+with all normal passes “sandwiched” in between MIRDebugify and
+MIRStripDebugify mutation passes, run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>llvm-lit<span class="w"> </span>test/CodeGen/AArch64<span class="w"> </span>-Dllc<span class="o">=</span><span class="s2">&quot;llc -debugify-and-strip-all-safe&quot;</span>
+</pre></div>
+</div>
+</section>
+<section id="using-lostdebuglocobserver">
+<h3><a class="toc-backref" href="#id20" role="doc-backlink">Using LostDebugLocObserver</a><a class="headerlink" href="#using-lostdebuglocobserver" title="Link to this heading">¶</a></h3>
+<p>TODO</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="InstCombineContributorGuide.html" title="InstCombine contributor guide"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="HowToCrossCompileLLVM.html" title="How to cross-compile Clang/LLVM using Clang/LLVM"
+             >previous</a> |</li>
+  <li><a href="https://llvm.org/">LLVM Home</a>&nbsp;|&nbsp;</li>
+  <li><a href="index.html">Documentation</a>&raquo;</li>
+
+          <li class="nav-item nav-item-1"><a href="UserGuides.html" >User Guides</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">How to Update Debug Info: A Guide for LLVM Pass Authors</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    &#169; Copyright 2003-2025, LLVM Project.
+      Last updated on 2025-11-20.
+      Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    </div>
+  </body>
+</html>
